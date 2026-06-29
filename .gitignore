@@ -79,3 +79,7 @@ openspec/
 /skills
 /skills-lock.json
 paseo.json
+
+# local QA scratch artifacts
+.playwright-mcp/
+/phase*.png
