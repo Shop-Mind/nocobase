@@ -1,7 +1,7 @@
 # 设计文档：原生 AI 员工集成（Native AI Employees）
 
 > 状态：设计已与产品负责人确认方向（2026-06-29），待评审后进入实现计划（writing-plans）。
-> 关联文档：`nocobase-ai-listing-prd-dev-design.md`（§6 AI 员工、§7.4 数据模型、§7.7 权限）、`nocobase-ai-listing-phase-delivery-plan.md`（新增 Native AI Track）、`nocobase-ai-developer-official-guide.md`。
+> 关联文档：`nocobase-ai-listing-prd-dev-design.md`（§6 AI 员工、§7.4 数据模型、§7.7 权限）、`nocobase-ai-listing-phase-delivery-plan.md`（统一收敛为 **Phase 10：AI 员工原生化集成**，独立阶段）、`nocobase-ai-developer-official-guide.md`。
 
 ## 1. 背景与目标
 
@@ -30,35 +30,40 @@
 1. **LLM 后端**：产品负责人提供大模型 API Key（DeepSeek / 通义 / OpenAI / Claude 任一），由开发配置 `plugin-ai` 模型服务；未配置时回退确定性 mock。
 2. **架构走向**：对核心页做**原生重构**（不是仅加全局助手）。
 3. **原生化范围**：仅原生化 **AI 价值高**的页 —— **商品库、预览编辑/审核、规则管理**；**工作台、商品抓取、信息处理批量进度** 因属重交互/抓取流程，保留 jsBlock。
+4. **AI 员工**：**新建项目专属 AI 员工**，**不复用内置 `dex/lexi/viz/vera`**。专属员工角色绑定到跨境搬运域，便于定制 system/task prompt、工具与权限，并衔接后续平台规则知识库（RAG）。
 
 > 影响：本设计会**替换** Phase 6 的 jsBlock 规则页、Phase 7 的 jsBlock 预览编辑页，用“原生页 + 原生 AI 员工”版本重做。已抓取/已处理的业务数据不受影响。
 
 ## 4. 目标体验（三种范式映射）
 
-| 演示范式 | 演示员工 | AI Listing 对应页 | 对应员工（复用内置） | 任务（示例） | 权限 |
+对齐演示的三种范式，但**全部用新建的项目专属员工**（演示员工仅作参照，不复用）。建议初始 roster（昵称/username 可由产品负责人调整）：
+
+| 演示范式（参照） | 新建专属员工（nickname / username / 职位） | AI Listing 绑定页 | 任务（示例） | 权限 | 头像 seed |
 |---|---|---|---|---|---|
-| 列表级分析 | Viz | 商品库 / 预览编辑 列表工具栏 | **Viz** | 选品质量分析、批次成功率、风险词扫描 | 只读 `Allow`（出洞察，不写库） |
-| 记录级研究 | Vera | 商品详情（记录动作） | **Vera** | 合规/平台规则背景、卖点研究、目标市场建议 | 只读 `Allow`（联网搜索可选） |
-| 表单填充 | Dex | 商品编辑表单 | **Dex** | 优化标题、生成描述、补全参数 → **填进表单字段**（不入库） | 填表 = 用户 Submit 才保存（天然 `Ask`） |
-| 全局助手 | Atlas | 全应用右下角 | **Atlas** 调度 | 自然语言提问，转派专家 | 跟随当前用户权限 |
+| 列表级分析（Viz） | **选品参谋 Mira / `lst-mira` / 选品分析师** | 商品库 / 预览编辑 列表工具栏（block action） | 选品质量分析、批次成功率、风险词扫描 | 只读 `Allow`（出洞察，不写库） | `nocobase-016-female` |
+| 记录级研究（Vera） | **合规向导 Rena / `lst-rena` / 合规与市场研究员** | 商品详情（record action） | 合规/平台规则背景、卖点研究、目标市场建议 | 只读 `Allow`（联网搜索可选） | `nocobase-003-female` |
+| 表单填充（Dex） | **文案管家 Toby / `lst-toby` / 商品信息整理员** | 商品编辑表单（form action） | 优化标题、生成描述、补全参数 → **填进表单字段**（不入库） | 填表 = 用户 Submit 才保存（天然 `Ask`） | `nocobase-006-male` |
+| 全局助手（Atlas） | **搬运主管 Kai / `lst-kai` / 搬运工作台主管** | 全应用右下角悬浮助手 | 自然语言提问、转派以上三位专属员工 | 跟随当前用户权限 | `nocobase-021-male` |
+
+> username 用 `lst-` 前缀与内置员工区隔，避免重名冲突；昵称/头像/职位均可在 Phase 10 落地前微调。这些员工经 `nocobase-ai-employee`（`aiEmployees:create`）新建，绑定 Phase 10 第②步配好的模型。（注：发布相关另有「发布助理 Lena」，详见交付计划 Phase 10 §14.2。）
 
 ## 5. 架构设计
 
-### 5.1 原生化基座（Phase N1）
+### 5.1 原生化基座（Phase 10 · 步骤①）
 - 把 `aiListingProducts / aiListingSkus / aiListingMediaAssets / aiListingRules` 暴露给 client 主数据源（UI 可管理）：原表原数据不动，仅补 UI 集合/字段元数据（title、interface、枚举、关联）。
 - **首步必须做可行性 spike**：先暴露 1 张集合，验证 ① 进入 `collections:list`、② 字段 interface 可读、③ 既有数据可在原生表格读写、④ 不破坏现有 jsBlock 页与 REST。spike 不通过则回退“混合方案”（新增原生承载页而非改造原集合）。
 - 单元边界：基座只负责“集合可见 + 字段元数据正确”，不含任何 AI 逻辑。
 
-### 5.2 真实 LLM 接入（Phase N2）
+### 5.2 真实 LLM 接入（Phase 10 · 步骤②）
 - 配置 `plugin-ai` 模型服务（provider + apiKey + baseURL + 模型名）；密钥经服务端配置，**不入审计、不入前端**。
-- 为 dex/lexi/viz/vera 绑定该模型；保留“未配置 → 确定性 mock”兜底分支，保证可离线自测。
+- 为新建的专属员工（Mira/Rena/Toby/Kai）绑定该模型；保留“未配置 → 确定性 mock”兜底分支，保证可离线自测。
 - 单元边界：LLM 接入只负责“模型可用 + 员工能调用”，与 UI 无耦合。
 
-### 5.3 原生 AI 员工绑定（Phase N3）
+### 5.3 原生 AI 员工绑定（Phase 10 · 步骤③④⑤）
 - 用 `nocobase-ui-builder` 的 `flow-surfaces` 原生写法，在原生区块上挂 `type:"aiEmployee"` 动作（`settings.username/auto/workContext/tasks/style`），`workContext` 用 `{target:"self"}` 绑定当前区块/记录/表单。
-- 商品库列表 → Viz（block `actions`）；商品详情 → Vera（`recordActions`）；编辑表单 → Dex（form `actions`，填表单字段）。
-- 全局助手：开启 `plugin-ai` 的应用级 AI 助手。
-- 员工 prompt/角色：用 `nocobase-ai-employee` 设计每个员工的 system/task prompt，约束到跨境电商搬运域。
+- **先新建专属员工**（`nocobase-ai-employee` → `aiEmployees:create`，带 avatar seed 与领域化 about/prompt），再绑定：商品库列表 → Mira（block `actions`）；商品详情 → Rena（`recordActions`）；编辑表单 → Toby（form `actions`，填表单字段不入库）。
+- 全局助手：开启 `plugin-ai` 的应用级 AI 助手，调度员设为 Kai（专属主管），由其转派 Mira/Rena/Toby。
+- 员工 prompt/角色：用 `nocobase-ai-employee` 设计每个专属员工的 system/task prompt，约束到跨境电商搬运域；不复用内置 dex/lexi/viz/vera。
 
 ### 5.4 安全约束保留（贯穿铁律，不可破）
 - AI **只做**：只读分析/研究（不写库）、或把建议**填进表单输入框**（用户 Submit 才入库）。
@@ -78,19 +83,22 @@
 
 ## 6. 受影响的 Phase 与文档调整
 
-在 `nocobase-ai-listing-phase-delivery-plan.md` 新增 **Native AI Track**（三阶段），并回标既有 Phase：
+AI 员工相关工作**统一收敛为一个独立阶段 Phase 10：AI 员工原生化集成**（不拆多 phase、不散落各 phase）。Phase 10 内部含六个有序子步骤：
 
-- **Phase N1 原生化基座（UI 可管理集合）** — 前置，含可行性 spike。
-- **Phase N2 真实 LLM 接入** — 配模型服务 + 员工绑定模型 + mock 兜底。
-- **Phase N3 原生 AI 员工绑定 + 关键页原生化** — 商品库/详情/编辑/规则 原生重建 + Viz/Vera/Dex/Atlas。
-- **回标 Phase 6/7**：规则页、预览编辑页的 jsBlock 版被 N3 的“原生 + AI 员工”版替换（数据不动）。
-- **Phase 10「AI 员工与知识库增强」** 收敛为 Native AI Track 的延续（知识库 RAG 作为 N3 之后的增强项），不再重复定义基础 AI 按钮。
+1. 原生化基座（集合暴露，含可行性 spike）；
+2. 真实 LLM 接入（配模型 + mock 兜底）；
+3. 新建专属员工 Mira/Rena/Toby/Lena/Kai（不复用内置）；
+4. 关键页原生化 + 原生 `aiEmployee` 动作绑定（**替换 Phase 6/7 的 jsBlock 规则页/预览编辑页**，数据不动，验收通过后下线旧页）；
+5. 全局悬浮助手（Kai 调度）；
+6. 平台规则知识库（RAG，可选增强）。
+
+**Phase 8（发布前校验与模拟发布）按原序先行**，不被 Phase 10 阻塞；详见交付计划 §14（Phase 10）。
 
 ## 7. 风险与缓解
 
 | 风险 | 等级 | 缓解 |
 |---|---|---|
-| 集合无法干净暴露给 UI / 破坏既有页 | 高 | N1 首步 spike 单集合验证；不通过回退“混合：新增原生承载页” |
+| 集合无法干净暴露给 UI / 破坏既有页 | 高 | Phase 10 首步 spike 单集合验证；不通过回退“混合：新增原生承载页” |
 | 既有业务数据迁移丢失 | 中 | 只补 UI 元数据、不改表结构；spike 先在非关键集合验证读写 |
 | LLM 成本/限流 | 中 | 任务 `autoSend=false`（人工触发）；可选小模型；mock 兜底 |
 | 密钥泄露 | 高 | 密钥仅服务端配置，禁入审计/日志/前端（沿用 §7.9 脱敏铁律） |
@@ -106,6 +114,6 @@
 
 ## 9. 不在范围（本设计）
 - 真实商品发布（Phase 8）。
-- 知识库 RAG 深度建设（N3 之后增强）。
+- 知识库 RAG 深度建设（Phase 10 步骤⑥之后的增强）。
 - 工作台/抓取/批量进度页的原生化（保留 jsBlock）。
 - 媒体真实处理（仍占位）。

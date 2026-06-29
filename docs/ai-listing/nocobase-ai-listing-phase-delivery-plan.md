@@ -67,17 +67,11 @@
 | Phase 7 | 预览编辑与人工审核 | 商品详情、图片预览、字段编辑、审核 | `nocobase-ui-builder` + custom preview block | 极高 |
 | Phase 8 | 发布前校验与模拟发布 | 校验阻断项、模拟发布、发布记录 | `nocobase-workflow-manage` + publish adapter mock | 高 |
 | Phase 9 | 商品库、发布记录、设置 | 主数据台账、历史追踪、平台账号状态 | `nocobase-ui-builder` + `nocobase-data-analysis` | 高 |
-| Phase 10 | AI 员工与知识库增强 | 角色化 AI 按钮、工具权限、平台规则 RAG | `nocobase-ai-employee` + `nocobase-ui-builder` | 中高 |
+| Phase 10 | **AI 员工原生化集成**（独立阶段） | 集合暴露基座 + 接 LLM + 新建专属员工 + 关键页原生化绑定 + 全局助手（替换 6/7 的 jsBlock 规则页/预览编辑页） | `nocobase-ai-employee` + `nocobase-ui-builder`(ai-employee-actions) + `nocobase-data-modeling` + `plugin-ai` | 极高 |
 | Phase 11 | Docker 部署与运维验收 | 阿里云 CentOS Docker 部署、日志、备份 | `nocobase-env-manage` + `nocobase-publish-manage` | 中 |
 | Phase 12 | 回归与试运营准备 | 端到端回归、样式统一、试运营清单 | `nocobase-revision` + E2E/manual QA | 极高 |
 
-> **Native AI Track（AI 员工原生化升级，2026-06-29 新增）**：对齐 NocoBase 官方演示的“原生 AI 员工”体验（头像悬浮 + 自然语言任务 + 与当前 UI 上下文联动）。设计详见 `nocobase-ai-listing-native-ai-employees-design.md`。该轨道**前置于 Phase 8**，并**替换** Phase 6/7 的 jsBlock 规则页/预览编辑页为“原生页 + 原生 AI 员工”版；收敛原 Phase 10 的“AI 员工”范围（知识库 RAG 作为后续增强）。
-
-| Phase | 名称 | 目标 | 主要官方 skill / 技术 | 是否需要样式验收 |
-|---|---|---|---|---|
-| Phase N1 | 原生化基座（UI 可管理集合） | 把核心集合暴露给 client 数据源，原生区块可绑定（含可行性 spike） | `nocobase-data-modeling` + `nocobase-plugin-development` | 低 |
-| Phase N2 | 真实 LLM 接入 | 配置 `plugin-ai` 模型服务，AI 员工真实可用，mock 兜底 | `nocobase-env-manage` + `plugin-ai` 配置 | 低 |
-| Phase N3 | 原生 AI 员工绑定 + 关键页原生化 | 商品库/详情/编辑/规则原生重建 + Viz/Vera/Dex/Atlas 绑定 | `nocobase-ui-builder`(ai-employee-actions) + `nocobase-ai-employee` | 极高 |
+> **关于 AI 员工（2026-06-30 定稿）**：对齐 NocoBase 官方演示的“原生 AI 员工”能力，**统一收敛为一个独立阶段 Phase 10**（内部六步：集合暴露 → 接 LLM → 新建专属员工 → 关键页原生化绑定 → 全局助手 → 知识库），不拆成多 phase、不散落各 phase。设计详见 `nocobase-ai-listing-native-ai-employees-design.md`。Phase 10 会**替换** Phase 6/7 的 jsBlock 规则页/预览编辑页为“原生 + 专属 AI 员工”版（数据不动）。Phase 8（发布前校验与模拟发布）按原序先行，不被 AI 员工阶段阻塞。
 
 ---
 
@@ -774,64 +768,65 @@ AI 按钮只做建议或 Ask 后填表，不能直接发布。
 
 ---
 
-## 14. Phase 10：AI 员工与知识库增强
+## 14. Phase 10：AI 员工原生化集成（独立阶段）
+
+> 本阶段把全程的“自定义 mock AI 按钮”升级为**对齐 NocoBase 官方演示的原生 AI 员工**（头像悬浮 + 自然语言任务 + 与当前 UI 上下文联动 + 全局助手）。完整设计见 `nocobase-ai-listing-native-ai-employees-design.md`。
+> **作为一个独立 phase 一次性交付**，内部含「基座 → 接模型 → 新建专属员工 → 关键页原生化绑定 → 全局助手 → 知识库」六个有序子步骤；不再拆成多个 phase，也不散落到各 phase。
 
 ### 14.1 目标
 
-把 AI 员工从“按钮”升级为真正可用的业务助手，但仍保持权限和审计边界。
+让商品库 / 预览编辑 / 规则等核心页拥有真正可用的“原生 AI 员工”，保持权限与审计边界，**不复用内置员工、不做真实发布**。
 
-### 14.2 开发范围
+### 14.2 开发范围（六个有序子步骤，单阶段交付）
 
-| AI 员工 | 任务 |
-|---|---|
-| 商品抓取助理 | 解释抓取失败、建议来源平台 |
-| 信息处理助理 | 标题改写、描述生成、参数补全 |
-| 类目合规助理 | 类目建议、禁售词、平台规则解释 |
-| 发布助理 | 发布前检查、失败解释、重试建议 |
-| 数据分析助理 | 发布成功率、失败原因分析 |
+1. **原生化基座**：把 `aiListingProducts/Skus/MediaAssets/Rules` 暴露给 client 主数据源（原生区块可绑定）。**首步做单集合可行性 spike**：验证进入 `collections:list`、字段可读、原生表格可读写既有数据、不破坏现有 jsBlock 页与 REST；不通过则回退“混合：新增原生承载页”。
+2. **接入真实 LLM**：用产品负责人提供的 API Key 配置 `plugin-ai` 模型服务；保留“无模型→确定性 mock”兜底。密钥仅服务端，禁入日志/审计/前端。
+3. **新建专属 AI 员工**（不复用内置 dex/lexi/viz/vera，username 用 `lst-` 前缀）：
+
+   | 员工 | username | 职位 | 绑定 | 任务 | 权限 |
+   |---|---|---|---|---|---|
+   | 选品参谋 Mira | `lst-mira` | 选品分析师 | 商品库/预览编辑 列表 | 选品质量、批次成功率、风险词扫描 | 只读 `Allow` |
+   | 合规向导 Rena | `lst-rena` | 合规与市场研究员 | 商品详情 记录动作 | 合规/平台规则、卖点研究、目标市场 | 只读 `Allow`（可联网） |
+   | 文案管家 Toby | `lst-toby` | 商品信息整理员 | 编辑表单 | 优化标题/生成描述/补全参数→**填表单不入库** | Ask（Submit 才存） |
+   | 发布助理 Lena | `lst-lena` | 发布助理 | 发布/发布记录页 | 发布前检查、失败解释、重试建议 | 只读 `Allow`（不触发真实发布） |
+   | 搬运主管 Kai | `lst-kai` | 搬运工作台主管 | 全局悬浮助手 | 自然语言提问、转派以上专属员工 | 跟随用户权限 |
+
+4. **关键页原生化 + 绑定**：用原生 table/details/form 重建 商品库、预览编辑/审核、规则管理（**替换 Phase 6/7 的 jsBlock 规则页/预览编辑页**，数据不动，验收通过后下线旧页）；用 `ai-employee-actions` 把上表员工挂到对应区块的 `actions`/`recordActions`。
+5. **全局助手**：开启 `plugin-ai` 应用级悬浮助手，调度员设为 Kai。
+6. **知识库（RAG，可选增强）**：平台规则 / 类目 / 标题规范 / 禁售词入 Knowledge Base，供 Rena/Lena 命中引用。
 
 ### 14.3 技术实现
 
-- 复用内置 AI 员工优先，不足时创建专用员工。
-- Knowledge Base 放平台规则、类目规则、标题规范、禁售词。
-- Custom tools 区分 `Ask` / `Allow`。
-- 修改类工具必须写审计。
+- `nocobase-data-modeling`（集合暴露/元数据）、`plugin-ai`（模型服务）、`nocobase-ai-employee`（`aiEmployees:create` 新建专属员工 + prompt/工具）、`nocobase-ui-builder` 的 `ai-employee-actions`（`type:"aiEmployee"`，`workContext:{target:"self"}`，`tasks[]`）。
+- **安全约束（不可破）**：AI 只读分析/研究，或把建议**填进表单字段**（用户 Submit 才入库）；绝不直接写最终字段/删除/真实发布；需写库的建议走受控 `aiListing*` suggestion 工具（只写 `*Processed` + 审计）；审核锁定（`reviewed`）后 AI 写入被拒；所有 AI 字段变化写 `aiListingAuditLogs`（actorType=ai_employee）。
 
 ### 14.4 交付物
 
-- AI 员工配置。
-- 知识库文档。
-- 工具权限表。
-- 页面按钮绑定。
-- 测试对话记录。
+- 暴露后的核心集合（UI 可管理）+ spike 结论；可用 LLM 模型服务（mock 兜底）。
+- 5 个专属 AI 员工配置。
+- 原生 商品库/预览编辑/规则 页 + 原生 AI 员工动作绑定 + 全局助手。
+- 知识库文档（可选）；工具权限表；测试对话/任务记录。
 
 ### 14.5 功能验收
 
-- AI 员工能读取当前商品上下文。
-- 能输出结构化建议。
-- Ask 工具调用前会询问确认。
-- Allow 查询不越权。
-- 知识库能命中平台规则。
-- AI 工具失败时返回友好错误，页面展示 `traceId`，审计记录中能查到失败摘要。
+- 核心集合在 `collections:list` 可见、字段正确；原生页可列出并编辑既有商品。
+- LLM 配好后专属员工能基于当前 UI 上下文真实生成；未配时 mock 兜底不报错。
+- Toby 填表为“填字段不入库”，Submit 才保存并审计；审核锁定后 AI 写入被拒；Allow 查询不越权。
+- 全局助手可用，Kai 能转派。
+- AI 工具失败返回标准错误码 + friendlyMessage + traceId，审计可查；密钥不出现在任何日志/审计/前端。
 
 ### 14.6 样式验收
 
-重点检查：
-
-- AI 按钮位置自然，不喧宾夺主。
-- AI 输出结果可读，不像聊天日志堆叠。
-- 建议值和最终值区分明确。
-- Ask 确认文案清晰。
+- 头像悬浮、任务按钮、上下文联动、整体视觉层级对齐官方演示。
+- AI 按钮位置自然不喧宾夺主；输出结果可读、不像聊天日志堆叠；建议值与最终值区分明确；Ask 确认文案清晰。
 
 ### 14.7 交给 Claude/Codex 的任务提示词
 
 ```text
-执行 Phase 10：AI 员工与知识库增强。
-请配置或复用 AI 员工，绑定到预览编辑、信息处理、发布记录等页面。
-请建立平台规则知识库和 Custom tools 权限表。
-修改类工具必须 Ask，查询类工具可 Allow 但必须遵循用户权限。
-AI 工具失败必须写入审计或任务日志，并返回标准错误码、friendlyMessage 和 traceId。
-完成后提供员工列表、工具列表、知识库命中测试、页面按钮截图说明。
+执行 Phase 10：AI 员工原生化集成（独立阶段，一次交付）。
+按六步有序推进：① 集合暴露基座（先单集合 spike，验证数据不丢、不破坏现有页，不通过则回退混合方案）；② 用产品负责人的 API Key 配 plugin-ai 模型服务（含 mock 兜底，密钥不入任何日志/审计/前端）；③ 新建专属 AI 员工 Mira/Rena/Toby/Lena/Kai（不复用内置，lst- 前缀，带领域化 prompt/avatar）；④ 用原生区块重建商品库/预览编辑/规则页（替换 Phase 6/7 jsBlock，数据不动），挂原生 aiEmployee 动作；⑤ 开全局助手由 Kai 调度；⑥ 平台规则知识库（可选）。
+铁律：AI 只读或填表单不入库（Submit 才存），写库走受控建议工具并审计，审核锁定后 AI 不可改，不做真实发布。
+完成后提供：集合暴露/ spike 结论、员工列表、原生页与 AI 任务测试、多商品/审核/审计样例、页面截图说明。
 ```
 
 ---
@@ -956,55 +951,6 @@ AI 工具失败必须写入审计或任务日志，并返回标准错误码、fr
 请基于前面所有 Phase 做端到端回归、权限检查、失败路径检查和样式问题修复。
 不要新增大功能，只修复影响试运营的问题。
 完成后输出测试记录、样式问题修复清单、权限验证记录、已知问题和试运营操作手册。
-```
-
----
-
-## 16N. Native AI Track：AI 员工原生化升级
-
-> 触发背景：对齐 NocoBase 官方演示（Viz/Vera/Dex 原生 AI 员工 + 全局助手）。根因：现有业务页全是 jsBlock（集合 code-first 不在 UI 数据源），且本实例无 LLM 模型服务。完整设计见 `nocobase-ai-listing-native-ai-employees-design.md`。
->
-> 顺序固定：**N1 原生化基座 → N2 LLM 接入 → N3 原生 AI 员工绑定**。N1 不通过 spike 则回退“混合方案”（新增原生承载页而非改造原集合）。
-
-### N1 原生化基座（UI 可管理集合）
-
-- **目标**：把 `aiListingProducts/Skus/MediaAssets/Rules` 暴露给 client 主数据源，使原生 table/details/form 能绑定（这是挂原生 `aiEmployee` 动作的前提）。
-- **开发范围**：① 可行性 spike：先暴露 1 张集合，验证进入 `collections:list`、字段 interface 可读、原生表格可读写既有数据、不破坏现有 jsBlock 页与 REST；② 通过后批量补齐核心集合的 UI 元数据（title/interface/枚举/关联）；不改表结构、不动既有数据。
-- **技术实现**：`nocobase-data-modeling` 检视/补元数据；必要时 `nocobase-plugin-development` 调整集合定义为 UI 可管理。
-- **交付物**：spike 结论报告；核心集合在 UI 数据源可见且字段正确。
-- **功能验收**：`collections:list` 含 `aiListing*`；原生表格能列出并编辑既有商品；旧 jsBlock 页与所有 REST/自定义 action 不回归。
-- **样式验收**：低（基座阶段，无新页面）。
-- **任务提示词**：
-```text
-执行 Phase N1：原生化基座。先做单集合 spike 验证集合可暴露给 UI 且数据不丢、不破坏现有页；通过后补齐核心集合 UI 元数据。不通过则回退混合方案并说明。
-```
-
-### N2 真实 LLM 接入
-
-- **目标**：配置 `plugin-ai` 模型服务，让 dex/lexi/viz/vera 真正可用；未配置时回退确定性 mock。
-- **开发范围**：录入模型 provider/apiKey/baseURL/模型名；为目标员工绑定模型；保留“无模型→mock”兜底分支。
-- **技术实现**：`plugin-ai` 模型服务配置；密钥仅服务端，禁入审计/日志/前端（§7.9 脱敏铁律）。
-- **交付物**：可用模型服务；一次真实员工对话验证；mock 兜底验证。
-- **功能验收**：`llmServices` 有可用模型；某员工能真实回答；拔掉模型时 mock 不报错。
-- **样式验收**：低。
-- **高风险确认**：密钥属敏感配置，需人工确认来源与额度。
-- **任务提示词**：
-```text
-执行 Phase N2：接入真实 LLM。用产品负责人提供的 API Key 配置 plugin-ai 模型服务并绑定员工，验证真实生成；保留 mock 兜底；确保密钥不入任何日志/审计/前端。
-```
-
-### N3 原生 AI 员工绑定 + 关键页原生化
-
-- **目标**：商品库/商品详情/编辑表单/规则页用原生区块重建，并挂原生 AI 员工，达成演示同款体验。
-- **开发范围**：① 原生重建 商品库（表格+详情）、预览编辑（详情+编辑表单+审核动作）、规则管理（CRUD）；② 绑定 Viz（列表分析，只读）、Vera（详情研究，只读）、Dex（编辑表单填充，不入库）、开启全局 Atlas 助手；③ 替换 Phase 6/7 的 jsBlock 规则页/预览编辑页（数据不动，验收通过后下线旧页）。
-- **技术实现**：`nocobase-ui-builder` 的 `flow-surfaces` 原生区块 + `ai-employee-actions`（`type:"aiEmployee"`，`workContext:{target:"self"}`，`tasks[]`）；`nocobase-ai-employee` 设计员工 prompt/工具。
-- **安全约束（不可破）**：AI 只读分析或填表单字段（用户 Submit 才入库）；绝不直接写最终字段/删除/真实发布；写库走受控 suggestion 工具 + 审计；审核锁定后 AI 写入被拒。
-- **交付物**：原生商品库/详情/编辑/规则页；4 类 AI 员工绑定；多商品 + AI 任务 + 审核 + 审计样例；截图。
-- **功能验收**：列表/详情/编辑均为原生区块；AI 员工基于当前 UI 上下文生成；Dex 填表不入库、Submit 才保存；审核锁定后 AI 不可改；全局助手可用。
-- **样式验收**：极高——对齐演示的头像悬浮、任务按钮、上下文联动与整体视觉层级。
-- **任务提示词**：
-```text
-执行 Phase N3：原生 AI 员工绑定 + 关键页原生化。用原生区块重建商品库/详情/编辑/规则页，挂 Viz/Vera/Dex + 全局 Atlas，体验对齐官方演示。AI 只读或填表单不入库，写库走受控建议工具并审计，审核锁定后 AI 不可改，不做真实发布。提供多商品/AI 任务/审核/审计样例与截图。
 ```
 
 ---
