@@ -19,6 +19,7 @@ import { setupPublish } from './publish';
 import { setupLibrary } from './library';
 import { setupHistory } from './history';
 import { seedPlatformAccounts, setupSettings } from './settings';
+import { setupAssistant } from './assistant';
 
 export class PluginAiListingServer extends Plugin {
   async afterAdd() {}
@@ -46,6 +47,8 @@ export class PluginAiListingServer extends Plugin {
     setupHistory(this);
     // 设置（Phase 9）：aiListingSettings overview(平台状态脱敏 + OpenAPI/Crawl4AI 提示)/saveConfig。
     setupSettings(this);
+    // AI 员工服务层（Phase 10 v2）：aiListingAssistant roster/ask（persona+只读上下文→aiManager LLM，mock 兜底，审计，Key 脱敏）。
+    setupAssistant(this);
   }
 
   async install() {

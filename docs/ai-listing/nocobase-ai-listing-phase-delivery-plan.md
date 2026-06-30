@@ -768,37 +768,42 @@ AI 按钮只做建议或 Ask 后填表，不能直接发布。
 
 ---
 
-## 14. Phase 10：AI 员工原生化集成（独立阶段）
+## 14. Phase 10：AI 员工集成（v2 · jsBlock 内嵌原生 AI，独立阶段）
 
-> 本阶段把全程的“自定义 mock AI 按钮”升级为**对齐 NocoBase 官方演示的原生 AI 员工**（头像悬浮 + 自然语言任务 + 与当前 UI 上下文联动 + 全局助手）。完整设计见 `nocobase-ai-listing-native-ai-employees-design.md`。
-> **作为一个独立 phase 一次性交付**，内部含「基座 → 接模型 → 新建专属员工 → 关键页原生化绑定 → 全局助手 → 知识库」六个有序子步骤；不再拆成多个 phase，也不散落到各 phase。
+> **v2 重写（2026-06-30）**：v1「把核心页改成原生区块 + 原生 aiEmployee 动作」实测观感差、强依赖把 code-first 集合暴露给 UI（db2cm 丢 interface、authoring 慢且易 fetch failed），已**整体回滚**（原生页/集合 uiManageable/db2cm 元数据全删，数据零丢失）。
+> v2 定调：**保留现有 jsBlock 页不重建**，把「和官方 demo 一样的原生 AI 员工」（同一套 plugin-ai 员工与模型）**集成进现有页**。完整设计与官方 demo 调研结论见 `nocobase-ai-listing-native-ai-employees-design.md`（v2）。
 
 ### 14.1 目标
 
-让商品库 / 预览编辑 / 规则等核心页拥有真正可用的“原生 AI 员工”，保持权限与审计边界，**不复用内置员工、不做真实发布**。
+让商品库 / 预览编辑 / 规则 / 发布 等现有 jsBlock 页拥有「和原生一样」的 AI 员工（区块头像入口 + 右侧 AI 抽屉 + 全局悬浮助手），保持权限与审计边界，**不重建原生页、不复用内置员工、不做真实发布**。
 
-### 14.2 开发范围（六个有序子步骤，单阶段交付）
+### 14.2 开发范围（v2 子步骤，②依赖产品负责人 API Key）
 
-1. **原生化基座**：把 `aiListingProducts/Skus/MediaAssets/Rules` 暴露给 client 主数据源（原生区块可绑定）。**首步做单集合可行性 spike**：验证进入 `collections:list`、字段可读、原生表格可读写既有数据、不破坏现有 jsBlock 页与 REST；不通过则回退“混合：新增原生承载页”。
-2. **接入真实 LLM**：用产品负责人提供的 API Key 配置 `plugin-ai` 模型服务；保留“无模型→确定性 mock”兜底。密钥仅服务端，禁入日志/审计/前端。
-3. **新建专属 AI 员工**（不复用内置 dex/lexi/viz/vera，username 用 `lst-` 前缀）：
+1. **AI 服务层**：`src/server/assistant/index.ts`（`aiListingAssistant:roster/ask`）；`ask` 用 `app.aiManager` 调 plugin-ai 已配置的同一模型，**无模型→确定性 mock 兜底**；只读、不写库、写 `ai.assist` 审计、Key 脱敏。
+2. **接入真实 LLM**：用 API Key 在 `Settings → AI employees → LLM services` 配 provider(DeepSeek/通义/OpenAI/Claude)+model；给 5 员工 `Model settings` 绑该模型；保留 mock 兜底。密钥仅服务端，禁入日志/审计/前端。
+3. **AI 面板（首选：接 plugin-ai 原生面板；兜底：自建 Drawer）**——详见设计文档 §3.2bis：
+   - **首选·原生适配器**：`src/client-v2/components/AssistantBridge.tsx` 用 `@nocobase/plugin-ai/client-v2` 的 `useChatBoxActions().triggerTask` 打开**官方同款原生右侧面板**（参 data-visualization `DaraButton`），经 `window.aiListingOpenAssistant(username,ctx)` 桥给 jsBlock 按钮；package.json 加 `@nocobase/plugin-ai` peerDep。⚠️**禁止 `app.addProvider` 在最外层挂载**（会把 bridge 包在 plugin-ai context 外 → hook 抛错 → **全前端白屏**，已实测踩坑并 revert）；必须挂进 plugin-ai context 内 + **ErrorBoundary 包住渲染 null** 保证永不崩 app。
+   - **兜底·自建 Drawer**：`renderAssistant(ctx,{employee,tasks,getContext,onAdopt})`——员工头像按钮 + 右侧 antd Drawer（greeting + 预设任务 + 当前页上下文 + markdown 结果 + 友好错误），原生未就绪时自动回退。已实现并验证（商品库 block m44yubtnxn2，调 `aiListingAssistant:ask`，mock 标「示例·未接模型」+traceId）。
+4. **各页接入**（5 专属员工 `lst-` 前缀，已建）：
 
-   | 员工 | username | 职位 | 绑定 | 任务 | 权限 |
-   |---|---|---|---|---|---|
-   | 选品参谋 Mira | `lst-mira` | 选品分析师 | 商品库/预览编辑 列表 | 选品质量、批次成功率、风险词扫描 | 只读 `Allow` |
-   | 合规向导 Rena | `lst-rena` | 合规与市场研究员 | 商品详情 记录动作 | 合规/平台规则、卖点研究、目标市场 | 只读 `Allow`（可联网） |
-   | 文案管家 Toby | `lst-toby` | 商品信息整理员 | 编辑表单 | 优化标题/生成描述/补全参数→**填表单不入库** | Ask（Submit 才存） |
-   | 发布助理 Lena | `lst-lena` | 发布助理 | 发布/发布记录页 | 发布前检查、失败解释、重试建议 | 只读 `Allow`（不触发真实发布） |
-   | 搬运主管 Kai | `lst-kai` | 搬运工作台主管 | 全局悬浮助手 | 自然语言提问、转派以上专属员工 | 跟随用户权限 |
+   | 员工 | username | 职位 | 绑定 jsBlock 页 | 入口 | 任务 | 权限 |
+   |---|---|---|---|---|---|---|
+   | 选品参谋 Mira | `lst-mira` | 选品分析师 | 商品库 / 预览编辑列表 | 区块头像 | 选品质量、批次成功率、风险词扫描 | 只读 |
+   | 合规向导 Rena | `lst-rena` | 合规与市场研究员 | 预览编辑·商品详情 | 区块头像 | 合规/平台规则、卖点研究、目标市场 | 只读（可接知识库） |
+   | 文案管家 Toby | `lst-toby` | 商品信息整理员 | 预览编辑·编辑表单 | 区块头像 | 优化标题/生成描述/补全参数→**填表单不入库** | 填表（Submit 才存） |
+   | 发布助理 Lena | `lst-lena` | 发布助理 | 商品发布 / 发布记录 | 区块头像 | 发布前检查、失败解释、重试建议 | 只读（不触发真实发布） |
+   | 搬运主管 Kai | `lst-kai` | 搬运工作台主管 | 全局悬浮助手 | 右下角 | 自然语言提问、转派以上专属员工 | 跟随用户权限 |
 
-4. **关键页原生化 + 绑定**：用原生 table/details/form 重建 商品库、预览编辑/审核、规则管理（**替换 Phase 6/7 的 jsBlock 规则页/预览编辑页**，数据不动，验收通过后下线旧页）；用 `ai-employee-actions` 把上表员工挂到对应区块的 `actions`/`recordActions`。
-5. **全局助手**：开启 `plugin-ai` 应用级悬浮助手，调度员设为 Kai。
-6. **知识库（RAG，可选增强）**：平台规则 / 类目 / 标题规范 / 禁售词入 Knowledge Base，供 Rena/Lena 命中引用。
+5. **全局悬浮助手**：开启 `plugin-ai` 应用级悬浮助手（原生，零页面改造，全 app 浮现），调度员设为 `lst-kai`。
+6. **（可选）知识库（RAG）**：平台规则 / 类目 / 标题规范 / 禁售词入 Knowledge Base，供 Rena/Lena 命中。
+7. **（可选）系统优化**：工作台真实聚合 + ECharts（对齐 demo Dashboard）、各模块 Guide 引导页。
 
 ### 14.3 技术实现
 
-- `nocobase-data-modeling`（集合暴露/元数据）、`plugin-ai`（模型服务）、`nocobase-ai-employee`（`aiEmployees:create` 新建专属员工 + prompt/工具）、`nocobase-ui-builder` 的 `ai-employee-actions`（`type:"aiEmployee"`，`workContext:{target:"self"}`，`tasks[]`）。
-- **安全约束（不可破）**：AI 只读分析/研究，或把建议**填进表单字段**（用户 Submit 才入库）；绝不直接写最终字段/删除/真实发布；需写库的建议走受控 `aiListing*` suggestion 工具（只写 `*Processed` + 审计）；审核锁定（`reviewed`）后 AI 写入被拒；所有 AI 字段变化写 `aiListingAuditLogs`（actorType=ai_employee）。
+- 服务端：`app.aiManager`（plugin-ai 模型调用，解析 `llmServices` 配置）、`aiEmployees`（员工已建，`Model settings` 绑模型）、`aiListingAssistant` 自定义 action（persona+context→LLM，mock 兜底，审计，脱敏）。
+- 前端：jsBlock 内嵌面板（`ctx.libs.React/antd` Drawer + `ctx.request('aiListingAssistant:ask')`）；全局助手用 plugin-ai 原生组件。
+- 不再用 `nocobase-data-modeling` 暴露集合、不再用原生 `ai-employee-actions`（v1 路径已废弃）。
+- **安全约束（不可破）**：AI 只读分析/研究，或把建议**填进表单字段**（用户 Submit 才入库）；绝不直接写最终字段/删除/真实发布；需写库的建议走受控 `aiListing*` suggestion 工具（只写 `*Processed` + 审计）；审核锁定（`reviewed`）后 AI 写入被拒；所有 AI 调用与字段变化写 `aiListingAuditLogs`（actorType=ai_employee）；模型 Key 仅服务端 `llmServices`，禁入日志/审计/前端/assistant 出入参。
 
 ### 14.4 交付物
 
