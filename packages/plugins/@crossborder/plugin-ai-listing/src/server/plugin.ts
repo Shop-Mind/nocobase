@@ -15,6 +15,10 @@ import { setupDashboard } from './dashboard';
 import { setupProcessing } from './processing';
 import { seedRules } from './processing/rules-seed';
 import { setupReview } from './review';
+import { setupPublish } from './publish';
+import { setupLibrary } from './library';
+import { setupHistory } from './history';
+import { seedPlatformAccounts, setupSettings } from './settings';
 
 export class PluginAiListingServer extends Plugin {
   async afterAdd() {}
@@ -34,6 +38,14 @@ export class PluginAiListingServer extends Plugin {
     setupProcessing(this);
     // 预览编辑与人工审核（Phase 7）：aiListingReview list/detail/saveFinal/approveDraft/rollbackReview/changeLog + AI 建议按钮。
     setupReview(this);
+    // 发布前校验与模拟发布（Phase 8）：aiListingPublish precheck/publish(幂等)/retryFailed + mock 发布 adapter（真实发布只留接口不启用）。
+    setupPublish(this);
+    // 商品库（Phase 9）：aiListingLibrary stats/list/export，主数据台账 + 发布链接聚合。
+    setupLibrary(this);
+    // 发布记录（Phase 9）：aiListingHistory stats/list/export，发布结果历史 + 失败原因；重试复用 aiListingPublish:retryFailed。
+    setupHistory(this);
+    // 设置（Phase 9）：aiListingSettings overview(平台状态脱敏 + OpenAPI/Crawl4AI 提示)/saveConfig。
+    setupSettings(this);
   }
 
   async install() {
@@ -41,6 +53,8 @@ export class PluginAiListingServer extends Plugin {
     await seedRoles(this);
     // 幂等创建 Phase 6 默认处理规则（Shopee→Lazada / Amazon→Temu / 通用快速处理）。
     await seedRules(this);
+    // 幂等播种平台账号示例（Phase 9 设置页，仅授权状态，不含明文密钥）。
+    await seedPlatformAccounts(this);
   }
 
   async afterEnable() {}

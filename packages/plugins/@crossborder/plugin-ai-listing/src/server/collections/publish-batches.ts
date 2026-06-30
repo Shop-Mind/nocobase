@@ -50,6 +50,7 @@ export default defineCollection({
         { value: 'success', label: 'Success', color: 'green' },
         { value: 'partial_failed', label: 'Partial failed', color: 'orange' },
         { value: 'failed', label: 'Failed', color: 'red' },
+        { value: 'skipped', label: 'Skipped', color: 'default' },
       ],
       { defaultValue: 'pending' },
     ),
