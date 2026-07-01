@@ -8,8 +8,8 @@
  */
 
 // Phase C：OAuth 授权闭环。两个浏览器直达端点（公开，原生中间件在 SPA 兜底前拦截）：
-//   GET /nocobase-api/aiListingOpenApi:oauthStart    → 生成 state、302 跳 Alibaba 授权页
-//   GET /nocobase-api/aiListingOpenApi:oauthCallback → 校验 state、用 code 换 token、加密落库、渲染结果页
+//   GET /api/aiListingOpenApi:oauthStart    → 生成 state、302 跳 Alibaba 授权页
+//   GET /api/aiListingOpenApi:oauthCallback → 校验 state、用 code 换 token、加密落库、渲染结果页
 // 另有受控 action（登录态，供设置页）：aiListingOpenApi:status / disconnect（返回脱敏状态，绝不含 token）。
 // 铁律：回调只处理 code→token→加密落库；日志/页面绝不显示 token/secret；HTML 结果页不引 SPA（隧道下 dev SPA 打不开无妨）。
 
@@ -17,8 +17,12 @@ import { randomBytes } from 'node:crypto';
 import type { Context, Next } from '@nocobase/actions';
 import type Plugin from '../plugin';
 import { OpenApiError } from './errors';
-import { buildAuthorizeUrl, exchangeCode, TokenBundle } from './oauth';
+import type { TokenBundle } from './oauth';
 import { saveToken } from './token-store';
+import { getConnector } from '../platforms/registry';
+
+// 通过注册表拿 Alibaba.com 连接器；接多平台时这里按 state/路径解析出对应平台即可。
+const connector = getConnector('alibaba-icbu');
 
 const PLATFORM = 'Alibaba.com';
 // 浏览器直达端点放在 API 前缀下：dev 网关只把 /api/* 转发给 app（其它路径给前端 dev server），
@@ -79,8 +83,10 @@ async function resolveAccountId(plugin: Plugin, bundle: TokenBundle): Promise<nu
 }
 
 function sanitizeAccount(row: Record<string, unknown>): Record<string, unknown> {
-  const expiresAt = row.expiresAt ? new Date(row.expiresAt as string) : null;
-  const soon = expiresAt ? expiresAt.getTime() - Date.now() < 24 * 3600 * 1000 : false;
+  // access_token 有效期短（约 1 天）且会自动刷新，不据它提示；真正需要用户重新授权的信号是
+  // refresh_token 即将过期（超期未刷新才需重新授权）。故 expiringSoon 基于 refreshExpiresAt。
+  const refreshAt = row.refreshExpiresAt ? new Date(row.refreshExpiresAt as string) : null;
+  const soon = refreshAt ? refreshAt.getTime() - Date.now() < 24 * 3600 * 1000 : false;
   return {
     id: row.id,
     platform: row.platform,
@@ -106,7 +112,7 @@ export function setupOpenApi(plugin: Plugin): void {
         ctx.withoutDataWrapping = true;
         try {
           const state = issueState();
-          ctx.redirect(buildAuthorizeUrl(state));
+          ctx.redirect(connector.buildAuthorizeUrl(state));
         } catch (e) {
           const err = e as OpenApiError;
           ctx.status = 200;
@@ -134,7 +140,7 @@ export function setupOpenApi(plugin: Plugin): void {
           return;
         }
         try {
-          const bundle = await exchangeCode(code);
+          const bundle = await connector.exchangeCode(code);
           const accountId = await resolveAccountId(plugin, bundle);
           await saveToken(plugin, accountId, bundle);
           ctx.logger?.info?.('[ai-listing] oauth connected', {
