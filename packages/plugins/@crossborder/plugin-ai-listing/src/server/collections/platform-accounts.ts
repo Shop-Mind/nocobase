@@ -33,5 +33,15 @@ export default defineCollection({
     { type: 'string', name: 'credentialRef', interface: 'input', title: 'Credential ref' },
     { type: 'date', name: 'expiresAt', interface: 'datetime', title: 'Expires at' },
     { type: 'jsonb', name: 'settings', interface: 'json', title: 'Settings' },
+    // OAuth token 加密落库（AES-256-GCM，密钥来自 env AI_LISTING_TOKEN_SECRET）。
+    // 这两列是密文，ACL 对所有角色一律剥离，绝不下发前端（见 acl/index.ts ALWAYS_STRIP）。
+    { type: 'text', name: 'accessTokenEnc', interface: 'textarea', title: 'Access token (encrypted)' },
+    { type: 'text', name: 'refreshTokenEnc', interface: 'textarea', title: 'Refresh token (encrypted)' },
+    // refresh_token 过期时间；超过它未刷新则需卖家重新授权（ICBU refresh 默认 5 天）。
+    { type: 'date', name: 'refreshExpiresAt', interface: 'datetime', title: 'Refresh expires at' },
+    // 授权账号标识（account_id / seller_id / country），非敏感，便于展示「已连接哪个卖家」。
+    { type: 'string', name: 'accountUid', interface: 'input', title: 'Account UID' },
+    { type: 'string', name: 'sellerId', interface: 'input', title: 'Seller ID' },
+    { type: 'string', name: 'country', interface: 'input', title: 'Country' },
   ],
 });

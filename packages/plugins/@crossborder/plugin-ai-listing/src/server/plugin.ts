@@ -20,6 +20,7 @@ import { setupLibrary } from './library';
 import { setupHistory } from './history';
 import { seedPlatformAccounts, setupSettings } from './settings';
 import { setupAssistant } from './assistant';
+import { setupOpenApi } from './openapi';
 
 export class PluginAiListingServer extends Plugin {
   async afterAdd() {}
@@ -49,6 +50,8 @@ export class PluginAiListingServer extends Plugin {
     setupSettings(this);
     // AI 员工服务层（Phase 10 v2）：aiListingAssistant roster/ask（persona+只读上下文→aiManager LLM，mock 兜底，审计，Key 脱敏）。
     setupAssistant(this);
+    // 真接入 OpenAPI（Phase C）：OAuth 授权闭环。oauthStart/oauthCallback 浏览器直达端点 + status/disconnect 受控 action。
+    setupOpenApi(this);
   }
 
   async install() {

@@ -35,14 +35,18 @@ export const roleSeeds: Array<{
 // 可读取平台凭证引用字段的特权角色。其余角色读取平台账号时会被剥离 credentialRef。
 const CREDENTIAL_PRIVILEGED_ROLES = new Set(['root', 'admin', 'r_store_admin']);
 const PLATFORM_ACCOUNTS = 'aiListingPlatformAccounts';
+// credentialRef 仅特权角色可见；加密 token 列（*Enc）对任何角色一律剥离，绝不下发前端（密文也不给）。
 const SENSITIVE_FIELD = 'credentialRef';
+const ALWAYS_STRIP = ['accessTokenEnc', 'refreshTokenEnc'];
 
 function stripSensitiveField(payload: unknown, roles: string[]): void {
-  if (roles.some((r) => CREDENTIAL_PRIVILEGED_ROLES.has(r))) return;
+  const privileged = roles.some((r) => CREDENTIAL_PRIVILEGED_ROLES.has(r));
   const scrub = (row: unknown) => {
-    if (row && typeof row === 'object' && SENSITIVE_FIELD in (row as Record<string, unknown>)) {
-      delete (row as Record<string, unknown>)[SENSITIVE_FIELD];
-    }
+    if (!row || typeof row !== 'object') return;
+    const r = row as Record<string, unknown>;
+    // 加密 token 密文对所有人剥离；credentialRef 仅非特权角色剥离。
+    for (const f of ALWAYS_STRIP) delete r[f];
+    if (!privileged && SENSITIVE_FIELD in r) delete r[SENSITIVE_FIELD];
   };
   if (Array.isArray(payload)) {
     payload.forEach(scrub);
