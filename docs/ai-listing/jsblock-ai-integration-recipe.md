@@ -50,13 +50,21 @@ useEffect(() => {
   if (!kit) return undefined;
   kit.register(BLOCK_KEY, {
     title: '我的区块',                    // 进 system prompt，帮 AI 理解语境
+    submitLabel: '保存',                  // 可选：本区块提交按钮的真名（如「保存」「模拟发布」「提交批量」）；AI 会提示用户点它，默认「提交」
     getData: () => stagedRef.current,     // 当前暂存值
-    getSchema: () => FIELDS,              // 可编辑字段（= 写白名单）
-    applyPatch: (patch) => setStaged((s) => ({ ...s, ...patch })), // AI 只改暂存
+    getSchema: () => FIELDS,              // 可编辑字段（= 写白名单）；hint 里可写枚举取值/结构，AI 会据此生成合法值
+    applyPatch: (patch) => setStaged((s) => ({ ...s, ...patch })), // AI 只改暂存；对枚举/数组建议在此做值级校验，丢弃非法值
+    // 可选：一段「只读背景信息」，进 system prompt（用户看不到）。放技术细节（主键 id、状态、可用读取工具、可用枚举取值、
+    // 供解释的失败/阻断记录等），从而让「用户可见的输入框提示语」保持自然口语、不含 ID/工具名等开发术语。
+    getSystemContext: () => `商品数据库 id：${idRef.current}；目标平台：${platformRef.current}。`,
   });
   return () => kit.unregister(BLOCK_KEY);
-}); // 无依赖数组：每次渲染刷新闭包
+}, [kit]); // 用 [kit]：getData/getSchema/applyPatch 都读 ref，注册一次即可，无需每次渲染重注册
 ```
+
+> **强约束防非法值**：`jsBlockApplyPatch` 按 `getSchema()` 的 name 过滤未知字段，但**值**仍可能非法。对枚举/数组/结构化字段，在 `applyPatch` 里做值级校验（如 `ruleType` 只收 `info/image/video`、`priority` 只收 `high/medium/low`、数组清洗空项），把 AI 写进来的非法值挡在暂存外。
+>
+> **可见 vs 不可见**：`openAI(key, { prompt })` 的 `prompt` 会**预填进用户可见的输入框**——必须是运营友好的自然口语，**不要**放数据库 id、工具名（`reviewGetProduct`/`jsBlockApplyPatch`）、「暂存」等开发术语；这些技术细节一律走 `getSystemContext()`（进系统消息，用户看不到）。
 
 ### 步骤 2 — 放原生头像（转头动画）+ 点击打开抽屉
 
@@ -108,10 +116,23 @@ const submit = async () => {
 
 ---
 
-## 换用别的员工 / 只读型
+## 员工归属（按专业域，一页一员工，不重叠）
 
-- **换员工**：把 `USERNAME` 换成 `lst-mira`（选品）、`lst-rena`（合规）、`lst-lena`（发布）、`lst-kai`（主管）之一即可。可在同一块放多个头像切换。
-- **只读型**（不需要改数据的页，如工作台/发布记录）：**不注册 `applyPatch`、不声明可写 `FIELDS`**，只调 `kit.openAI(key, { username, prompt })` 注入只读上下文，让员工纯问答/解释。AI 拿不到写工具 → 不可能写库。
+`lst-toby` 文案（预览编辑）/ `lst-dex` 信息加工（规则管理·信息处理）/ `lst-mira` 选品（商品库·工作台洞察）/ `lst-rena` 合规（预览编辑只读）/ `lst-lena` 发布（商品发布·发布记录）/ `lst-kai` 全局调度（工作台）。
+给页面选员工要按「专业域 + 是否需要主动编辑」匹配：**编辑型**页（要主动填表单/选数据）别用只读定位的员工（Kai/Rena）——他们 about 偏「只读/转派」，会推脱；缺合适工种就**新建专属员工**，并在其 `about` 里写清「主动填暂存 ≠ 写库，提交才入库」。
+
+## 编辑型 vs 只读型
+
+- **编辑型**（要改数据的页）：`register(...applyPatch...)` + 头像点击 `kit.openAI(key, { username, prompt })`。kit 会把暂存数据 + 可编辑字段 + `getSystemContext` 注入 system，并指示员工调 `jsBlockApplyPatch`。头像位置**贴着被编辑的区块**（卡片右上/抽屉顶）。
+- **只读型**（不改数据的页，如工作台/发布记录）：**不 register、不注册 `applyPatch`**，头像点击走 **`window.aiListingOpenAssistant(username, { title, content, prompt })`**——它用员工只读 persona，把 `content`（页面聚合/记录，只读）放进 system message，`prompt` 是自然口语；**不注入 `jsBlockApplyPatch` 指令**，AI 纯问答/解释、不可能写库。头像位置放**工具条（导出后）或顶部独立「AI 洞察」栏**。头像仍用 `kit.getAvatar` 取（无需 register）。
+
+  ```js
+  const openInsight = () => window.aiListingOpenAssistant('lst-lena', {
+    title: '发布记录',
+    content: `失败记录：${failLines}`, // 只读上下文，进系统消息（用户看不到）
+    prompt: '这些为什么失败？逐条解释原因、能否重试、下一步怎么做。', // 自然口语，进输入框
+  });
+  ```
 
 ---
 
@@ -128,6 +149,7 @@ const submit = async () => {
 
 ## 常见坑
 
+- **抽屉打不开、`openAI`/`openAssistant` 返回 true 却没反应**：原生 plugin-ai ChatBox 只挂在 **`/admin/`（不加 /v）** 运行时，`/v/admin/` 不挂。**本工具必须在 `/admin/` 用与验证**。两套共享 `window.__nocobasePluginAIChatStores`，但只有挂了 ChatBox 的 `/admin/` 会因 store `open=true` 弹出抽屉。
 - **`window.__aiListingBlockKit` 是 undefined**：确认装配挂在运行中的 **v1 入口**（`src/client/plugin.tsx` 的 `load()`），不是只挂在 v2。
 - **对话一开口就崩 `Cannot read properties of undefined (reading '_zod')`**：某个 **GENERAL scope** 工具的 zod schema 非法（最常见 `z.record(z.any())` 少了第一个参数——zod v4 需 `z.record(z.string(), z.any())`）。它在**绑定阶段**就抛，会毒化**每一个**员工的对话。优先给工具 schema 用**纯 JSON Schema** 规避 zod 互操作。详见 `AGENTS.md` 的「AI Employees, Tools & jsBlock Conversational Editing」。
 - **新建工具文件不生效**：工具目录只在服务端启动时扫描一次；新文件是动态 import，`tsx watch` 不会为它重启——改一下已被 import 的服务端文件（如 `src/server/index.ts`）强制重启，再确认工具出现在 `aiTools` 资源里。

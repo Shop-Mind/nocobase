@@ -107,6 +107,44 @@ function csvCell(value: unknown): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+// ── 批量保存字段的纯逻辑（可单测，与 DB/审计写入解耦）──
+// 锁定状态：这些商品的运营字段不允许批量改（发布中/已发布）。
+export const BULK_LOCKED_STATUS = ['publishing', 'published'];
+const BULK_PRIORITY = ['high', 'medium', 'low'];
+
+// 字段白名单 + 值归一化：服务端二次校验，不信任前端传的字段名/值。只返回合法字段。
+export function normalizeBulkFields(input: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (input.targetPlatform != null && String(input.targetPlatform).trim()) {
+    patch.targetPlatform = String(input.targetPlatform).trim();
+  }
+  if (input.stock != null && input.stock !== '') {
+    const n = Number(input.stock);
+    if (Number.isFinite(n) && n >= 0) patch.stock = Math.floor(n);
+  }
+  if (input.priority != null && BULK_PRIORITY.includes(String(input.priority))) {
+    patch.priority = String(input.priority);
+  }
+  if (Array.isArray(input.tags)) {
+    patch.tags = input.tags.map((t) => String(t).trim()).filter(Boolean);
+  }
+  return patch;
+}
+
+// 计算「实际有变化的字段」：current 为字段当前值映射，patch 为归一化后的目标值。返回逐字段 diff。
+export function computeFieldDiffs(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Array<{ field: string; old: unknown; val: unknown }> {
+  const diffs: Array<{ field: string; old: unknown; val: unknown }> = [];
+  for (const k of Object.keys(patch)) {
+    const oldVal = current[k];
+    if (JSON.stringify(oldVal ?? null) === JSON.stringify(patch[k])) continue;
+    diffs.push({ field: k, old: oldVal ?? null, val: patch[k] });
+  }
+  return diffs;
+}
+
 export function setupLibrary(plugin: Plugin): void {
   const { app } = plugin;
   const db = app.db;
@@ -221,23 +259,8 @@ export function setupLibrary(plugin: Plugin): void {
           ctx.body = fail('NO_PRODUCTS', '请先选择要批量编辑的商品', false, traceId);
           return await next();
         }
-        // 字段白名单 + 值归一化（服务端二次校验，不信任前端传的字段名/值）。
-        const input = (v.values || {}) as Record<string, unknown>;
-        const PRIORITY = ['high', 'medium', 'low'];
-        const patch: Record<string, unknown> = {};
-        if (input.targetPlatform != null && String(input.targetPlatform).trim()) {
-          patch.targetPlatform = String(input.targetPlatform).trim();
-        }
-        if (input.stock != null && input.stock !== '') {
-          const n = Number(input.stock);
-          if (Number.isFinite(n) && n >= 0) patch.stock = Math.floor(n);
-        }
-        if (input.priority != null && PRIORITY.includes(String(input.priority))) {
-          patch.priority = String(input.priority);
-        }
-        if (Array.isArray(input.tags)) {
-          patch.tags = input.tags.map((t) => String(t).trim()).filter(Boolean);
-        }
+        // 字段白名单 + 值归一化（服务端二次校验，不信任前端传的字段名/值）。见 normalizeBulkFields（可单测）。
+        const patch = normalizeBulkFields((v.values || {}) as Record<string, unknown>);
         const patchKeys = Object.keys(patch);
         if (!patchKeys.length) {
           ctx.status = 400;
@@ -247,23 +270,19 @@ export function setupLibrary(plugin: Plugin): void {
 
         const Products = db.getRepository('aiListingProducts');
         const AuditLogs = db.getRepository('aiListingAuditLogs');
-        const LOCKED = ['publishing', 'published'];
         let updated = 0;
         let auditCount = 0;
         const skipped: number[] = [];
         for (const id of ids) {
           const p: any = await Products.findOne({ filterByTk: id });
-          if (!p || LOCKED.includes(p.get('status'))) {
+          if (!p || BULK_LOCKED_STATUS.includes(p.get('status'))) {
             skipped.push(id);
             continue;
           }
           // 只写实际有变化的字段，并逐字段记审计（actorType=user，因入库由用户点提交触发）。
-          const diffs: Array<{ field: string; old: unknown; val: unknown }> = [];
-          for (const k of patchKeys) {
-            const oldVal = p.get(k);
-            if (JSON.stringify(oldVal ?? null) === JSON.stringify(patch[k])) continue;
-            diffs.push({ field: k, old: oldVal ?? null, val: patch[k] });
-          }
+          const current: Record<string, unknown> = {};
+          for (const k of patchKeys) current[k] = p.get(k);
+          const diffs = computeFieldDiffs(current, patch);
           if (!diffs.length) continue;
           const values: Record<string, unknown> = {};
           diffs.forEach((d) => {

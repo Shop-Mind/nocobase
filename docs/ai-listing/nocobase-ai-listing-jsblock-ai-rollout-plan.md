@@ -174,3 +174,27 @@
 - **UI 可移植性**：业务页/区块仍是 flow-surfaces（DB-resident），全新装需另做 UI 导出/DSL（独立事项，不在本规划内）。
 - **模型前提**：DeepSeek/Anthropic 已配、5 员工已绑模型，能力可真跑。
 - **提交前置**：Phase 0 必须先提交 `_zod` 修复，否则全局 AI 对话不可用。
+
+---
+
+## 交付完成状态（2026-07-01 全部完成）
+
+Rollout 全部 6 个 phase 已交付并浏览器端到端验证通过（均在 `/admin/`，DeepSeek 真实调用）。
+
+| Phase | 页面 / 内容 | 员工 | 形态 | 提交 |
+|---|---|---|---|---|
+| 0 | 能力固化 + 接入配方 + 样板 | — | — | `a0079cc1f5` |
+| 1 | 预览编辑（对话改暂存 → saveFinal） | Toby 编辑 / Rena 只读 | 编辑+只读 | `d87efb2c39` |
+| 2 | 商品发布（配置暂存 → 模拟发布）+ precheck/AI 一致性 | Lena | 编辑+只读 | `6eb14450ea` |
+| 3 | 规则管理（结构化规则起草）+ 信息处理（选规则/勾商品/批量处理） | **Dex（新建专属员工）** | 编辑 | 无源码（DB-resident） |
+| 4 | 商品库（批量字段编辑 → bulkSaveFields） | Mira | 编辑（批量） | `4f9d1e578f` |
+| 5 | 工作台（KPI 洞察/待办/转派）+ 发布记录（失败解释/重试建议） | Kai/Mira · Lena | 只读 | 无源码（DB-resident） |
+| 6 | 打磨：bulkSaveFields 单测、接入配方补全（getSystemContext/submitLabel/只读型/`/admin` 坑）、清理核查、本交付文档 | — | — | 待提交 |
+
+**员工归属定稿（一页一域，不重叠）**：Toby 文案（预览编辑）· Dex 加工（规则/信息处理）· Mira 选品（商品库/工作台洞察）· Rena 合规（预览编辑只读）· Lena 发布（发布/发布记录）· Kai 全局调度（工作台）。
+
+**能力件（源码，已提交）**：kit `window.__aiListingBlockKit`（register/openAI/applyPatch/getAvatar；JsBlockApi 支持 getData/getSchema/applyPatch/getSystemContext/submitLabel）+ 前端工具 `jsBlockApplyPatch` + assistant-bridge（openNativeAssistant/aiListingOpenAssistant）+ 真模型 `callModel` + 受控 action（saveFinal/publish/saveRule/runRule/**bulkSaveFields**）。
+
+**关键约束（全程遵守）**：AI 只读或只改暂存（内存），入库只在用户点提交时走受控 action + 逐字段审计 `actorType=user`；锁定项跳过/拒写；不真实发布；模型 Key 仅服务端。**运营友好**：输入框预填只放自然口语，ID/工具名/结构走 `getSystemContext`（系统消息）。
+
+**遗留**：真实发布/爬虫仍 mock；各业务页 UI 是 flow-surfaces DB-resident（全新装需另做 UI 导出/DSL）；细粒度角色 ACL 目前统一 `loggedIn`（留待 `nocobase-acl-manage` 细化）；jsBlock 沙箱内文案中文直写（用不了插件 locale ns，i18n 不适用于 DB-resident 区块）。
