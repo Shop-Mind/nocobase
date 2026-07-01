@@ -9,6 +9,7 @@
 
 import type { Context, Next } from '@nocobase/actions';
 import type Plugin from '../plugin';
+import { fail } from '../capture/shared';
 
 // 商品库（Phase 9）：主数据台账。统计卡 + 搜索筛选 + 列表/卡片 + 发布链接聚合。只读查询，不改业务状态。
 // 发布链接来自该商品最近一条「成功」发布记录的 targetUrl（§5.6 发布链接列）。
@@ -91,6 +92,8 @@ function toRow(p: any, mainImage: string | null, publishUrl: string | null) {
     currencyOriginal: p.get('currencyOriginal'),
     stock: p.get('stock'),
     status: p.get('status'),
+    priority: p.get('priority'),
+    tags: p.get('tags') || [],
     updatedAt: p.get('updatedAt'),
     mainImage,
     publishUrl,
@@ -200,11 +203,107 @@ export function setupLibrary(plugin: Plugin): void {
         };
         await next();
       },
+
+      // 批量保存字段（Phase 4）：受控地把「运营维度」字段批量写入选中商品。唯一写库口，逐商品逐字段审计 actorType=user。
+      // 白名单字段：targetPlatform / stock / priority / tags；跳过锁定商品（发布中/已发布）；只写实际有变化的字段。
+      bulkSaveFields: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as {
+          productIds?: Array<number | string>;
+          values?: Record<string, unknown>;
+        };
+        const actorId = String(ctx.state?.currentUser?.id ?? 'unknown');
+        const ids = Array.isArray(v.productIds)
+          ? Array.from(new Set(v.productIds.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0)))
+          : [];
+        if (!ids.length) {
+          ctx.status = 400;
+          ctx.body = fail('NO_PRODUCTS', '请先选择要批量编辑的商品', false, traceId);
+          return await next();
+        }
+        // 字段白名单 + 值归一化（服务端二次校验，不信任前端传的字段名/值）。
+        const input = (v.values || {}) as Record<string, unknown>;
+        const PRIORITY = ['high', 'medium', 'low'];
+        const patch: Record<string, unknown> = {};
+        if (input.targetPlatform != null && String(input.targetPlatform).trim()) {
+          patch.targetPlatform = String(input.targetPlatform).trim();
+        }
+        if (input.stock != null && input.stock !== '') {
+          const n = Number(input.stock);
+          if (Number.isFinite(n) && n >= 0) patch.stock = Math.floor(n);
+        }
+        if (input.priority != null && PRIORITY.includes(String(input.priority))) {
+          patch.priority = String(input.priority);
+        }
+        if (Array.isArray(input.tags)) {
+          patch.tags = input.tags.map((t) => String(t).trim()).filter(Boolean);
+        }
+        const patchKeys = Object.keys(patch);
+        if (!patchKeys.length) {
+          ctx.status = 400;
+          ctx.body = fail('NO_FIELDS', '没有可批量保存的字段（可批量编辑：目标平台/库存/优先级/标签）', false, traceId);
+          return await next();
+        }
+
+        const Products = db.getRepository('aiListingProducts');
+        const AuditLogs = db.getRepository('aiListingAuditLogs');
+        const LOCKED = ['publishing', 'published'];
+        let updated = 0;
+        let auditCount = 0;
+        const skipped: number[] = [];
+        for (const id of ids) {
+          const p: any = await Products.findOne({ filterByTk: id });
+          if (!p || LOCKED.includes(p.get('status'))) {
+            skipped.push(id);
+            continue;
+          }
+          // 只写实际有变化的字段，并逐字段记审计（actorType=user，因入库由用户点提交触发）。
+          const diffs: Array<{ field: string; old: unknown; val: unknown }> = [];
+          for (const k of patchKeys) {
+            const oldVal = p.get(k);
+            if (JSON.stringify(oldVal ?? null) === JSON.stringify(patch[k])) continue;
+            diffs.push({ field: k, old: oldVal ?? null, val: patch[k] });
+          }
+          if (!diffs.length) continue;
+          const values: Record<string, unknown> = {};
+          diffs.forEach((d) => {
+            values[d.field] = d.val;
+          });
+          await Products.update({ filterByTk: id, values });
+          for (const d of diffs) {
+            await AuditLogs.create({
+              values: {
+                actorType: 'user',
+                actorId,
+                action: 'bulk.edit_field',
+                resourceType: 'product',
+                resourceId: id,
+                fieldName: d.field,
+                oldValue: d.old,
+                newValue: d.val,
+                reason: '商品库批量编辑字段',
+                traceId,
+              },
+            });
+            auditCount++;
+          }
+          updated++;
+        }
+        ctx.body = {
+          ok: true,
+          data: { updated, skippedCount: skipped.length, skipped, fields: patchKeys, audits: auditCount },
+          warnings: skipped.length ? [`已跳过 ${skipped.length} 个锁定（发布中/已发布）或不存在的商品`] : [],
+          errors: [],
+          traceId,
+        };
+        await next();
+      },
     },
   });
 
-  // 查询/导出均为只读，登录用户可用（遵循当前用户权限）。
+  // 查询/导出均为只读，登录用户可用（遵循当前用户权限）。批量保存字段为受控写入，登录用户可用（细粒度角色留待 ACL 细化）。
   app.acl.allow('aiListingLibrary', 'stats', 'loggedIn');
   app.acl.allow('aiListingLibrary', 'list', 'loggedIn');
   app.acl.allow('aiListingLibrary', 'export', 'loggedIn');
+  app.acl.allow('aiListingLibrary', 'bulkSaveFields', 'loggedIn');
 }

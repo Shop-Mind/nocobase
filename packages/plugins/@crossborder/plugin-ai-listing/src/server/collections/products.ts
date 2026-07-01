@@ -44,6 +44,14 @@ export default defineCollection({
     { type: 'jsonb', name: 'attributesProcessed', interface: 'json', title: 'Attributes (processed)' },
     { type: 'jsonb', name: 'riskFlags', interface: 'json', title: 'Risk flags' },
 
+    // 商品库运营维度：标签（字符串数组，用于分组/检索）与优先级（批量维护）。
+    { type: 'jsonb', name: 'tags', interface: 'json', title: 'Tags' },
+    selectField('priority', 'Priority', [
+      { value: 'high', label: 'High', color: 'red' },
+      { value: 'medium', label: 'Medium', color: 'gold' },
+      { value: 'low', label: 'Low', color: 'default' },
+    ]),
+
     selectField(
       'status',
       'Status',
