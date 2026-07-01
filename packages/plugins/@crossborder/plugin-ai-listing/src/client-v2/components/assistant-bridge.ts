@@ -106,11 +106,12 @@ export function setupAssistantBridge(app: HostApp): void {
   const w = window as unknown as Record<string, unknown>;
   w.aiListingOpenAssistant = async (username: string, context?: OpenContext): Promise<boolean> => {
     const sys = SYSTEM[username] || '';
-    const ctxNote = context?.content ? `\n\n【当前商品只读上下文】\n${context.content}` : '';
+    // 只读上下文放进「系统消息」（用户看不到）；「输入框预填」只留自然口语提示，避免把 ID/字段明细暴露给运营人员。
+    const systemMessage = context?.content ? `${sys}\n\n【当前商品只读上下文】\n${context.content}`.trim() : sys;
     return openNativeAssistant(app, {
       username,
-      systemMessage: sys,
-      userPrompt: `${context?.prompt || ''}${ctxNote}`.trim(),
+      systemMessage,
+      userPrompt: (context?.prompt || '').trim(),
     });
   };
 }

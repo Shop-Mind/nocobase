@@ -27,6 +27,9 @@ export type JsBlockApi = {
   getData: () => Record<string, unknown>; // 当前暂存值（含 AI 已改、未提交部分）
   getSchema: () => JsBlockField[]; // 可编辑字段声明
   applyPatch: (patch: Record<string, unknown>) => void; // AI 写暂存（更新 React state）
+  // 可选：返回一段「只读背景信息」，进入 system prompt（用户看不到）。用于给 AI 记录主键 ID、状态、可用读取工具等技术细节，
+  // 从而让「用户可见的输入框提示语」保持自然口语、不含 ID/工具名等开发术语。
+  getSystemContext?: () => string;
 };
 
 type BlockKit = {
@@ -56,6 +59,12 @@ function buildSystemMessage(key: string, api: JsBlockApi): string {
   const fieldLines = schema
     .map((f) => `- ${f.name}（${f.label || f.name}${f.type ? '，' + f.type : ''}）${f.hint ? '：' + f.hint : ''}`)
     .join('\n');
+  let contextNote = '';
+  try {
+    contextNote = api.getSystemContext?.() || '';
+  } catch {
+    /* ignore */
+  }
   return [
     `你正在协助用户编辑页面上的一个区块「${api.title || key}」（jsBlock）。`,
     '你可以通过调用工具 `jsBlockApplyPatch` 修改它的**暂存数据**：改动会立即显示在页面上并标记为「待提交」，' +
@@ -70,6 +79,7 @@ function buildSystemMessage(key: string, api: JsBlockApi): string {
     '```json',
     JSON.stringify(data, null, 2),
     '```',
+    ...(contextNote ? ['', '背景信息（只读，供你参考，请勿直接展示给用户）：', contextNote] : []),
     '',
     '铁律：',
     '1. 只允许修改上面声明的可编辑字段；不要臆造字段。',

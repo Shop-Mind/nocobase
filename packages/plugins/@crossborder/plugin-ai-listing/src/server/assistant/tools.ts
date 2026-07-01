@@ -209,16 +209,37 @@ function buildTools(plugin: Plugin) {
     definition: {
       name: TOOL_NAMES.reviewGetProduct,
       description:
-        "Read a product's original / AI-suggested / final fields (title, description, price, stock, attributes) and review status by product id. Read-only.",
-      schema: z.object({ productId: z.union([z.string(), z.number()]).describe('商品 ID') }),
+        "Read a product's original / AI-suggested / final fields (title, description, price, stock, attributes) and review status. Look it up by the database id (integer, preferred) OR by the source/offer product code shown in the title (e.g. 1601551779943). Read-only.",
+      schema: z.object({
+        productId: z
+          .union([z.string(), z.number()])
+          .describe('数据库主键 id（优先），或标题里的源商品货号（sourceProductId）'),
+      }),
     },
     invoke: async (_ctx: Context, args: { productId?: string | number }): Promise<ToolResult> => {
       try {
         const repo = db.getRepository('aiListingProducts');
-        const p: any = await repo.findOne({ filterByTk: args?.productId as any });
-        if (!p) return fail('未找到该商品');
+        const raw = args?.productId;
+        // 先按数据库主键查；查不到再按源商品货号（sourceProductId / productNo）兜底，
+        // 这样即使 LLM 用了标题里的货号（如 1601551779943）而非主键，也能读到，避免「读取商品失败」。
+        let p: any = null;
+        if (raw != null && raw !== '') {
+          const asNum = Number(raw);
+          if (Number.isInteger(asNum) && asNum > 0 && String(asNum) === String(raw).trim()) {
+            p = await repo.findOne({ filterByTk: asNum });
+          }
+          if (!p) {
+            p = await repo.findOne({ filter: { sourceProductId: String(raw).trim() } });
+          }
+          if (!p) {
+            p = await repo.findOne({ filter: { productNo: String(raw).trim() } });
+          }
+        }
+        if (!p)
+          return fail(`未找到该商品（尝试的标识：${String(raw ?? '')}）。请用列表里的数据库 id 或标题里的货号重试。`);
         return ok({
           id: p.get('id'),
+          sourceProductId: p.get('sourceProductId'),
           status: p.get('status'),
           locked: p.get('status') === 'reviewed',
           targetPlatform: p.get('targetPlatform'),
