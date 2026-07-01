@@ -25,13 +25,20 @@ export const TOOL_NAMES = {
   bannedScan: 'aiListingBannedWordScan',
   productStats: 'aiListingProductStats',
   fieldSuggest: 'aiListingFieldSuggest',
+  reviewGetProduct: 'aiListingReviewGetProduct',
+  reviewWriteSuggestion: 'aiListingReviewWriteSuggestion',
 } as const;
 
 // 员工 → 可调用工具（用于绑定 skillSettings 与「工具列表」交付物）。
 export const EMPLOYEE_TOOLS: Record<string, string[]> = {
-  'lst-mira': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.bannedScan, TOOL_NAMES.productStats],
-  'lst-rena': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.bannedScan],
-  'lst-toby': [TOOL_NAMES.bannedScan, TOOL_NAMES.fieldSuggest],
+  'lst-mira': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.bannedScan, TOOL_NAMES.productStats, TOOL_NAMES.reviewGetProduct],
+  'lst-rena': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.bannedScan, TOOL_NAMES.reviewGetProduct],
+  'lst-toby': [
+    TOOL_NAMES.bannedScan,
+    TOOL_NAMES.fieldSuggest,
+    TOOL_NAMES.reviewGetProduct,
+    TOOL_NAMES.reviewWriteSuggestion,
+  ],
   'lst-lena': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.productStats],
   'lst-kai': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.productStats],
 };
@@ -71,6 +78,21 @@ export const TOOL_CATALOG: {
     access: 'suggest-only',
     permission: 'ASK',
     description: '对标题/描述/参数给出优化建议值；不写库，用户在表单 Submit 才保存。',
+  },
+  {
+    name: TOOL_NAMES.reviewGetProduct,
+    title: '读取商品（原始/建议/最终字段，只读）',
+    access: 'read-only',
+    permission: 'ALLOW',
+    description: '按商品 ID 读取标题/描述/价格/库存/参数的原始、AI 建议、最终三段字段与审核状态。',
+  },
+  {
+    name: TOOL_NAMES.reviewWriteSuggestion,
+    title: '写入 AI 建议列（不写最终字段）',
+    access: 'suggest-only',
+    permission: 'ASK',
+    description:
+      '把优化后的标题/描述/参数写入商品的「AI 建议」字段(*Processed)，供人工采纳；绝不写最终字段；已审核锁定则拒绝。',
   },
 ];
 
@@ -179,7 +201,113 @@ function buildTools(plugin: Plugin) {
     },
   };
 
-  return [knowledgeHit, bannedScan, productStats, fieldSuggest];
+  // 读取商品三段字段（只读），让 Toby/Mira/Rena 在原生面板里获得当前商品上下文。
+  const reviewGetProduct = {
+    scope: 'GENERAL' as const,
+    defaultPermission: 'ALLOW' as const,
+    introduction: { title: '读取商品', about: '读取商品的原始/建议/最终字段（只读）' },
+    definition: {
+      name: TOOL_NAMES.reviewGetProduct,
+      description:
+        "Read a product's original / AI-suggested / final fields (title, description, price, stock, attributes) and review status by product id. Read-only.",
+      schema: z.object({ productId: z.union([z.string(), z.number()]).describe('商品 ID') }),
+    },
+    invoke: async (_ctx: Context, args: { productId?: string | number }): Promise<ToolResult> => {
+      try {
+        const repo = db.getRepository('aiListingProducts');
+        const p: any = await repo.findOne({ filterByTk: args?.productId as any });
+        if (!p) return fail('未找到该商品');
+        return ok({
+          id: p.get('id'),
+          status: p.get('status'),
+          locked: p.get('status') === 'reviewed',
+          targetPlatform: p.get('targetPlatform'),
+          titleOriginal: p.get('titleOriginal'),
+          titleProcessed: p.get('titleProcessed'),
+          titleFinal: p.get('titleFinal'),
+          descriptionOriginal: p.get('descriptionOriginal'),
+          descriptionProcessed: p.get('descriptionProcessed'),
+          descriptionFinal: p.get('descriptionFinal'),
+          priceTarget: p.get('priceTarget'),
+          stock: p.get('stock'),
+          attributesOriginal: p.get('attributesOriginal') || {},
+          attributesProcessed: p.get('attributesProcessed') || {},
+        });
+      } catch (e) {
+        return fail(`读取商品失败：${(e as Error).message}`);
+      }
+    },
+  };
+
+  // 把 AI 生成的优化结果写入商品「AI 建议」字段(*Processed)——不写最终字段、审核锁定则拒、逐次写审计。
+  const reviewWriteSuggestion = {
+    scope: 'GENERAL' as const,
+    defaultPermission: 'ASK' as const,
+    introduction: { title: '写入 AI 建议', about: '把优化建议写入商品的 AI 建议字段（不写最终字段）' },
+    definition: {
+      name: TOOL_NAMES.reviewWriteSuggestion,
+      description:
+        "Write an optimized suggestion to a product's AI-suggestion field (titleProcessed / descriptionProcessed / attributesProcessed). NEVER writes final fields. Refused if the product is already reviewed (locked). The user adopts the suggestion into the final field manually on the review page.",
+      schema: z.object({
+        productId: z.union([z.string(), z.number()]).describe('商品 ID'),
+        field: z.enum(['title', 'description', 'attributes']).describe('目标字段'),
+        value: z
+          .union([z.string(), z.record(z.string(), z.any())])
+          .describe('建议值：title/description 为字符串，attributes 为 JSON 对象'),
+      }),
+    },
+    invoke: async (
+      _ctx: Context,
+      args: { productId?: string | number; field?: string; value?: unknown },
+    ): Promise<ToolResult> => {
+      try {
+        const repo = db.getRepository('aiListingProducts');
+        const audit = db.getRepository('aiListingAuditLogs');
+        const p: any = await repo.findOne({ filterByTk: args?.productId as any });
+        if (!p) return fail('未找到该商品');
+        if (p.get('status') === 'reviewed') return fail('该商品已审核锁定，请先「回退审核」再修改建议');
+        const map: Record<string, string> = {
+          title: 'titleProcessed',
+          description: 'descriptionProcessed',
+          attributes: 'attributesProcessed',
+        };
+        const dest = map[String(args?.field || 'title')];
+        if (!dest) return fail('未知字段');
+        const value =
+          args?.field === 'attributes'
+            ? typeof args?.value === 'string'
+              ? JSON.parse(args.value)
+              : args?.value
+            : String(args?.value ?? '');
+        const oldValue = p.get(dest);
+        await repo.update({ filterByTk: args?.productId as any, values: { [dest]: value } });
+        await audit.create({
+          values: {
+            actorType: 'ai_employee',
+            actorId: 'lst-toby',
+            action: `ai.write_${args?.field}`,
+            resourceType: 'product',
+            resourceId: Number(args?.productId),
+            fieldName: dest,
+            oldValue: oldValue ?? null,
+            newValue: value,
+            reason: 'AI 员工经原生面板写入建议（DeepSeek，待人工采纳到最终字段）',
+            traceId: `tool-${Date.now()}`,
+          },
+        });
+        return ok({
+          productId: args?.productId,
+          field: dest,
+          written: true,
+          note: '已写入「AI 建议」列，用户可在预览编辑页采纳到最终值',
+        });
+      } catch (e) {
+        return fail(`写入建议失败：${(e as Error).message}`);
+      }
+    },
+  };
+
+  return [knowledgeHit, bannedScan, productStats, fieldSuggest, reviewGetProduct, reviewWriteSuggestion];
 }
 
 /**

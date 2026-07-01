@@ -11,6 +11,19 @@ import type { Context, Next } from '@nocobase/actions';
 import type Plugin from '../plugin';
 import { matchKnowledge, scanBannedWords } from './knowledge';
 import { registerAssistantTools, EMPLOYEE_TOOLS, TOOL_CATALOG } from './tools';
+import { callModel } from './llm';
+
+// 各员工人格（system）——真实模型按此人格生成；含安全铁律（只读/不写库/不发布）。
+const PERSONA: Record<string, string> = {
+  'lst-mira':
+    '你是跨境选品分析师 Mira。基于只读上下文做选品质量/成功率/风险分析，结构化中文输出。绝不修改数据或触发发布。',
+  'lst-rena':
+    '你是合规与市场研究员 Rena。做平台合规、类目规则、卖点与目标市场研究，分点中文输出。只读，不写库、不发布。',
+  'lst-toby': '你是商品信息整理员 Toby。给标题/描述/参数的优化建议，中文、专业、不夸大不违规。只给建议，不直接写库。',
+  'lst-lena': '你是发布助理 Lena。做发布前检查、失败原因解释、重试建议，中文、条理清晰。只读，绝不触发真实发布。',
+  'lst-kai':
+    '你是搬运主管 Kai，统筹 选品(Mira)/合规(Rena)/文案(Toby)/发布(Lena)。理解需求并给出方向或转派建议，中文。只读或转派，不写库。',
+};
 
 // AI 员工服务层（Phase 10 v2）：把「和官方 demo 一样」的 AI 员工集成进现有 jsBlock 页。
 // roster：给前端渲染面板（员工 + 预设任务）；ask：按员工人格 + 当前页只读上下文生成回复。
@@ -214,11 +227,17 @@ export function setupAssistant(plugin: Plugin): void {
         }
         const tasks = TASKS[username] || [];
         const task = v.taskKey ? tasks.find((t) => t.key === v.taskKey) || null : null;
-        const modelReady = await hasModel(db);
-
-        // 真模型分支（步骤②）：modelReady 时经 app.aiManager 调 plugin-ai 已配置模型。
-        // 当前实例 llmServices=0 → 走确定性 mock 兜底，保证可离线自测；接 Key 后此分支返回真生成。
-        const text = mockAnswer(username, task, v.context);
+        // 真模型经 app.aiManager 调 plugin-ai 已配置模型（callModel）；无模型 / 失败 → 确定性 mock 兜底。
+        const persona =
+          PERSONA[username] || '你是跨境电商商品搬运工具的 AI 员工。中文、专业、只读建议，不写库、不发布。';
+        const ctxText = v.context ? `\n\n【当前页只读上下文】\n${JSON.stringify(v.context).slice(0, 4000)}` : '';
+        const userMsg = `${v.prompt || task?.prompt || '请根据当前页面给我有用的分析与建议。'}${ctxText}`;
+        const llm = await callModel(plugin, [
+          { role: 'system', content: persona },
+          { role: 'user', content: userMsg },
+        ]);
+        const mockUsed = llm == null;
+        const text = mockUsed ? mockAnswer(username, task, v.context) : llm;
 
         // 审计：记录一次 AI 协助调用（只记 employee/task/traceId，绝不记模型 Key 或上下文明细）。
         try {
@@ -237,8 +256,8 @@ export function setupAssistant(plugin: Plugin): void {
 
         ctx.body = {
           ok: true,
-          data: { text, employee: username, taskKey: v.taskKey || null, mock: !modelReady },
-          warnings: modelReady ? [] : ['当前未配置 LLM 模型，返回示例回复；配置后将由真实模型生成'],
+          data: { text, employee: username, taskKey: v.taskKey || null, mock: mockUsed },
+          warnings: mockUsed ? ['当前未配置可用模型或调用失败，返回示例回复；配置后将由真实模型生成'] : [],
           errors: [],
           traceId,
         };

@@ -9,10 +9,22 @@
 
 import { Plugin } from '@nocobase/client';
 import models from './models';
+// v1 → v2 单向导入（AGENTS 规则允许）：运行中的 /admin 应用加载的是本插件 v1 入口，
+// 故 jsBlock 通用 AI 能力（桥接 + kit + 前端工具）需在此 v1 client 安装，才能进入正在运行的 app.aiManager.toolsManager。
+import { setupAssistantBridge } from '../client-v2/components/assistant-bridge';
+import { setupJsBlockAI } from '../client-v2/ai/jsblock-ai';
 
 export class PluginAiListingClient extends Plugin {
   async load() {
     this.flowEngine.registerModels(models);
+    // jsBlock 通用能力：window.aiListingOpenAssistant + window.__aiListingBlockKit + 注册 jsBlockApplyPatch 前端工具。
+    // 全程 try/catch，失败不影响主应用（jsBlock 会回退）。
+    try {
+      setupAssistantBridge(this.app);
+      setupJsBlockAI(this.app);
+    } catch {
+      // 安装失败静默（不阻断插件加载）。
+    }
   }
 }
 

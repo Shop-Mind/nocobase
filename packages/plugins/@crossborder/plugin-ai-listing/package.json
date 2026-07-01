@@ -4,10 +4,12 @@
   "main": "dist/server/index.js",
   "dependencies": {},
   "peerDependencies": {
+    "@nocobase/ai": "2.x",
     "@nocobase/client": "2.x",
     "@nocobase/client-v2": "2.x",
     "@nocobase/plugin-ai": "2.x",
     "@nocobase/server": "2.x",
-    "@nocobase/test": "2.x"
+    "@nocobase/test": "2.x",
+    "zod": "3.x"
   }
 }

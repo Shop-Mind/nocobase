@@ -11,6 +11,7 @@ import type { Context, Next } from '@nocobase/actions';
 import type Plugin from '../plugin';
 import { fail } from '../capture/shared';
 import { writeAudit, type AuditEntry } from '../processing/audit';
+import { callModel, parseJsonObject } from '../assistant/llm';
 
 // Phase 7 预览编辑与人工审核。核心约束：
 // - 人工只编辑「最终字段」(titleFinal/descriptionFinal/priceTarget/listPriceTarget/stock/attributesProcessed/SKU)，写库 actorType=user。
@@ -48,6 +49,48 @@ function cleanTitle(raw: string): string {
     .replace(/\s*-\s*$/, '')
     .trim();
 }
+
+// 文案管家 Toby 人格（商品信息整理员）。AI「建议」由真实模型按此人格生成；铁律写进 system 防越权/夸大。
+const TOBY_SYSTEM =
+  '你是跨境电商商品搬运工具里的「文案管家 Toby」，商品信息整理员。职责：把源平台的商品信息改写为适合目标平台的标题/描述/参数建议。' +
+  '要求：中文输出、简洁专业、贴合目标平台规范、突出品类关键词与真实卖点；' +
+  '严禁使用「最/第一/国家级/包邮/正品保证/绝对」等夸大词、绝对化用语或平台违禁词；不得编造不存在的认证或功效。' +
+  '你只产出「建议」供人工采纳，绝不替用户做最终决定。';
+
+// 取商品上下文里可用的最佳标题（最终 > AI 处理 > 原始）。
+function bestTitle(p: any): string {
+  return cleanTitle(p.get('titleFinal') || p.get('titleProcessed') || p.get('titleOriginal') || '');
+}
+
+// 真模型失败 / 未配置时的确定性 mock 兜底（与历史行为一致，保证离线可用、永不报错）。
+function mockTitle(p: any): string {
+  const base = cleanTitle(p.get('titleProcessed') || p.get('titleOriginal') || '');
+  const target = p.get('targetPlatform');
+  return target ? `${base} | ${target} 适配款` : base;
+}
+function mockDescription(p: any): string {
+  const title = bestTitle(p);
+  const attrs = p.get('attributesProcessed') || {};
+  const sell = Object.entries(attrs)
+    .slice(0, 3)
+    .map(([k, val]) => `${k}: ${val}`)
+    .join('，');
+  return `${title}。${sell ? `核心参数 ${sell}。` : ''}正品好物，现货速发，支持批量采购。`;
+}
+function mockAttributes(existing: Record<string, any>): { attrs: Record<string, any>; added: string[] } {
+  const attrs = { ...existing };
+  const defaults: Record<string, string> = { 适用季节: '四季', 货源类别: '现货', 发货地: '中国' };
+  const added: string[] = [];
+  for (const [k, val] of Object.entries(defaults)) {
+    if (!(k in attrs)) {
+      attrs[k] = val;
+      added.push(k);
+    }
+  }
+  return { attrs, added };
+}
+
+const MOCK_NOTE = '当前未配置可用模型或模型调用失败，返回示例建议；配置模型后将由真实模型生成。';
 
 export function setupReview(plugin: Plugin): void {
   const { app } = plugin;
@@ -426,25 +469,46 @@ function setupAiActions(plugin: Plugin): void {
           ctx.body = fail('REVIEW_LOCKED', '已审核商品已锁定，请先回退审核再使用 AI。', true, traceId);
           return await next();
         }
-        const base = cleanTitle(p.get('titleProcessed') || p.get('titleOriginal') || '');
-        const target = p.get('targetPlatform');
-        const suggestion = target ? `${base} | ${target} 适配款` : base;
+        const target = p.get('targetPlatform') || '目标平台';
+        const original = cleanTitle(p.get('titleProcessed') || p.get('titleOriginal') || '');
+        const attrs = p.get('attributesProcessed') || p.get('attributesOriginal') || {};
+        const userPrompt =
+          `请为以下商品优化一个面向「${target}」的商品标题：\n` +
+          `原始标题：${original || '（无）'}\n` +
+          `已知参数：${JSON.stringify(attrs)}\n` +
+          `要求：突出品类关键词与卖点、控制在 200 字符内、不含夸大或违禁词。只返回优化后的标题文本本身，不要解释、不要引号、不要换行。`;
+        const llm = await callModel(plugin, [
+          { role: 'system', content: TOBY_SYSTEM },
+          { role: 'user', content: userPrompt },
+        ]);
+        const mock = llm == null;
+        const suggestion = (mock ? mockTitle(p) : llm)
+          .split('\n')[0]
+          .replace(/^[\s"「『'"]+|[\s"」』'"]+$/g, '')
+          .trim()
+          .slice(0, 300);
         await Products.update({ filterByTk: id, values: { titleProcessed: suggestion } });
         await writeAudit(AuditLogs, [
           {
             actorType: 'ai_employee',
-            actorId: 'lexi',
+            actorId: 'lst-toby',
             action: 'ai.suggest_title',
             resourceType: 'product',
             resourceId: id,
             fieldName: 'titleProcessed',
             oldValue: p.get('titleProcessed'),
             newValue: suggestion,
-            reason: 'AI 优化标题建议（待人工采纳到最终标题）',
+            reason: mock ? 'AI 优化标题建议（示例·未接模型，待人工采纳）' : 'AI 优化标题建议（DeepSeek，待人工采纳）',
             traceId,
           },
         ]);
-        ctx.body = { ok: true, data: { id, field: 'titleProcessed', suggestion }, warnings: [], errors: [], traceId };
+        ctx.body = {
+          ok: true,
+          data: { id, field: 'titleProcessed', suggestion, mock },
+          warnings: mock ? [MOCK_NOTE] : [],
+          errors: [],
+          traceId,
+        };
         await next();
       });
 
@@ -464,32 +528,39 @@ function setupAiActions(plugin: Plugin): void {
           ctx.body = fail('REVIEW_LOCKED', '已审核商品已锁定，请先回退审核再使用 AI。', true, traceId);
           return await next();
         }
-        const title = cleanTitle(p.get('titleFinal') || p.get('titleProcessed') || p.get('titleOriginal') || '');
-        const attrs = p.get('attributesProcessed') || {};
-        const sell = Object.entries(attrs)
-          .slice(0, 3)
-          .map(([k, val]) => `${k}: ${val}`)
-          .join('，');
-        const suggestion = `${title}。${sell ? `核心参数 ${sell}。` : ''}正品好物，现货速发，支持批量采购。`;
+        const title = bestTitle(p);
+        const target = p.get('targetPlatform') || '目标平台';
+        const attrs = p.get('attributesProcessed') || p.get('attributesOriginal') || {};
+        const userPrompt =
+          `请为以下商品撰写一段面向「${target}」买家的商品描述：\n` +
+          `标题：${title || '（无）'}\n` +
+          `参数：${JSON.stringify(attrs)}\n` +
+          `要求：结构化呈现（卖点 / 规格参数 / 适用场景），中文、200~400 字、不含夸大或违禁词。只返回描述正文，不要标题、不要解释。`;
+        const llm = await callModel(plugin, [
+          { role: 'system', content: TOBY_SYSTEM },
+          { role: 'user', content: userPrompt },
+        ]);
+        const mock = llm == null;
+        const suggestion = (mock ? mockDescription(p) : llm).trim().slice(0, 2000);
         await Products.update({ filterByTk: id, values: { descriptionProcessed: suggestion } });
         await writeAudit(AuditLogs, [
           {
             actorType: 'ai_employee',
-            actorId: 'lexi',
+            actorId: 'lst-toby',
             action: 'ai.suggest_description',
             resourceType: 'product',
             resourceId: id,
             fieldName: 'descriptionProcessed',
             oldValue: p.get('descriptionProcessed'),
             newValue: suggestion,
-            reason: 'AI 生成描述建议（待人工采纳）',
+            reason: mock ? 'AI 生成描述建议（示例·未接模型，待人工采纳）' : 'AI 生成描述建议（DeepSeek，待人工采纳）',
             traceId,
           },
         ]);
         ctx.body = {
           ok: true,
-          data: { id, field: 'descriptionProcessed', suggestion },
-          warnings: [],
+          data: { id, field: 'descriptionProcessed', suggestion, mock },
+          warnings: mock ? [MOCK_NOTE] : [],
           errors: [],
           traceId,
         };
@@ -512,31 +583,63 @@ function setupAiActions(plugin: Plugin): void {
           ctx.body = fail('REVIEW_LOCKED', '已审核商品已锁定，请先回退审核再使用 AI。', true, traceId);
           return await next();
         }
-        const attrs = { ...(p.get('attributesProcessed') || {}) };
-        const defaults: Record<string, string> = { 适用季节: '四季', 货源类别: '现货', 发货地: '中国' };
-        const added: string[] = [];
-        for (const [k, val] of Object.entries(defaults)) {
-          if (!(k in attrs)) {
-            attrs[k] = val;
-            added.push(k);
+        const existing = { ...(p.get('attributesProcessed') || p.get('attributesOriginal') || {}) };
+        const title = bestTitle(p);
+        const category = p.get('categoryOriginal') || p.get('categoryTargetId') || '';
+        const userPrompt =
+          `请补全以下商品常见但缺失的关键参数：\n` +
+          `标题：${title || '（无）'}\n` +
+          `类目：${category || '（未知）'}\n` +
+          `已知参数：${JSON.stringify(existing)}\n` +
+          `请按品类合理推断 颜色/材质/尺寸/适用场景/适用季节/产地 等常见参数。只返回一个 JSON 对象（键=参数名、值=参数值，全部中文），不要解释、不要代码块。`;
+        const llm = await callModel(plugin, [
+          { role: 'system', content: TOBY_SYSTEM },
+          { role: 'user', content: userPrompt },
+        ]);
+        const parsed = parseJsonObject(llm);
+        let attrs: Record<string, any>;
+        let added: string[];
+        let mock: boolean;
+        if (parsed) {
+          attrs = { ...existing };
+          added = [];
+          for (const [k, val] of Object.entries(parsed)) {
+            if (!(k in attrs) && val != null && String(val).trim()) {
+              attrs[k] = typeof val === 'object' ? JSON.stringify(val) : val;
+              added.push(k);
+            }
           }
+          mock = false;
+        } else {
+          const fallback = mockAttributes(existing);
+          attrs = fallback.attrs;
+          added = fallback.added;
+          mock = true;
         }
         await Products.update({ filterByTk: id, values: { attributesProcessed: attrs } });
         await writeAudit(AuditLogs, [
           {
             actorType: 'ai_employee',
-            actorId: 'dex',
+            actorId: 'lst-toby',
             action: 'ai.complete_attributes',
             resourceType: 'product',
             resourceId: id,
             fieldName: 'attributesProcessed',
             oldValue: p.get('attributesProcessed'),
             newValue: attrs,
-            reason: `AI 补全参数建议（新增 ${added.join('、') || '无'}）`,
+            reason: mock
+              ? `AI 补全参数建议（示例·未接模型，新增 ${added.join('、') || '无'}）`
+              : `AI 补全参数建议（DeepSeek，新增 ${added.join('、') || '无'}）`,
             traceId,
           },
         ]);
-        ctx.body = { ok: true, data: { id, attributes: attrs, added }, warnings: [], errors: [], traceId };
+        ctx.body = {
+          ok: true,
+          data: { id, attributes: attrs, added, mock },
+          warnings: mock ? [MOCK_NOTE] : [],
+          errors: [],
+          traceId,
+        };
         await next();
       });
 
