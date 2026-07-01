@@ -62,6 +62,7 @@ function precheckProduct(ctx: { product: any; skus: any[]; media: any[] }, confi
       priceTarget: ctx.product.get('priceTarget'),
       stock: ctx.product.get('stock'),
       categoryTargetId: ctx.product.get('categoryTargetId'),
+      attributes: ctx.product.get('attributesProcessed') || ctx.product.get('attributesOriginal'),
     },
     skus: ctx.skus.map((s: any) => ({
       sku: s.get('sku'),

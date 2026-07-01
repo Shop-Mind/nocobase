@@ -24,6 +24,7 @@ export interface PrecheckInput {
     priceTarget?: number | string | null;
     stock?: number | null;
     categoryTargetId?: string | null;
+    attributes?: Record<string, unknown> | null;
   };
   skus: Array<{ sku?: string; priceTarget?: number | string | null; stock?: number | null }>;
   hasMainImage: boolean;
@@ -56,6 +57,21 @@ export function runPrecheck(input: PrecheckInput): { ready: boolean; issues: Pre
       code: 'PUBLISH_CATEGORY_MISSING',
       field: 'categoryTargetId',
       message: '发布类目未设置',
+    });
+  }
+
+  // 商品属性：类目必填属性为空则阻断（真实平台如 Lazada 要求填写类目必填属性：材质/容量/颜色等）。
+  const attrs = product.attributes;
+  const attrCount =
+    attrs && typeof attrs === 'object'
+      ? Object.values(attrs).filter((v) => v != null && String(v).trim() !== '').length
+      : 0;
+  if (attrCount === 0) {
+    issues.push({
+      level: 'block',
+      code: 'PUBLISH_ATTRIBUTES_MISSING',
+      field: 'attributesProcessed',
+      message: '商品属性为空，平台要求填写类目必填属性（如材质/容量/颜色等）',
     });
   }
 

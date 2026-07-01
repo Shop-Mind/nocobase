@@ -30,6 +30,8 @@ export type JsBlockApi = {
   // 可选：返回一段「只读背景信息」，进入 system prompt（用户看不到）。用于给 AI 记录主键 ID、状态、可用读取工具等技术细节，
   // 从而让「用户可见的输入框提示语」保持自然口语、不含 ID/工具名等开发术语。
   getSystemContext?: () => string;
+  // 可选：本区块「提交入库」按钮的真实名称（如「保存」「模拟发布」）。用于让 AI 提示用户点对按钮，默认「提交」。
+  submitLabel?: string;
 };
 
 type BlockKit = {
@@ -83,7 +85,9 @@ function buildSystemMessage(key: string, api: JsBlockApi): string {
     '',
     '铁律：',
     '1. 只允许修改上面声明的可编辑字段；不要臆造字段。',
-    '2. 你只改「暂存」，绝不代替用户保存；改完用一句话说明你改了哪些字段，并提示「确认后请点区块上的『提交』按钮入库」。',
+    `2. 你只改「暂存」，绝不代替用户保存；改完用一句话说明你改了哪些字段，并提示「确认后请点区块上的『${
+      api.submitLabel || '提交'
+    }』按钮」。`,
     '3. 中文回复，简洁。',
   ].join('\n');
 }
@@ -175,9 +179,10 @@ export const jsBlockApplyPatchTool: [string, ToolsOptions] = [
       kit.applyPatch(block, safePatch);
       const changed = Object.keys(safePatch).join('、');
       const note = ignored.length ? `（已忽略非可编辑字段：${ignored.join('、')}）` : '';
+      const submitLabel = (kit.blocks[block] as JsBlockApi).submitLabel || '提交';
       return {
         status: 'success',
-        content: `已把改动写入区块「${block}」的暂存：${changed}${note}。尚未入库，请提醒用户点「提交」按钮保存。`,
+        content: `已把改动写入区块「${block}」的暂存：${changed}${note}。尚未入库，请提醒用户点「${submitLabel}」按钮保存。`,
       };
     },
   },
