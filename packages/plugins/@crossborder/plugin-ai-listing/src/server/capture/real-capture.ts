@@ -32,15 +32,19 @@ function resolveConnectorId(url: string): string | undefined {
   return undefined;
 }
 
-// 找该 connector 对应的、已连接的平台账号 id。
+// 找该 connector 对应的、已连接的平台账号 id。多账号时优先「默认账号」（平台连接页可设），否则取第一个已连接的。
 async function findConnectedAccountId(plugin: Plugin, connectorId: string): Promise<number | undefined> {
   const repo = plugin.app.db.getRepository('aiListingPlatformAccounts');
-  const rows = (await repo.find({ filter: { authStatus: 'connected' } })) as Array<Record<string, unknown>>;
-  for (const r of rows) {
+  const rows = (await repo.find({ filter: { authStatus: 'connected' }, sort: ['id'] })) as Array<
+    Record<string, unknown>
+  >;
+  const candidates = rows.filter((r) => {
     const c = findConnector(String(r.platform ?? ''));
-    if (c && c.id === connectorId) return r.id as number;
-  }
-  return undefined;
+    return c && c.id === connectorId;
+  });
+  if (!candidates.length) return undefined;
+  const preferred = candidates.find((r) => Boolean((r.settings as Record<string, unknown> | null)?.isDefault));
+  return (preferred || candidates[0]).id as number;
 }
 
 // 解析抓取适配器：真接入开则返回连接器实现（保持 CaptureAdapter 形状，executeUrlCapture 无需改动其余逻辑），否则 mock。

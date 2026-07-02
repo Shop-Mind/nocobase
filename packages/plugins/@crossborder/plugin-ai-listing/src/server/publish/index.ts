@@ -56,6 +56,14 @@ function getRepos(db: any): PublishRepos {
   };
 }
 
+// 店铺显示名：批次/进度展示用（「店铺 Alibaba 供应商号」而不是一串 storeId）。
+async function resolveStoreName(db: any, storeId: unknown): Promise<string | null> {
+  const id = Number(storeId);
+  if (!id) return null;
+  const account = await db.getRepository('aiListingPlatformAccounts').findOne({ filterByTk: id });
+  return account ? account.get('storeName') || `店铺 #${id}` : null;
+}
+
 // 读取单个商品的校验上下文（商品 + SKU + 媒体）。
 async function loadProductContext(repos: PublishRepos, productId: number) {
   const product = await repos.Products.findOne({ filterByTk: productId });
@@ -76,6 +84,8 @@ function precheckProduct(ctx: { product: any; skus: any[]; media: any[] }, confi
       priceTarget: ctx.product.get('priceTarget'),
       stock: ctx.product.get('stock'),
       categoryTargetId: ctx.product.get('categoryTargetId'),
+      categoryOriginalId: ctx.product.get('categoryOriginalId'),
+      sourcePlatform: ctx.product.get('sourcePlatform'),
       attributes: ctx.product.get('attributesProcessed') || ctx.product.get('attributesOriginal'),
     },
     skus: ctx.skus.map((s: any) => ({
@@ -85,7 +95,11 @@ function precheckProduct(ctx: { product: any; skus: any[]; media: any[] }, confi
     })),
     hasMainImage,
     imageCount: images.length,
-    config: { targetStoreId: config.targetStoreId, categoryTargetId: config.categoryTargetId },
+    config: {
+      targetPlatform: config.targetPlatform,
+      targetStoreId: config.targetStoreId,
+      categoryTargetId: config.categoryTargetId,
+    },
   });
   return { ...result, images };
 }
@@ -119,6 +133,7 @@ export function setupPublish(plugin: Plugin): void {
             stock: p.get('stock'),
             moq: p.get('moq'),
             categoryOriginal: p.get('categoryOriginal'),
+            categoryOriginalId: p.get('categoryOriginalId'),
             categoryTargetId: p.get('categoryTargetId'),
             categoryTargetName: p.get('categoryTargetName'),
             status: p.get('status'),
@@ -431,6 +446,8 @@ export function setupPublish(plugin: Plugin): void {
               priceTarget: pctx.product.get('priceTarget'),
               stock: pctx.product.get('stock'),
               categoryTargetId: pctx.product.get('categoryTargetId'),
+              categoryOriginalId: pctx.product.get('categoryOriginalId'),
+              sourcePlatform: pctx.product.get('sourcePlatform'),
               attributesProcessed: pctx.product.get('attributesProcessed'),
               currencyOriginal: pctx.product.get('currencyOriginal'),
               moq: pctx.product.get('moq'),
@@ -651,6 +668,8 @@ export function setupPublish(plugin: Plugin): void {
               priceTarget: pctx.product.get('priceTarget'),
               stock: pctx.product.get('stock'),
               categoryTargetId: pctx.product.get('categoryTargetId'),
+              categoryOriginalId: pctx.product.get('categoryOriginalId'),
+              sourcePlatform: pctx.product.get('sourcePlatform'),
               attributesProcessed: pctx.product.get('attributesProcessed'),
               currencyOriginal: pctx.product.get('currencyOriginal'),
               moq: pctx.product.get('moq'),
@@ -784,7 +803,7 @@ export function setupPublish(plugin: Plugin): void {
         await next();
       },
 
-      // 发布进度：返回批次 + 发布记录明细。
+      // 发布进度：返回批次 + 发布记录明细（记录附商品标题/主图，批次附店铺名——批次要「人能看懂」）。
       getBatchProgress: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
         const params = ctx.action?.params || {};
@@ -801,8 +820,212 @@ export function setupPublish(plugin: Plugin): void {
           ctx.body = fail('BATCH_NOT_FOUND', '发布批次不存在', false, traceId);
           return await next();
         }
-        const records = await repos.Records.find({ filter: { batchId }, sort: ['id'] });
-        ctx.body = { ok: true, data: { batch, records }, warnings: [], errors: [], traceId };
+        const rows = await repos.Records.find({ filter: { batchId }, sort: ['id'] });
+        const pids = [...new Set(rows.map((r: any) => r.get('productId')).filter(Boolean))] as number[];
+        const titleById: Record<number, string> = {};
+        const imageById: Record<number, string> = {};
+        if (pids.length) {
+          const products = await repos.Products.find({ filter: { id: { $in: pids } } });
+          for (const p of products) {
+            titleById[p.get('id')] =
+              p.get('titleFinal') || p.get('titleProcessed') || p.get('titleOriginal') || `商品 #${p.get('id')}`;
+          }
+          const mains = await repos.Media.find({
+            filter: { $and: [{ productId: { $in: pids } }, { role: 'main' }] },
+            sort: ['id'],
+          });
+          for (const m of mains) {
+            const pid = m.get('productId');
+            if (imageById[pid] == null && m.get('sourceUrl')) imageById[pid] = m.get('sourceUrl');
+          }
+        }
+        const records = rows.map((r: any) => ({
+          ...r.toJSON(),
+          productTitle: titleById[r.get('productId')] || `商品 #${r.get('productId')}`,
+          productImage: imageById[r.get('productId')] || null,
+        }));
+        const storeName = await resolveStoreName(db, batch.get('targetStoreId'));
+        ctx.body = {
+          ok: true,
+          data: { batch: { ...batch.toJSON(), storeName }, records },
+          warnings: [],
+          errors: [],
+          traceId,
+        };
+        await next();
+      },
+
+      // 近期发布批次：跨平台/店铺的批次总览（时间 + 平台 + 店铺 + 策略 + 成败计数），发布页用它取代「看不懂的批次号」。
+      listRecentBatches: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const limit = Math.min(Math.max(Number((ctx.action?.params?.values as any)?.limit) || 8, 1), 30);
+        const repos = getRepos(db);
+        const rows = await repos.Batches.find({ sort: ['-id'], limit });
+        const storeIds = [...new Set(rows.map((b: any) => Number(b.get('targetStoreId'))).filter(Boolean))];
+        const storeNameById: Record<number, string> = {};
+        if (storeIds.length) {
+          const Accounts = db.getRepository('aiListingPlatformAccounts');
+          const accounts = await Accounts.find({ filter: { id: { $in: storeIds } } });
+          for (const a of accounts) storeNameById[a.get('id')] = a.get('storeName') || `店铺 #${a.get('id')}`;
+        }
+        // 每个批次附商品预览（标题+主图，最多 3 件）：批量取记录→去重商品→join 标题与主图，避免 N+1。
+        const batchIds = rows.map((b: any) => b.get('id'));
+        const productIdsByBatch: Record<number, number[]> = {};
+        if (batchIds.length) {
+          const recs = await repos.Records.find({
+            filter: { batchId: { $in: batchIds } },
+            fields: ['id', 'batchId', 'productId'],
+            sort: ['id'],
+          });
+          for (const r of recs) {
+            const bid = r.get('batchId');
+            const pid = r.get('productId');
+            if (!pid) continue;
+            if (!productIdsByBatch[bid]) productIdsByBatch[bid] = [];
+            if (!productIdsByBatch[bid].includes(pid)) productIdsByBatch[bid].push(pid);
+          }
+        }
+        const allPids = [...new Set(Object.values(productIdsByBatch).flat())];
+        const titleById: Record<number, string> = {};
+        const imageById: Record<number, string> = {};
+        if (allPids.length) {
+          const products = await repos.Products.find({ filter: { id: { $in: allPids } } });
+          for (const p of products) {
+            titleById[p.get('id')] =
+              p.get('titleFinal') || p.get('titleProcessed') || p.get('titleOriginal') || `商品 #${p.get('id')}`;
+          }
+          const mains = await repos.Media.find({
+            filter: { $and: [{ productId: { $in: allPids } }, { role: 'main' }] },
+            sort: ['id'],
+          });
+          for (const m of mains) {
+            const pid = m.get('productId');
+            if (imageById[pid] == null && m.get('sourceUrl')) imageById[pid] = m.get('sourceUrl');
+          }
+        }
+        const batches = rows.map((b: any) => {
+          const pids = productIdsByBatch[b.get('id')] || [];
+          return {
+            id: b.get('id'),
+            batchNo: b.get('batchNo'),
+            targetPlatform: b.get('targetPlatform'),
+            targetStoreId: b.get('targetStoreId'),
+            storeName: storeNameById[Number(b.get('targetStoreId'))] || null,
+            strategy: b.get('strategy'),
+            status: b.get('status'),
+            totalCount: b.get('totalCount'),
+            successCount: b.get('successCount'),
+            failedCount: b.get('failedCount'),
+            real: Boolean((b.get('metadata') || {}).real),
+            createdAt: b.get('createdAt'),
+            products: pids.slice(0, 3).map((pid) => ({
+              id: pid,
+              title: titleById[pid] || `商品 #${pid}`,
+              mainImage: imageById[pid] || null,
+            })),
+            productTotal: pids.length,
+          };
+        });
+        ctx.body = { ok: true, data: { batches }, warnings: [], errors: [], traceId };
+        await next();
+      },
+
+      // 删除发布记录：失败记录随删；成功记录删除后该商品对同店铺的幂等跳过随之解除（用于平台侧草稿已删、需要重发的场景）。
+      deleteRecord: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const recordId = Number((ctx.action?.params?.values as any)?.recordId);
+        if (!recordId) {
+          ctx.status = 400;
+          ctx.body = fail('NO_RECORD_ID', '缺少发布记录 recordId', false, traceId);
+          return await next();
+        }
+        const repos = getRepos(db);
+        const rec = await repos.Records.findOne({ filterByTk: recordId });
+        if (!rec) {
+          ctx.status = 404;
+          ctx.body = fail('RECORD_NOT_FOUND', '发布记录不存在', false, traceId);
+          return await next();
+        }
+        if (rec.get('status') === 'running') {
+          ctx.status = 409;
+          ctx.body = fail('RECORD_RUNNING', '该记录正在发布中，不能删除', true, traceId);
+          return await next();
+        }
+        const wasSuccess = rec.get('result') === 'success';
+        await repos.Records.destroy({ filterByTk: recordId });
+        const AuditLogs = db.getRepository('aiListingAuditLogs');
+        await AuditLogs.create({
+          values: {
+            actorType: 'user',
+            actorId: String((ctx.state as any)?.currentUser?.id ?? 'unknown'),
+            action: 'publish.delete_record',
+            resourceType: 'publish_record',
+            resourceId: recordId,
+            oldValue: {
+              productId: rec.get('productId'),
+              result: rec.get('result'),
+              targetProductId: rec.get('targetProductId'),
+            },
+            reason: '删除发布记录',
+            traceId,
+          },
+        });
+        ctx.body = {
+          ok: true,
+          data: { recordId, deleted: true },
+          warnings: wasSuccess
+            ? ['已删除一条成功记录：该商品对此店铺的重复发布保护已解除，请确认平台侧对应草稿/商品已处理。']
+            : [],
+          errors: [],
+          traceId,
+        };
+        await next();
+      },
+
+      // 删除发布批次：批次 + 其全部记录一起删（进行中的批次不可删）。商品状态不动——它由记录之外的状态机管理。
+      deleteBatch: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const batchId = Number((ctx.action?.params?.values as any)?.batchId);
+        if (!batchId) {
+          ctx.status = 400;
+          ctx.body = fail('NO_BATCH_ID', '缺少发布批次 batchId', false, traceId);
+          return await next();
+        }
+        const repos = getRepos(db);
+        const batch = await repos.Batches.findOne({ filterByTk: batchId });
+        if (!batch) {
+          ctx.status = 404;
+          ctx.body = fail('BATCH_NOT_FOUND', '发布批次不存在', false, traceId);
+          return await next();
+        }
+        if (batch.get('status') === 'running') {
+          ctx.status = 409;
+          ctx.body = fail('BATCH_RUNNING', '该批次正在发布中，不能删除', true, traceId);
+          return await next();
+        }
+        const recordCount = await repos.Records.count({ filter: { batchId } });
+        await repos.Records.destroy({ filter: { batchId } });
+        await repos.Batches.destroy({ filterByTk: batchId });
+        const AuditLogs = db.getRepository('aiListingAuditLogs');
+        await AuditLogs.create({
+          values: {
+            actorType: 'user',
+            actorId: String((ctx.state as any)?.currentUser?.id ?? 'unknown'),
+            action: 'publish.delete_batch',
+            resourceType: 'publish_batch',
+            resourceId: batchId,
+            oldValue: { batchNo: batch.get('batchNo'), records: recordCount },
+            reason: '删除发布批次及其记录',
+            traceId,
+          },
+        });
+        ctx.body = {
+          ok: true,
+          data: { batchId, deleted: true, records: recordCount },
+          warnings: [],
+          errors: [],
+          traceId,
+        };
         await next();
       },
     },
@@ -814,6 +1037,9 @@ export function setupPublish(plugin: Plugin): void {
   app.acl.allow('aiListingPublish', 'publish', 'loggedIn');
   app.acl.allow('aiListingPublish', 'retryFailed', 'loggedIn');
   app.acl.allow('aiListingPublish', 'getBatchProgress', 'loggedIn');
+  app.acl.allow('aiListingPublish', 'listRecentBatches', 'loggedIn');
+  app.acl.allow('aiListingPublish', 'deleteRecord', 'loggedIn');
+  app.acl.allow('aiListingPublish', 'deleteBatch', 'loggedIn');
   app.acl.allow('aiListingPublish', 'predictCategory', 'loggedIn');
   app.acl.allow('aiListingPublish', 'queryTargetStatus', 'loggedIn');
 }

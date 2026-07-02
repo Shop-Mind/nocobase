@@ -49,6 +49,26 @@ export const ruleSeeds = [
     promptTemplate: '你是美国市场的信息整理员。请把商品文案改写为 Temu 风格的简洁卖点，价格按规则换算，输出建议值。',
   },
   {
+    // 本项目主链路（Alibaba.com/1688 同平台搬运）的专业默认：
+    // 同币种不换汇（草稿引擎发布时统一按估算汇率折 USD，避免二次换汇）；B2B 加价 25% 覆盖平台佣金 + 支付手续费 + 利润空间；
+    // 不做 .99 尾数（B2B 报价惯例保留两位小数，且低价商品套尾数会隐性大幅涨价）。
+    ruleCode: 'alibaba_icbu_relist',
+    name: 'Alibaba.com 同平台搬运（国际站）',
+    ruleType: 'info',
+    sourcePlatform: 'Alibaba.com',
+    targetPlatform: 'Alibaba.com',
+    enabled: true,
+    config: {
+      targetPlatform: 'Alibaba.com',
+      translate: { enabled: false },
+      price: { fromCurrency: 'CNY', toCurrency: 'CNY', rate: 1, markupPct: 25, ending: '' },
+      media: { jobs: [] },
+    },
+    mappingRows: [],
+    promptTemplate:
+      '你是 Alibaba.com 国际站的信息整理员。请按官方标题规范（核心词前置、不堆砌、≤128 字符）清洗标题，突出真实卖点与规格参数，输出建议值供人工审核。',
+  },
+  {
     ruleCode: 'generic_quick',
     name: '通用快速处理',
     ruleType: 'info',

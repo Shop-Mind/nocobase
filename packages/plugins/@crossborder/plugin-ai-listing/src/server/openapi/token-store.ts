@@ -28,7 +28,11 @@ function getRepo(plugin: Plugin) {
 
 // 把 TokenBundle 加密写入指定账号行（授权/刷新成功后调用）。
 export async function saveToken(plugin: Plugin, accountId: number, bundle: TokenBundle): Promise<void> {
-  await getRepo(plugin).update({
+  const repo = getRepo(plugin);
+  // settings 合并写：保留 isDefault（默认账号标记）等业务位，只覆盖授权元数据（整体覆盖会把重新授权的账号挤掉默认标记）。
+  const existing = await repo.findOne({ filterByTk: accountId });
+  const prevSettings = (existing?.get('settings') as Record<string, unknown>) || {};
+  await repo.update({
     filterByTk: accountId,
     values: {
       accessTokenEnc: encryptSecret(bundle.accessToken),
@@ -41,6 +45,7 @@ export async function saveToken(plugin: Plugin, accountId: number, bundle: Token
       authStatus: 'connected',
       // 非敏感授权元数据（账号身份），便于展示「连接的是哪个卖家」；绝不含 token。
       settings: {
+        ...prevSettings,
         userId: bundle.userId ?? null,
         havanaId: bundle.havanaId ?? null,
         accountPlatform: bundle.accountPlatform ?? null,

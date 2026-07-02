@@ -12,7 +12,7 @@
 
 import { parseAlibabaProductId } from '../../adapters';
 import { callIop, callIopUpload } from '../../openapi/iop-client';
-import { OpenApiError } from '../../openapi/errors';
+import { friendlyMessage, OpenApiError } from '../../openapi/errors';
 import { buildAuthorizeUrl, exchangeCode, getIopConfig, refreshAccessToken } from '../../openapi/oauth';
 import { PlatformConnector } from '../types';
 import {
@@ -58,6 +58,24 @@ async function fetchCategorySaleAttrs(
     }
   }
   throw lastError;
+}
+
+// 发布/草稿接口的业务错误藏在嵌套 result 里（result.success=false + msg_code 形如
+// `isp.system-service-error:PUB_BIZCHECK_CAT_PUB_RESTRICT;`），网关层 assertIopOk 不感知——
+// 这里解析出真实错误码并抛 OpenApiError（friendlyMessage 字典给运营中文原因与处理建议）。
+// 真机踩坑：曾因漏解析把「类目不在经营范围」报成含糊的「平台未返回草稿商品 ID」。
+function assertPublishResultOk(json: Record<string, unknown>): Record<string, unknown> {
+  const result = (json.result as Record<string, unknown>) || {};
+  if (result.success === false) {
+    const rawCode = String(result.msg_code || '');
+    const code = (rawCode.match(/[A-Z][A-Z0-9_]{3,}/g) || []).pop() || rawCode || 'PUBLISH_PLATFORM_ERROR';
+    const friendly = friendlyMessage(code);
+    throw new OpenApiError(code, friendly?.userMessage || String(result.message_info || '平台返回发布失败'), {
+      retryable: friendly?.retryable ?? false,
+      traceId: (result.trace_id || json.request_id) as string | undefined,
+    });
+  }
+  return result;
 }
 
 // 单图上限 5MB（photobank.upload 限制）。
@@ -336,7 +354,7 @@ export const alibabaIcbuConnector: PlatformConnector = {
       accessToken,
       timeoutMs: 60000,
     });
-    const result = (json.result as Record<string, unknown>) || {};
+    const result = assertPublishResultOk(json);
     const targetProductId = result.data ?? json.data;
     if (targetProductId == null || targetProductId === '') {
       throw new OpenApiError('PUBLISH_NO_PRODUCT_ID', '平台发布成功但未返回商品 ID，请到卖家后台确认', {
@@ -386,6 +404,13 @@ export const alibabaIcbuConnector: PlatformConnector = {
       notes,
       '详情图',
     );
+    if ((payload.images || []).length > 21) {
+      notes.push(
+        `共 ${payload.images.length} 张图，超出主图 6 + 详情图 15 的携带上限，其余 ${
+          payload.images.length - 21
+        } 张未带入`,
+      );
+    }
 
     // 取类目发布规则 XML（读接口，偶发 ServiceTimeout 自动重试）。
     let schemaXml: string | undefined;
@@ -430,7 +455,7 @@ export const alibabaIcbuConnector: PlatformConnector = {
       accessToken,
       timeoutMs: 60000,
     });
-    const result = (json.result as Record<string, unknown>) || {};
+    const result = assertPublishResultOk(json);
     const draftId = result.product_id ?? json.product_id;
     if (draftId == null || draftId === '') {
       throw new OpenApiError('PUBLISH_NO_PRODUCT_ID', '平台未返回草稿商品 ID', {

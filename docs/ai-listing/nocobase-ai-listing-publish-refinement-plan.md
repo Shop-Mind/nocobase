@@ -135,6 +135,7 @@ G6 多场景（可选，另行排期）
 ## 风险与开放问题
 
 1. **视频账号侧**：若重新授权 + 打开媒体中心后仍 10000002，需平台工单（附 traceId，如 `0babf64117829966414815966`）。
-2. **质量分接口权限（已真机探测，2026-07-02）**：`alibaba.icbu.quality.score.calculate` 在网关上按 7 种路径惯例全部 `InvalidApiPath` —— 该接口对本 App 尚未开放（官方公告为「分 ISV 陆续开放」）。需在开放平台控制台申请该接口组 / Contact us 工单（同 Video 权限流程，AppKey 503006）；开通前 G1.2 页面功能自动降级隐藏，G1.1 本地校验与 G1.3 错误码字典不受影响可先行。
+2. **质量分接口权限（已真机双网关探测，2026-07-02）**：`alibaba.icbu.quality.score.calculate` 新网关全部路径 `InvalidApiPath`、老 TOP 网关报 `22 Invalid method`（方法不存在）、openapi.alibaba.com 文档站接口树亦无此接口——**全新灰度接口，仅接入 wiki 有文档，需工单申请纳入灰度白名单**。开通前 G1.2 页面功能自动降级隐藏，G1.1 本地校验与 G1.3 错误码字典不受影响可先行。
+   另：`product.sku.inventory.get`/`product.type.available.get`/`product.id.decrypt`/`category.get.new` 四接口老 TOP 网关可识别方法名（报 `29 Invalid app Key`，即方法存在但新平台 AppKey 不能用老网关）、新网关 `InvalidApiPath`——属「未迁移到新网关」，工单请求在新网关开放或给出替代接口。
 3. **schema.update 真机行为**：文档称增量更新，但价格类型联动细节多，G4 用测试品先行、逐字段扩量。
 4. **version=trade.1.1**：显式传参前先真机对比有无差异（避免与当前隐式版本行为不一致）。

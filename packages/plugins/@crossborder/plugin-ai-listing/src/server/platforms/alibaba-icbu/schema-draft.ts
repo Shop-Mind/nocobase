@@ -265,42 +265,23 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     parts.push(`<field id="icbuCatProp" type="complex"><complex-value>${inner}</complex-value></field>`);
   }
 
-  // 销售属性（saleProp 下必填、支持自定义输入的 multiCheck，如 color）：
-  // 取 SKU 第一个规格维度的去重值作为自定义值（负数编号），并带色卡图（img 属性，官方示例支持）。
-  const saleProps = fieldsBetween(fields, 'saleProp', 'sku').filter(
-    (f) => f.required && f.id.startsWith('p-') && f.customInput,
-  );
-  if (saleProps.length) {
-    const seen = new Map<string, string | undefined>();
-    for (const v of payload.variants || []) {
-      const a = v.attrs?.[0];
-      if (a?.value && !seen.has(a.value)) seen.set(a.value, v.imageUrl ? stripThumbSuffix(v.imageUrl) : undefined);
+  // 非 USD 价格统一按估算汇率折 USD（草稿人工审核可修正），折算说明只记一次。
+  let conversionNoted = false;
+  const toUsd = (n: number): number => {
+    if (!payload.currency || payload.currency === 'USD') return Math.round(n * 100) / 100;
+    const v = Math.round((n / CNY_PER_USD) * 100) / 100;
+    if (!conversionNoted) {
+      conversionNoted = true;
+      notes.push(`价格字段为 USD：已按 1 USD≈${CNY_PER_USD} ${payload.currency} 估算折算，请人工核对`);
     }
-    const firstDim = [...seen.entries()].slice(0, 40);
-    if (firstDim.length) {
-      const target = saleProps[0];
-      const values = firstDim
-        .map(
-          ([name, img], i) =>
-            `<value${img ? ` img="${escXml(img)}"` : ''} inputValue="${escXml(name)}">-${i + 1}</value>`,
-        )
-        .join('');
-      parts.push(
-        `<field id="saleProp" type="complex"><complex-value>` +
-          `<field id="${target.id}" type="multiCheck"><values>${values}</values></field>` +
-          `</complex-value></field>`,
-      );
-      if (saleProps.length > 1) {
-        notes.push(`类目有多个必填销售属性，仅填充「${target.name || target.id}」，其余请人工在后台补充`);
-      }
-      const dims = new Set((payload.variants || []).flatMap((v) => (v.attrs || []).map((a) => a.name)));
-      if (dims.size > 1) {
-        notes.push('草稿仅带入第一个规格维度作为销售属性，逐 SKU 价格/库存在编辑页按规格自动生成后调整');
-      }
-    } else {
-      notes.push('商品无结构化规格值，必填销售属性留空，请人工在后台补充');
-    }
-  }
+    return v;
+  };
+
+  // 销售属性 + SKU 矩阵（官方 3.5.8/3.5.9）：把商品规格维度映射到类目 saleProp 字段，
+  // 匹配上的维度全部写入（值优先匹配类目选项，匹配不上且允许自定义时用全局唯一负数编号），
+  // 变体按匹配维度组合合并（库存求和、售价取最低、编码取首个），逐 SKU 写入 sku multiComplex。
+  const skuInfo = buildSaleAndSku(payload, fields, byId, toUsd, notes);
+  if (skuInfo) parts.push(skuInfo.salePropXml, skuInfo.skuXml);
 
   // 主图（≤6）：必须来自图片银行，value 带 fileId 属性（官方示例格式）。
   const mainImages = (media?.mainImages || []).slice(0, 6);
@@ -316,18 +297,13 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     parts.push(`<field id="scImages" type="complex"><complex-value>${inner}</complex-value></field>`);
   }
 
-  // 售卖与价格：按件（normal）+ 数量阶梯价（scPrice=1）。价格字段为 USD，非 USD 按估算汇率折算。
+  // 售卖与价格：按件（normal）。价格模式二选一（官方 3.5.1：1=阶梯价、3=SKU 规格价）：
+  // 变体齐备逐 SKU 售价且类目支持规格价 → scPrice=3 + sku.price；否则 scPrice=1 + 商品级阶梯价。
   const rawPrice = payload.price != null && payload.price > 0 ? payload.price : undefined;
-  let usdPrice = rawPrice;
-  if (rawPrice != null && payload.currency && payload.currency !== 'USD') {
-    usdPrice = Math.round((rawPrice / CNY_PER_USD) * 100) / 100;
-    notes.push(
-      `价格字段为 USD：已按 1 USD≈${CNY_PER_USD} ${payload.currency} 估算折算（${rawPrice} → ${usdPrice}），请人工核对`,
-    );
-  }
+  const usdPrice = rawPrice != null ? toUsd(rawPrice) : undefined;
   const moq = payload.moq != null && payload.moq > 0 ? Math.round(payload.moq) : 1;
   parts.push(`<field id="saleType" type="singleCheck"><value>normal</value></field>`);
-  parts.push(`<field id="scPrice" type="singleCheck"><value>1</value></field>`);
+  parts.push(`<field id="scPrice" type="singleCheck"><value>${skuInfo?.skuPricing ? '3' : '1'}</value></field>`);
 
   // 售卖单位：按单位名匹配选项（Bag → Bag/Bags），匹配不上取 Piece 或第一项。
   const priceUnit = byId.get('priceUnit');
@@ -341,7 +317,7 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
   }
 
   parts.push(`<field id="minOrderQuantity" type="input"><value>${moq}</value></field>`);
-  if (usdPrice != null) {
+  if (!skuInfo?.skuPricing && usdPrice != null) {
     parts.push(
       `<field id="ladderPrice" type="complex"><complex-value>` +
         `<field id="ladderPrice_0" type="complex"><complex-value>` +
@@ -350,6 +326,11 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
         `</complex-value></field>` +
         `</complex-value></field>`,
     );
+  }
+
+  // 校验（G1.1）：起订量不应大于库存（官方 3.5.4），违规只警告不拦截（草稿人工兜底）。
+  if (payload.stock != null && payload.stock > 0 && moq > payload.stock) {
+    notes.push(`起订量(${moq})大于库存(${payload.stock})，平台校验可能不通过，请在编辑页调整`);
   }
 
   // 物流：无运费模板时用「买卖双方协商物流」；有模板 ID 则用商家模板。
@@ -368,6 +349,31 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
         `<field id="templateType" type="singleCheck"><value>freightNegotiation</value></field>` +
         `</complex-value></field>`,
     );
+  }
+
+  // 发货期（官方 3.6.1，必填组件）：首档 quantity=moq、7 天兜底；官方要求档位起订量与阶梯价一致且递增。
+  if (byId.get('ladderPeriod')) {
+    parts.push(
+      `<field id="ladderPeriod" type="complex"><complex-value>` +
+        `<field id="ladderPeriod_0" type="complex"><complex-value>` +
+        `<field id="quantity" type="input"><value>${moq}</value></field>` +
+        `<field id="day" type="input"><value>7</value></field>` +
+        `</complex-value></field>` +
+        `</complex-value></field>`,
+    );
+    notes.push('发货期默认按起订量档 7 天填写，请按实际交期在编辑页调整');
+  }
+
+  // 物流属性（官方 3.6.2，必填）：默认「普货」，类目选项匹配不上取第一项并提示。
+  const logisticsProperty = byId.get('logisticsProperty');
+  if (logisticsProperty?.options.length) {
+    const hit =
+      logisticsProperty.options.find((o) => o.value === 'general_cargo_0' || o.name.includes('普货')) ||
+      logisticsProperty.options[0];
+    parts.push(
+      `<field id="logisticsProperty" type="multiCheck"><values><value>${escXml(hit.value)}</value></values></field>`,
+    );
+    if (hit.value !== 'general_cargo_0') notes.push(`物流属性默认「${hit.name}」，请人工确认`);
   }
 
   // 自定义属性（≤10 组，平台限制；值 ≤70 字符）
@@ -440,4 +446,185 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
   }
 
   return { xml: `<itemSchema>${parts.join('')}</itemSchema>`, notes };
+}
+
+// —— 销售属性 + SKU 矩阵组装（官方 3.5.8 设置规格属性 / 3.5.9 设置SKU信息）——
+
+// 常见中文规格维度名 → 类目销售属性字段英文名关键词。
+const CN_DIM_HINTS: Record<string, string[]> = {
+  颜色: ['color', 'colour'],
+  色: ['color', 'colour'],
+  尺寸: ['size'],
+  尺码: ['size'],
+  大小: ['size'],
+  规格: ['size', 'spec'],
+  材质: ['material'],
+  长度: ['length'],
+  容量: ['capacity'],
+};
+
+interface SaleSkuResult {
+  salePropXml: string;
+  skuXml: string;
+  // true = 走「SKU 规格价」（scPrice=3 + 逐 SKU price），false = 走商品级阶梯价。
+  skuPricing: boolean;
+}
+
+// 规格维度名 ↔ saleProp 字段名匹配：同名（不区分大小写）或经中文提示词映射。
+function dimMatchesField(dimName: string, fieldName: string): boolean {
+  const dim = dimName.trim().toLowerCase();
+  const field = fieldName.trim().toLowerCase();
+  if (!dim || !field) return false;
+  if (dim === field || field.includes(dim) || dim.includes(field)) return true;
+  for (const [cn, hints] of Object.entries(CN_DIM_HINTS)) {
+    if (dimName.includes(cn) && hints.some((h) => field.includes(h))) return true;
+  }
+  return false;
+}
+
+function buildSaleAndSku(
+  payload: PublishPayload,
+  fields: SchemaField[],
+  byId: Map<string, SchemaField>,
+  toUsd: (n: number) => number,
+  notes: string[],
+): SaleSkuResult | null {
+  const saleFields = fieldsBetween(fields, 'saleProp', 'sku').filter(
+    (f) => f.id.startsWith('p-') && f.type === 'multiCheck',
+  );
+  if (!saleFields.length) return null;
+  const variants = (payload.variants || []).filter((v) => v.attrs?.length);
+  if (!variants.length) {
+    if (saleFields.some((f) => f.required)) {
+      notes.push('商品无结构化规格值，必填销售属性留空，请人工在后台补充');
+    }
+    return null;
+  }
+
+  // 规格维度（按首个变体的出现顺序）↔ 销售属性字段配对；配不上时兜底「首字段 ↔ 首维度」。
+  const dims: string[] = [];
+  for (const v of variants) for (const a of v.attrs || []) if (a.name && !dims.includes(a.name)) dims.push(a.name);
+  const matched: Array<{ field: SchemaField; dim: string }> = [];
+  for (const field of saleFields) {
+    const dim = dims.find((d) => !matched.some((m) => m.dim === d) && dimMatchesField(d, field.name || field.id));
+    if (dim) matched.push({ field, dim });
+  }
+  if (!matched.length) {
+    const fallbackField = saleFields.find((f) => f.customInput && f.required) || saleFields[0];
+    matched.push({ field: fallbackField, dim: dims[0] });
+    notes.push(`规格维度「${dims[0]}」与销售属性「${fallbackField.name || fallbackField.id}」按顺序配对，请人工核对`);
+  }
+  const droppedDims = dims.filter((d) => !matched.some((m) => m.dim === d));
+
+  // 变体按匹配维度组合合并：库存求和、售价取最低、编码/色卡取首个非空。
+  const merged = new Map<
+    string,
+    { labels: string[]; stock: number; price?: number; sku?: string; imageUrl?: string }
+  >();
+  let skippedVariants = 0;
+  for (const v of variants) {
+    const labels = matched.map(({ dim }) => (v.attrs || []).find((a) => a.name === dim)?.value?.trim() || '');
+    if (labels.some((l) => !l)) {
+      skippedVariants++;
+      continue;
+    }
+    const key = labels.join('');
+    const row = merged.get(key) || { labels, stock: 0, price: undefined, sku: undefined, imageUrl: undefined };
+    row.stock += v.stock != null && v.stock > 0 ? Math.round(v.stock) : 0;
+    if (v.price != null && v.price > 0 && (row.price == null || v.price < row.price)) row.price = v.price;
+    if (!row.sku && v.sku) row.sku = v.sku;
+    if (!row.imageUrl && v.imageUrl) row.imageUrl = stripThumbSuffix(v.imageUrl);
+    merged.set(key, row);
+  }
+  const aligned = [...merged.values()];
+  if (!aligned.length) return null;
+  if (droppedDims.length || aligned.length !== variants.length) {
+    notes.push(
+      `SKU 按类目销售属性合并：${variants.length} → ${aligned.length}` +
+        (droppedDims.length ? `（维度「${droppedDims.join('、')}」类目无对应销售属性，库存求和、价格取低）` : '') +
+        (skippedVariants ? `；${skippedVariants} 个规格值缺失的变体未带入` : ''),
+    );
+  }
+
+  // 每个（字段, 规格值）分配平台值 ID：类目选项精确匹配（不区分大小写）优先，
+  // 否则自定义负数编号（全局唯一，官方要求多个自定义值负数不重复）；不允许自定义且无选项匹配 → 剔除该值。
+  let nextCustomId = -1;
+  const idOf = new Map<string, { id: string; label: string } | null>();
+  const resolveValue = (field: SchemaField, label: string): { id: string; label: string } | null => {
+    const key = `${field.id}${label}`;
+    if (idOf.has(key)) return idOf.get(key) ?? null;
+    const opt = field.options.find((o) => o.name.toLowerCase() === label.toLowerCase());
+    let resolved: { id: string; label: string } | null = null;
+    if (opt) resolved = { id: opt.value, label };
+    else if (field.customInput) resolved = { id: String(nextCustomId--), label };
+    else notes.push(`销售属性「${field.name || field.id}」不支持自定义，值「${label}」无匹配选项已剔除`);
+    idOf.set(key, resolved);
+    return resolved;
+  };
+
+  // saleProp：每字段列全部去重值；带色卡的维度（变体图所在维度）value 加 img 属性。每字段上限 40 值。
+  const salePropInner = matched
+    .map(({ field, dim }, di) => {
+      const seen = new Map<string, string | undefined>();
+      for (const row of aligned) {
+        const label = row.labels[di];
+        if (!seen.has(label)) seen.set(label, di === 0 ? row.imageUrl : undefined);
+      }
+      const entries = [...seen.entries()].slice(0, 40);
+      if (seen.size > 40) notes.push(`销售属性「${dim}」超过平台 40 个值上限，仅带入前 40 个`);
+      const values = entries
+        .map(([label, img]) => {
+          const r = resolveValue(field, label);
+          if (!r) return '';
+          return `<value${img ? ` img="${escXml(img)}"` : ''} inputValue="${escXml(label)}">${r.id}</value>`;
+        })
+        .join('');
+      return values ? `<field id="${field.id}" type="multiCheck"><values>${values}</values></field>` : '';
+    })
+    .filter(Boolean)
+    .join('');
+  if (!salePropInner) return null;
+  const salePropXml = `<field id="saleProp" type="complex"><complex-value>${salePropInner}</complex-value></field>`;
+
+  // 定价模式：类目支持 SKU 规格价（scPrice 选项含 3）且全部 SKU 有正售价 → 逐 SKU price（USD）。
+  const supportsSkuPricing = !!byId.get('scPrice')?.options.some((o) => o.value === '3');
+  const skuPricing = supportsSkuPricing && aligned.every((r) => r.price != null && r.price > 0);
+  if (aligned.some((r) => r.price != null && r.price > 0) && !skuPricing) {
+    notes.push(
+      supportsSkuPricing
+        ? '部分 SKU 缺售价，整体走商品级阶梯价；逐 SKU 售价补齐后重发可切换为规格价'
+        : '类目不支持 SKU 规格价，逐 SKU 售价未带入（走商品级阶梯价）',
+    );
+  }
+
+  // sku 矩阵：官方 multiComplex 格式（每 SKU 一个 complex-values，字段直挂）。
+  const skuRows: string[] = [];
+  for (const row of aligned) {
+    const props = matched
+      .map(({ field }, di) => {
+        const r = resolveValue(field, row.labels[di]);
+        if (!r) return '';
+        const propId = field.id.replace(/^p-/, '');
+        return (
+          `<value propValueId="${escXml(r.id)}" propId="${escXml(propId)}" propName="${field.id}" ` +
+          `propValueName="${escXml(r.label)}">${escXml(propId)}:${escXml(r.id)}</value>`
+        );
+      })
+      .filter(Boolean);
+    if (props.length !== matched.length) continue; // 有维度值被剔除的组合不成立
+    skuRows.push(
+      `<complex-values>` +
+        (row.sku ? `<field id="skuOuterId" type="input"><value>${escXml(row.sku.slice(0, 64))}</value></field>` : '') +
+        `<field id="props" type="multiInput"><values>${props.join('')}</values></field>` +
+        `<field id="skuStock" type="multiInput"><values>` +
+        `<value srcValue="0" warehouseCode="CN_LOCAL_01">${row.stock}</value></values></field>` +
+        (skuPricing && row.price != null
+          ? `<field id="price" type="input"><value>${toUsd(row.price).toFixed(2)}</value></field>`
+          : '') +
+        `</complex-values>`,
+    );
+  }
+  if (!skuRows.length) return null;
+  if (skuPricing) notes.push(`已按「SKU 规格价」写入 ${skuRows.length} 个 SKU 的售价与库存（USD）`);
+  return { salePropXml, skuXml: `<field id="sku" type="multiComplex">${skuRows.join('')}</field>`, skuPricing };
 }

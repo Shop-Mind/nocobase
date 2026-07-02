@@ -129,13 +129,24 @@ export async function listPlatformsMeta(plugin: Plugin) {
         const c = findConnector(String(r.platform ?? ''));
         return c && connector ? c.id === connector.id : String(r.platform) === platform;
       })
-      .map((r) => ({
-        id: r.id,
-        storeName: r.storeName || `${platform} 店铺 #${r.id}`,
-        sellerId: r.sellerId || null,
-        accountUid: r.accountUid || null,
-        authStatus: r.authStatus || 'disconnected',
-      }));
+      .map((r) => {
+        // 授权状态按「令牌事实」核定（与平台连接页一致）：无令牌一律未连接，防早期演示行伪装已授权。
+        const hasToken = Boolean(r.accessTokenEnc || r.refreshTokenEnc);
+        const refreshAt = r.refreshExpiresAt ? new Date(r.refreshExpiresAt as string) : null;
+        let authStatus = String(r.authStatus || 'disconnected');
+        if (!hasToken) authStatus = 'disconnected';
+        else if (authStatus === 'connected' && refreshAt && refreshAt.getTime() < Date.now()) authStatus = 'expired';
+        return {
+          id: r.id,
+          storeName: r.storeName || `${platform} 店铺 #${r.id}`,
+          sellerId: r.sellerId || null,
+          accountUid: r.accountUid || null,
+          authStatus,
+          isDefault: Boolean((r.settings as Record<string, unknown> | null)?.isDefault),
+        };
+      })
+      // 默认账号排最前：发布页下拉预选它，多店铺时一眼看到主账号。
+      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
     return { value: platform, label: connector?.label || platform, real, accounts };
   });
 }

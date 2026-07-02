@@ -127,11 +127,18 @@ export function buildPublishPayload(
   product: Record<string, any>,
   skus: Array<Record<string, any>>,
   images: string[],
-  config: { targetStoreId?: number; categoryTargetId?: string; shippingTemplateId?: string },
+  config: { targetPlatform?: string; targetStoreId?: number; categoryTargetId?: string; shippingTemplateId?: string },
 ): PublishPayload {
   return {
     storeId: config.targetStoreId,
-    categoryId: config.categoryTargetId || product.categoryTargetId,
+    // 类目优先级：本次发布配置 > 商品目标类目（预测/人工）> 同平台搬运时的源商品类目 ID
+    //（Alibaba.com → Alibaba.com 时源 category_id 可直接复用，抓取时已保存）。
+    categoryId:
+      config.categoryTargetId ||
+      product.categoryTargetId ||
+      (config.targetPlatform && config.targetPlatform === product.sourcePlatform
+        ? product.categoryOriginalId
+        : undefined),
     title: product.titleFinal || product.titleProcessed,
     description: product.descriptionFinal || product.descriptionProcessed,
     price: product.priceTarget != null ? Number(product.priceTarget) : undefined,

@@ -175,6 +175,61 @@ describe('buildDraftXml', () => {
     expect(notes.join('；')).toContain('已自动截断');
   });
 
+  it('SKU 矩阵：维度映射(颜色↔color)、未匹配维度合并(3→2)、props/skuStock 官方格式', () => {
+    const { xml, notes } = buildDraftXml(PAYLOAD, SCHEMA_XML, MEDIA);
+    // 灰色(a+b 合并)与蓝色两行 SKU；props 引用与 saleProp 相同的负数编号
+    expect(xml).toContain(
+      '<field id="sku" type="multiComplex"><complex-values>' +
+        '<field id="skuOuterId" type="input"><value>a</value></field>' +
+        '<field id="props" type="multiInput"><values>' +
+        '<value propValueId="-1" propId="200" propName="p-200" propValueName="灰色">200:-1</value>' +
+        '</values></field>' +
+        '<field id="skuStock" type="multiInput"><values><value srcValue="0" warehouseCode="CN_LOCAL_01">0</value></values></field>' +
+        '</complex-values>',
+    );
+    expect(xml).toContain('propValueName="蓝色">200:-2</value>');
+    expect(notes.join('；')).toContain('SKU 按类目销售属性合并：3 → 2');
+    expect(notes.join('；')).toContain('尺寸');
+    // 无逐 SKU 售价 → 阶梯价模式
+    expect(xml).toContain('<field id="scPrice" type="singleCheck"><value>1</value></field>');
+    expect(xml).toContain('<field id="ladderPrice"');
+  });
+
+  it('SKU 规格价模式：类目支持 scPrice=3 且全 SKU 有售价 → 逐 SKU price(USD)，不发阶梯价；发货期/物流属性默认带入', () => {
+    const schemaWithSkuPricing =
+      SCHEMA_XML.replace('</itemSchema>', '') +
+      '<field id="scPrice" name="Price setting" type="singleCheck">' +
+      '<options><option displayName="Tiered pricing by quantity" value="1"/><option displayName="SKU pricing" value="3"/></options></field>' +
+      '<field id="ladderPeriod" name="Shipping" type="complex"></field>' +
+      '<field id="logisticsProperty" name="Logistics attribute" type="multiCheck">' +
+      '<options><option displayName="普货" value="general_cargo_0"/><option displayName="纯电池" value="battery.pureBattery"/></options></field>' +
+      '</itemSchema>';
+    const payload = {
+      ...PAYLOAD,
+      moq: 100,
+      variants: [
+        { sku: 'a', price: 8.12, stock: 1000, attrs: [{ name: '颜色', value: '灰色' }] },
+        { sku: 'c', price: 9.36, stock: 500, attrs: [{ name: '颜色', value: '蓝色' }] },
+      ],
+    };
+    const { xml, notes } = buildDraftXml(payload, schemaWithSkuPricing, MEDIA);
+    expect(xml).toContain('<field id="scPrice" type="singleCheck"><value>3</value></field>');
+    expect(xml).not.toContain('<field id="ladderPrice"');
+    // 8.12/7.2=1.13、9.36/7.2=1.30，库存原样
+    expect(xml).toContain('<value srcValue="0" warehouseCode="CN_LOCAL_01">1000</value>');
+    expect(xml).toContain('<field id="price" type="input"><value>1.13</value></field>');
+    expect(xml).toContain('<field id="price" type="input"><value>1.30</value></field>');
+    expect(notes.join('；')).toContain('SKU 规格价');
+    // 发货期默认档（moq/7天）+ 物流属性普货
+    expect(xml).toContain(
+      '<field id="ladderPeriod" type="complex"><complex-value><field id="ladderPeriod_0" type="complex"><complex-value>' +
+        '<field id="quantity" type="input"><value>100</value></field><field id="day" type="input"><value>7</value></field>',
+    );
+    expect(xml).toContain(
+      '<field id="logisticsProperty" type="multiCheck"><values><value>general_cargo_0</value></values></field>',
+    );
+  });
+
   it('无 media 时不输出 scImages/detailImage/imageVideo，仍可产出合法 XML', () => {
     const { xml } = buildDraftXml(PAYLOAD, SCHEMA_XML);
     expect(xml).not.toContain('scImages_0');

@@ -13,6 +13,8 @@
 // 关键约束（用户要求 #3）：AI 员工只能写建议字段（titleProcessed / descriptionProcessed / attributesProcessed）。
 // 价格目标字段（priceTarget / listPriceTarget）属于规则确定性计算，actorType=system；最终字段（*Final）本阶段完全不写。
 
+import { scanBannedWords } from '../assistant/knowledge';
+
 export interface RuleConfig {
   targetPlatform?: string;
   translate?: { enabled?: boolean; sourceLang?: string; targetLang?: string };
@@ -35,6 +37,8 @@ export interface ProductInput {
   priceOriginal?: number | string | null;
   currencyOriginal?: string;
   attributesOriginal?: Record<string, unknown> | null;
+  // SKU 原价（有则逐条按同一价格规则计算 skuPatches 的目标价，让草稿引擎能走「SKU 规格价」而非单档阶梯价）。
+  skus?: Array<{ id: number; priceOriginal?: number | string | null; priceTarget?: number | string | null }>;
 }
 
 // 单个字段变更，用于审计与任务步骤展示。stage 对应处理阶段；actorType 区分 AI 建议与系统计算。
@@ -54,6 +58,8 @@ export interface EngineResult {
   changes: FieldChange[];
   // 媒体任务占位规格（不做真实处理，仅建任务结构与状态）。
   mediaJobSpecs: Array<{ jobType: string }>;
+  // 逐 SKU 的目标价补丁（与商品价同一规则换算）；空数组表示无 SKU 或 SKU 无原价。
+  skuPatches: Array<{ id: number; priceTarget: number }>;
 }
 
 // 处理阶段标识，与 PRD §5.3「阶段状态」对齐：参数替换 / 文案改写本地化 / 价格转换 / 媒体任务 / 信息存档。
@@ -65,13 +71,41 @@ export const STAGES = {
   archive: 'archive', // 信息存档
 } as const;
 
-// 去掉批发噪声词并做基础清洗，得到可读标题（确定性 mock，真实实现替换为 AI 改写/翻译）。
-function cleanTitle(raw: string): string {
-  return raw
-    .replace(/\b(wholesale|oem|moq\s*\d+\s*pcs?)\b/gi, '')
+// 标题清洗（确定性规则，真实 AI 改写在预览编辑的建议按钮里）：
+// ① 去批发噪声词（wholesale/oem/moq/free shipping/hot sale 等对买家搜索无意义、且部分平台判违规的词）；
+// ② 去 emoji 与装饰符号（平台标题禁用）；③ 英文重复词去堆砌（连续/间隔重复只保留首次，大小写不敏感）；
+// ④ 空白归一；⑤ 超长截断（Alibaba.com 上限 128 字符，按词边界截）。
+const TITLE_NOISE =
+  /\b(wholesale|oem|odm|moq\s*\d+\s*(pcs?|pieces?)?|free\s+shipping|hot\s+sale|hot\s+selling|best\s+quality|factory\s+price|cheap(est)?|promotion)\b/gi;
+// emoji / 符号区（BMP 外的补充符号 + 常见装饰符）；变体选择符 U+FE0F 是组合字符，需在字符类外单独匹配。
+const TITLE_EMOJI = /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B50}\u{2B55}★☆✔✅❤♥•◆■]|\uFE0F/gu;
+const TITLE_MAX_CHARS = 128;
+
+export function cleanTitle(raw: string): string {
+  let s = raw
+    .replace(TITLE_NOISE, '')
+    .replace(TITLE_EMOJI, '')
     .replace(/\s{2,}/g, ' ')
     .replace(/\s*-\s*$/, '')
     .trim();
+  // 英文去堆砌：同一单词（≥3 字符）重复出现只保留第一次；中文不做词级去重（无空格分词不可靠）。
+  const seen = new Set<string>();
+  s = s
+    .split(' ')
+    .filter((w) => {
+      const key = w.toLowerCase();
+      if (!/^[a-z][a-z0-9-]{2,}$/i.test(w)) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join(' ');
+  if (s.length > TITLE_MAX_CHARS) {
+    const cut = s.slice(0, TITLE_MAX_CHARS);
+    const lastSpace = cut.lastIndexOf(' ');
+    s = (lastSpace > TITLE_MAX_CHARS * 0.6 ? cut.slice(0, lastSpace) : cut).trim();
+  }
+  return s;
 }
 
 // 字段映射：按 mappingRows 把来源属性 key 改名/补值，未命中的属性原样保留。
@@ -96,21 +130,27 @@ function applyAttributeMapping(attrs: Record<string, unknown>, rows: MappingRow[
   return out;
 }
 
-// 价格转换：原币种 -> 目标币种（汇率）+ 加价 + 尾数策略。返回 undefined 表示原价缺失（由调用方按校验失败处理）。
+// 价格转换：原币种 -> 目标币种（汇率）+ 加价 + 尾数策略。
+// 专业保护：① 币种不匹配（商品原币种 ≠ 规则 fromCurrency）时跳过汇率只做加价，避免把 USD 价再按 THB 汇率折一次；
+// ② 尾数策略只对 ≥2 的价格生效——低价商品套 .99 尾数会把 0.66 抬成 0.99（+50% 隐性涨价），B2B 小额单价按两位小数走。
 function convertPrice(
   priceOriginal: number,
   cfg: NonNullable<RuleConfig['price']>,
-): { price: number; listPrice: number } {
-  const rate = cfg.rate ?? 1;
+  productCurrency?: string,
+): { price: number; listPrice: number; rateApplied: boolean } {
+  const currencyMismatch = Boolean(
+    cfg.fromCurrency && productCurrency && cfg.fromCurrency.toUpperCase() !== productCurrency.toUpperCase(),
+  );
+  const rate = currencyMismatch ? 1 : cfg.rate ?? 1;
   const markup = (cfg.markupPct ?? 0) / 100;
   let price = priceOriginal * rate * (1 + markup);
-  if (cfg.ending && /^\.\d+$/.test(cfg.ending)) {
+  if (cfg.ending && /^\.\d+$/.test(cfg.ending) && price >= 2) {
     price = Math.floor(price) + Number(cfg.ending);
   } else {
     price = Math.round(price * 100) / 100;
   }
   const listPrice = Math.round(price * 1.2 * 100) / 100;
-  return { price, listPrice };
+  return { price, listPrice, rateApplied: !currencyMismatch };
 }
 
 export class ProcessingValidationError extends Error {
@@ -188,7 +228,31 @@ export function applyRule(
     reason: '生成本地化描述建议',
   });
 
+  // 违禁/风险词扫描：命中的词不做自动删除（中文风险词按包含匹配，盲删会伤正常词——如「最新」里的「最」），
+  // 而是写入 riskFlags 让预览编辑页醒目提示，由人工/AI 建议改写。
+  const riskHits = [
+    ...scanBannedWords(titleProcessed).map((h) => ({ ...h, field: 'title' })),
+    ...scanBannedWords(descProcessed).map((h) => ({ ...h, field: 'description' })),
+  ];
+  if (riskHits.length) {
+    patch.riskFlags = riskHits;
+    changes.push({
+      stage: STAGES.rewriteI18n,
+      field: 'riskFlags',
+      oldValue: null,
+      newValue: riskHits,
+      actorType: 'system',
+      actorId: 'rule-engine',
+      reason: `违禁/风险词扫描命中 ${riskHits.length} 处（${[...new Set(riskHits.map((h) => h.word))].join(
+        '、',
+      )}），请在预览编辑中改写`,
+    });
+  } else {
+    patch.riskFlags = [];
+  }
+
   // 阶段 3：价格转换（系统确定性计算，写目标字段，不是最终字段）。
+  const skuPatches: Array<{ id: number; priceTarget: number }> = [];
   if (config.price) {
     const priceOriginal = Number(product.priceOriginal);
     if (!product.priceOriginal || Number.isNaN(priceOriginal)) {
@@ -199,7 +263,7 @@ export function applyRule(
         true,
       );
     }
-    const { price, listPrice } = convertPrice(priceOriginal, config.price);
+    const { price, listPrice, rateApplied } = convertPrice(priceOriginal, config.price, product.currencyOriginal);
     patch.priceTarget = price;
     patch.listPriceTarget = listPrice;
     if (config.targetPlatform) patch.targetPlatform = config.targetPlatform;
@@ -210,9 +274,13 @@ export function applyRule(
       newValue: price,
       actorType: 'system',
       actorId: 'rule-engine',
-      reason: `汇率 ${config.price.rate} + 加价 ${config.price.markupPct ?? 0}%（${config.price.fromCurrency}→${
-        config.price.toCurrency
-      }）`,
+      reason: rateApplied
+        ? `汇率 ${config.price.rate} + 加价 ${config.price.markupPct ?? 0}%（${config.price.fromCurrency}→${
+            config.price.toCurrency
+          }）`
+        : `商品原币种 ${product.currencyOriginal} 与规则 ${config.price.fromCurrency} 不一致，跳过汇率仅加价 ${
+            config.price.markupPct ?? 0
+          }%（防止二次换汇）`,
     });
     changes.push({
       stage: STAGES.priceConvert,
@@ -223,10 +291,30 @@ export function applyRule(
       actorId: 'rule-engine',
       reason: '按目标价 1.2 倍生成划线价',
     });
+
+    // SKU 逐条定价：有原价的 SKU 按同一规则换算目标价。SKU 全有售价后，发布草稿可走「SKU 规格价」
+    // 而不是退化成单档阶梯价（此前 SKU 无目标价是草稿只有一档价的根因）。
+    for (const sku of product.skus || []) {
+      const skuPrice = Number(sku.priceOriginal);
+      if (!sku.priceOriginal || Number.isNaN(skuPrice) || skuPrice <= 0) continue;
+      const converted = convertPrice(skuPrice, config.price, product.currencyOriginal);
+      skuPatches.push({ id: sku.id, priceTarget: converted.price });
+    }
+    if (skuPatches.length) {
+      changes.push({
+        stage: STAGES.priceConvert,
+        field: 'skus.priceTarget',
+        oldValue: null,
+        newValue: { count: skuPatches.length },
+        actorType: 'system',
+        actorId: 'rule-engine',
+        reason: `按同一价格规则为 ${skuPatches.length} 个 SKU 生成目标价（发布时可走 SKU 规格价）`,
+      });
+    }
   }
 
   // 阶段 4：媒体任务占位（仅建结构与状态，不做真实去水印/白底图）。
   const mediaJobSpecs = (config.media?.jobs || []).map((jobType) => ({ jobType }));
 
-  return { patch, changes, mediaJobSpecs };
+  return { patch, changes, mediaJobSpecs, skuPatches };
 }

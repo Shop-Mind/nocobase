@@ -39,6 +39,8 @@ export default defineCollection({
     { type: 'integer', name: 'stock', interface: 'integer', title: 'Stock' },
 
     { type: 'string', name: 'categoryOriginal', interface: 'input', title: 'Category (source)' },
+    // 源平台类目数字 ID：同平台搬运（Alibaba.com→Alibaba.com）时可直接作为发布类目兜底。
+    { type: 'string', name: 'categoryOriginalId', interface: 'input', title: 'Category ID (source)' },
     { type: 'string', name: 'categoryTargetId', interface: 'input', title: 'Category (target)' },
     // 目标平台类目名/路径（类目预测写回，便于运营核对「预测的类目对不对」）。
     { type: 'string', name: 'categoryTargetName', interface: 'input', title: 'Category name (target)' },

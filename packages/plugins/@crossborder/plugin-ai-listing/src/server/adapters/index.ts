@@ -70,6 +70,8 @@ export interface NormalizedProduct {
   currencyOriginal?: string;
   stock?: number;
   categoryOriginal?: string;
+  // 源平台类目数字 ID（买家 description 接口 category_id）。同平台搬运时可直接作为发布类目。
+  categoryOriginalId?: string;
   attributesOriginal?: Record<string, unknown>;
   // 起订量（min_order_quantity）与源平台商品状态（如 PRODUCT_ONLINE）。
   moq?: number;

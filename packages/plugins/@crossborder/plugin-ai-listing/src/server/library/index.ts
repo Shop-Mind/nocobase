@@ -40,8 +40,12 @@ const STATUS_OPTIONS = [
 function getRepos(db: any) {
   return {
     Products: db.getRepository('aiListingProducts'),
+    Skus: db.getRepository('aiListingSkus'),
     Media: db.getRepository('aiListingMediaAssets'),
+    MediaJobs: db.getRepository('aiListingMediaJobs'),
     Records: db.getRepository('aiListingPublishRecords'),
+    Batches: db.getRepository('aiListingPublishBatches'),
+    AuditLogs: db.getRepository('aiListingAuditLogs'),
   };
 }
 
@@ -183,6 +187,14 @@ export function setupLibrary(plugin: Plugin): void {
         const filter = buildFilter(v);
         const { Products, Media, Records } = getRepos(db);
         const total = await Products.count({ filter });
+        // 表底汇总条：按「除状态外的当前筛选」统计各状态数量（点 chip 可切换状态筛选，同时兼当图例）。
+        const chipFilter = buildFilter({ keyword: v.keyword, platform: v.platform });
+        const statusCounts: Array<{ status: string; count: number }> = [];
+        for (const status of STATUS_OPTIONS) {
+          const and = [...(((chipFilter as Record<string, unknown>).$and as unknown[]) || []), { status }];
+          const count = await Products.count({ filter: { $and: and } });
+          if (count > 0) statusCounts.push({ status, count });
+        }
         const rows = await Products.find({ filter, sort: ['-id'], offset: (page - 1) * pageSize, limit: pageSize });
         const ids = rows.map((p: any) => p.get('id'));
         const links = await loadPublishLinks(Records, ids);
@@ -194,8 +206,170 @@ export function setupLibrary(plugin: Plugin): void {
         }
         ctx.body = {
           ok: true,
-          data: { items, total, page, pageSize, statusOptions: STATUS_OPTIONS },
+          data: { items, total, page, pageSize, statusOptions: STATUS_OPTIONS, statusCounts },
           warnings: [],
+          errors: [],
+          traceId,
+        };
+        await next();
+      },
+
+      // 商品详情：卡片/列表点击进入的完整档案——三段字段 + 全部图片 + SKU + 发布记录（含批次号/链接/失败原因）。只读。
+      detail: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const id = Number((ctx.action?.params?.values as any)?.id ?? (ctx.action?.params as any)?.id);
+        if (!id) {
+          ctx.status = 400;
+          ctx.body = fail('NO_PRODUCT_ID', '缺少商品 id', false, traceId);
+          return await next();
+        }
+        const { Products, Skus, Media, Records, Batches } = getRepos(db);
+        const p = await Products.findOne({ filterByTk: id });
+        if (!p) {
+          ctx.status = 404;
+          ctx.body = fail('PRODUCT_NOT_FOUND', '商品不存在', false, traceId);
+          return await next();
+        }
+        const skus = await Skus.find({ filter: { productId: id }, sort: ['id'] });
+        const media = await Media.find({ filter: { productId: id }, sort: ['sort', 'id'] });
+        const recordRows = await Records.find({ filter: { productId: id }, sort: ['-id'], limit: 20 });
+        const bids = [...new Set(recordRows.map((r: any) => r.get('batchId')).filter(Boolean))];
+        const batchById: Record<number, string> = {};
+        if (bids.length) {
+          const batches = await Batches.find({ filter: { id: { $in: bids } } });
+          for (const b of batches) batchById[b.get('id')] = b.get('batchNo');
+        }
+        ctx.body = {
+          ok: true,
+          data: {
+            product: {
+              id,
+              productNo: p.get('productNo'),
+              status: p.get('status'),
+              reviewStatus: p.get('reviewStatus'),
+              sourcePlatform: p.get('sourcePlatform'),
+              targetPlatform: p.get('targetPlatform'),
+              sourceUrl: p.get('sourceUrl'),
+              sourceProductId: p.get('sourceProductId'),
+              titleOriginal: p.get('titleOriginal'),
+              titleProcessed: p.get('titleProcessed'),
+              titleFinal: p.get('titleFinal'),
+              descriptionOriginal: p.get('descriptionOriginal'),
+              descriptionProcessed: p.get('descriptionProcessed'),
+              descriptionFinal: p.get('descriptionFinal'),
+              priceOriginal: p.get('priceOriginal'),
+              currencyOriginal: p.get('currencyOriginal'),
+              priceTarget: p.get('priceTarget'),
+              listPriceTarget: p.get('listPriceTarget'),
+              stock: p.get('stock'),
+              moq: p.get('moq'),
+              categoryOriginal: p.get('categoryOriginal'),
+              categoryOriginalId: p.get('categoryOriginalId'),
+              categoryTargetId: p.get('categoryTargetId'),
+              categoryTargetName: p.get('categoryTargetName'),
+              attributesOriginal: p.get('attributesOriginal') || {},
+              attributesProcessed: p.get('attributesProcessed') || {},
+              riskFlags: p.get('riskFlags') || [],
+              tags: p.get('tags') || [],
+              priority: p.get('priority'),
+              shopInfo: p.get('shopInfo') || null,
+              tradeInfo: p.get('tradeInfo') || null,
+              createdAt: p.get('createdAt'),
+              updatedAt: p.get('updatedAt'),
+            },
+            skus: skus.map((s: any) => ({
+              id: s.get('id'),
+              sku: s.get('sku'),
+              specValue: s.get('specValue'),
+              specAttrs: s.get('specAttrs') || null,
+              imageUrl: s.get('imageUrl'),
+              priceOriginal: s.get('priceOriginal'),
+              priceTarget: s.get('priceTarget'),
+              stock: s.get('stock'),
+            })),
+            media: media.map((m: any) => ({
+              id: m.get('id'),
+              role: m.get('role'),
+              assetType: m.get('assetType'),
+              sourceUrl: m.get('sourceUrl'),
+              sort: m.get('sort'),
+            })),
+            publishRecords: recordRows.map((r: any) => ({
+              id: r.get('id'),
+              batchId: r.get('batchId'),
+              batchNo: batchById[r.get('batchId')] || null,
+              targetPlatform: r.get('targetPlatform'),
+              result: r.get('result'),
+              targetProductId: r.get('targetProductId'),
+              targetUrl: r.get('targetUrl'),
+              failureReason: r.get('failureReason'),
+              errorCode: r.get('errorCode'),
+              publishedAt: r.get('publishedAt'),
+              createdAt: r.get('createdAt'),
+            })),
+          },
+          warnings: [],
+          errors: [],
+          traceId,
+        };
+        await next();
+      },
+
+      // 删除商品：商品 + SKU + 媒体资产 + 媒体任务一并删；发布记录与审计日志保留作台账（发布记录里显示「商品已移除」）。
+      // 发布中的商品不可删（先等批次结束或「退回编辑」）。逐商品写审计。
+      deleteProducts: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as { productIds?: Array<number | string> };
+        const actorId = String(ctx.state?.currentUser?.id ?? 'unknown');
+        const ids = Array.isArray(v.productIds)
+          ? [...new Set(v.productIds.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0))]
+          : [];
+        if (!ids.length) {
+          ctx.status = 400;
+          ctx.body = fail('NO_PRODUCTS', '请先选择要删除的商品', false, traceId);
+          return await next();
+        }
+        const { Products, Skus, Media, MediaJobs, AuditLogs } = getRepos(db);
+        let deleted = 0;
+        const skipped: Array<{ id: number; reason: string }> = [];
+        for (const id of ids) {
+          const p = await Products.findOne({ filterByTk: id });
+          if (!p) {
+            skipped.push({ id, reason: '商品不存在' });
+            continue;
+          }
+          if (p.get('status') === 'publishing') {
+            skipped.push({ id, reason: '发布中不可删除' });
+            continue;
+          }
+          await MediaJobs.destroy({ filter: { productId: id } });
+          await Media.destroy({ filter: { productId: id } });
+          await Skus.destroy({ filter: { productId: id } });
+          await Products.destroy({ filterByTk: id });
+          await AuditLogs.create({
+            values: {
+              actorType: 'user',
+              actorId,
+              action: 'product.delete',
+              resourceType: 'product',
+              resourceId: id,
+              oldValue: {
+                title: p.get('titleFinal') || p.get('titleProcessed') || p.get('titleOriginal'),
+                status: p.get('status'),
+                sourceUrl: p.get('sourceUrl'),
+              },
+              reason: '商品库删除商品（SKU/媒体一并删除，发布记录保留台账）',
+              traceId,
+            },
+          });
+          deleted++;
+        }
+        ctx.body = {
+          ok: true,
+          data: { deleted, skipped },
+          warnings: skipped.length
+            ? [`${skipped.length} 个商品未删除：${skipped.map((s) => `#${s.id} ${s.reason}`).join('；')}`]
+            : [],
           errors: [],
           traceId,
         };
@@ -323,6 +497,8 @@ export function setupLibrary(plugin: Plugin): void {
   // 查询/导出均为只读，登录用户可用（遵循当前用户权限）。批量保存字段为受控写入，登录用户可用（细粒度角色留待 ACL 细化）。
   app.acl.allow('aiListingLibrary', 'stats', 'loggedIn');
   app.acl.allow('aiListingLibrary', 'list', 'loggedIn');
+  app.acl.allow('aiListingLibrary', 'detail', 'loggedIn');
   app.acl.allow('aiListingLibrary', 'export', 'loggedIn');
   app.acl.allow('aiListingLibrary', 'bulkSaveFields', 'loggedIn');
+  app.acl.allow('aiListingLibrary', 'deleteProducts', 'loggedIn');
 }

@@ -62,3 +62,35 @@ describe('runPrecheck 商品属性必填规则', () => {
     expect(issues.some((i) => i.code === 'PUBLISH_IMAGE_MISSING')).toBe(true);
   });
 });
+
+describe('runPrecheck 类目兜底链（与 buildPublishPayload 一致）', () => {
+  it('无目标类目但同平台有源类目 ID → 通过（沿用源类目）', () => {
+    const { issues } = runPrecheck(
+      baseInput({
+        product: { categoryTargetId: undefined, categoryOriginalId: '201273571', sourcePlatform: 'Alibaba.com' },
+        config: { targetPlatform: 'Alibaba.com', targetStoreId: 1 },
+      }),
+    );
+    expect(issues.some((i) => i.code === 'PUBLISH_CATEGORY_MISSING')).toBe(false);
+  });
+
+  it('无目标类目且跨平台（源类目不可复用）→ 阻断', () => {
+    const { issues } = runPrecheck(
+      baseInput({
+        product: { categoryTargetId: undefined, categoryOriginalId: '201273571', sourcePlatform: 'Alibaba.com' },
+        config: { targetPlatform: 'Lazada', targetStoreId: 1 },
+      }),
+    );
+    expect(issues.some((i) => i.code === 'PUBLISH_CATEGORY_MISSING' && i.level === 'block')).toBe(true);
+  });
+
+  it('完全无类目 → 阻断', () => {
+    const { issues } = runPrecheck(
+      baseInput({
+        product: { categoryTargetId: undefined },
+        config: { targetPlatform: 'Alibaba.com', targetStoreId: 1 },
+      }),
+    );
+    expect(issues.some((i) => i.code === 'PUBLISH_CATEGORY_MISSING')).toBe(true);
+  });
+});

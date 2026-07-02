@@ -330,6 +330,7 @@ export function toNormalizedFromBuyerDescription(
     currencyOriginal: currency,
     stock: undefined, // 实时库存需另调 /eco/buyer/product/inventory（见 mapBuyerInventory）
     categoryOriginal: str(rd.category),
+    categoryOriginalId: str(rd.category_id) || undefined,
     attributesOriginal: undefined, // 关键属性需另调 /eco/buyer/product/keyattributes（见 mapBuyerKeyAttributes）
     moq: num(rd.min_order_quantity),
     statusOriginal: str(rd.status),

@@ -57,6 +57,7 @@ export async function createProductDraft(repos: CaptureRepos, normalized: Normal
       currencyOriginal: normalized.currencyOriginal,
       stock: normalized.stock,
       categoryOriginal: normalized.categoryOriginal,
+      categoryOriginalId: normalized.categoryOriginalId,
       attributesOriginal: normalized.attributesOriginal || {},
       moq: normalized.moq,
       statusOriginal: normalized.statusOriginal,

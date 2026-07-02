@@ -122,6 +122,13 @@ export function setupHistory(plugin: Plugin): void {
         const batchIdsByNo = await resolveBatchIdsByNo(Batches, v.keyword);
         const filter = buildFilter(v, batchIdsByNo);
         const total = await Records.count({ filter });
+        // 表底汇总条：按「除结果外的当前筛选」统计成功/失败数（点 chip 可切换结果筛选）。
+        const chipBase = buildFilter({ ...v, result: undefined }, batchIdsByNo);
+        const chipAnd = ((chipBase as Record<string, unknown>).$and as unknown[]) || [];
+        const resultCounts = {
+          success: await Records.count({ filter: { $and: [...chipAnd, { result: 'success' }] } }),
+          failed: await Records.count({ filter: { $and: [...chipAnd, { result: 'failed' }] } }),
+        };
         const rows = await Records.find({ filter, sort: ['-id'], offset: (page - 1) * pageSize, limit: pageSize });
 
         // 批量取商品标题、批次号，避免 N+1。
@@ -153,7 +160,7 @@ export function setupHistory(plugin: Plugin): void {
         }));
         ctx.body = {
           ok: true,
-          data: { items, total, page, pageSize },
+          data: { items, total, page, pageSize, resultCounts },
           warnings: [],
           errors: [],
           traceId,

@@ -128,6 +128,7 @@ export async function executeUrlCapture(plugin: Plugin, input: UrlCaptureInput):
     currencyOriginal: normalized.currencyOriginal,
     stock: normalized.stock,
     categoryOriginal: normalized.categoryOriginal,
+    categoryOriginalId: normalized.categoryOriginalId,
     attributesOriginal: normalized.attributesOriginal || {},
     status: 'captured',
     reviewStatus: 'pending',
@@ -217,6 +218,7 @@ export function setupCapture(plugin: Plugin): void {
       },
 
       // 只读：按 captureType 返回最近抓取记录，供各 Tab 的「抓取历史」jsBlock 在 handler 内刷新（沙箱里自定义 action 可经 ctx.request 调用）。
+      // 每条记录附带产出商品的标题/主图/状态（metadata.productId 关联），让历史列表一眼看出「抓的是什么商品」。
       listCaptureHistory: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
         const values = (ctx.action?.params?.values || {}) as { captureType?: string; limit?: number };
@@ -227,18 +229,85 @@ export function setupCapture(plugin: Plugin): void {
           filter.captureType = values.captureType;
         }
         const rows = await Tasks.find({ filter, sort: ['-id'], limit });
-        const data = rows.map((r) => ({
-          id: r.get('id'),
-          taskNo: r.get('taskNo'),
-          captureType: r.get('captureType'),
-          sourcePlatform: r.get('sourcePlatform'),
-          input: r.get('input'),
-          status: r.get('status'),
-          traceId: r.get('traceId'),
-          createdAt: r.get('createdAt'),
-          metadata: r.get('metadata'),
-        }));
+        // 批量取产出商品（标题/状态）与主图，避免 N+1。
+        const productIds = [
+          ...new Set(
+            rows.map((r) => Number((r.get('metadata') || {}).productId)).filter((n) => Number.isInteger(n) && n > 0),
+          ),
+        ];
+        const productById: Record<number, { id: number; title: string; status: string; mainImage: string | null }> = {};
+        if (productIds.length) {
+          const Products = db.getRepository('aiListingProducts');
+          const Media = db.getRepository('aiListingMediaAssets');
+          const products = await Products.find({ filter: { id: { $in: productIds } } });
+          const mains = await Media.find({
+            filter: { $and: [{ productId: { $in: productIds } }, { role: 'main' }] },
+            sort: ['id'],
+          });
+          const mainByPid: Record<number, string> = {};
+          for (const m of mains) {
+            const pid = m.get('productId');
+            if (mainByPid[pid] == null && m.get('sourceUrl')) mainByPid[pid] = m.get('sourceUrl');
+          }
+          for (const p of products) {
+            const pid = p.get('id');
+            productById[pid] = {
+              id: pid,
+              title: p.get('titleFinal') || p.get('titleProcessed') || p.get('titleOriginal') || '（未命名）',
+              status: p.get('status'),
+              mainImage: mainByPid[pid] || null,
+            };
+          }
+        }
+        const data = rows.map((r) => {
+          const pid = Number((r.get('metadata') || {}).productId);
+          return {
+            id: r.get('id'),
+            taskNo: r.get('taskNo'),
+            captureType: r.get('captureType'),
+            sourcePlatform: r.get('sourcePlatform'),
+            input: r.get('input'),
+            status: r.get('status'),
+            errorMessage: r.get('errorMessage'),
+            traceId: r.get('traceId'),
+            createdAt: r.get('createdAt'),
+            metadata: r.get('metadata'),
+            product: productById[pid] || null,
+          };
+        });
         ctx.body = { ok: true, data, warnings: [], errors: [], traceId };
+        await next();
+      },
+
+      // 删除抓取历史记录：删任务 + 关联任务步骤（不动产出的商品，商品在商品库单独管理）。
+      deleteTask: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const ids = ((ctx.action?.params?.values || {}) as { taskIds?: Array<number | string> }).taskIds;
+        const taskIds = Array.isArray(ids)
+          ? [...new Set(ids.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0))]
+          : [];
+        if (!taskIds.length) {
+          ctx.status = 400;
+          ctx.body = fail('NO_TASK_IDS', '请先选择要删除的抓取记录', false, traceId);
+          return await next();
+        }
+        const Tasks = db.getRepository('aiListingCaptureTasks');
+        const Steps = db.getRepository('aiListingTaskSteps');
+        const running = await Tasks.count({ filter: { id: { $in: taskIds }, status: 'running' } });
+        if (running) {
+          ctx.status = 409;
+          ctx.body = fail('TASK_RUNNING', '有抓取任务正在进行中，请等它结束后再删除', true, traceId);
+          return await next();
+        }
+        await Steps.destroy({ filter: { taskType: 'capture', taskId: { $in: taskIds } } });
+        const deleted = await Tasks.destroy({ filter: { id: { $in: taskIds } } });
+        ctx.body = {
+          ok: true,
+          data: { deleted: Number(deleted) || taskIds.length },
+          warnings: [],
+          errors: [],
+          traceId,
+        };
         await next();
       },
 
@@ -293,6 +362,7 @@ export function setupCapture(plugin: Plugin): void {
 
   app.acl.allow('aiListingCapture', 'startUrlCapture', 'loggedIn');
   app.acl.allow('aiListingCapture', 'listCaptureHistory', 'loggedIn');
+  app.acl.allow('aiListingCapture', 'deleteTask', 'loggedIn');
   app.acl.allow('aiListingCapture', 'latestCaptureRequest', 'loggedIn');
   app.acl.allow('aiListingTasks', 'getProgress', 'loggedIn');
 
@@ -312,9 +382,11 @@ export function setupCapture(plugin: Plugin): void {
     }
     const platform = model.get('capturePlatform') as string | undefined;
     const scope = (model.get('captureScope') as string[] | undefined) || [];
-    // 语言与币种（zh-CNY / en-USD）→ 抓取请求的 language/currency，缺省中文 + 人民币（与源页展示对齐）。
+    // 语言与币种独立字段（对齐官方站的分开设置）；兼容旧的合并字段 captureLocale（zh-CNY / en-USD）。
     const locale = (model.get('captureLocale') as string | undefined) || 'zh-CNY';
-    const [language, currency] = locale === 'en-USD' ? ['en-US', 'USD'] : ['zh-CN', 'CNY'];
+    const [localeLanguage, localeCurrency] = locale === 'en-USD' ? ['en-US', 'USD'] : ['zh-CN', 'CNY'];
+    const language = (model.get('captureLanguage') as string | undefined) || localeLanguage;
+    const currency = (model.get('captureCurrency') as string | undefined) || localeCurrency;
     const traceId = `form-${model.get('id')}-${Date.now()}`;
     const runCapture = () =>
       executeUrlCapture(plugin, {

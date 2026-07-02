@@ -24,12 +24,15 @@ export interface PrecheckInput {
     priceTarget?: number | string | null;
     stock?: number | null;
     categoryTargetId?: string | null;
+    // 源平台类目 ID + 源平台：同平台搬运时源类目可直接作为发布类目（与 buildPublishPayload 的兜底链一致）。
+    categoryOriginalId?: string | null;
+    sourcePlatform?: string | null;
     attributes?: Record<string, unknown> | null;
   };
   skus: Array<{ sku?: string; priceTarget?: number | string | null; stock?: number | null }>;
   hasMainImage: boolean;
   imageCount: number;
-  config: { targetStoreId?: number; categoryTargetId?: string };
+  config: { targetPlatform?: string; targetStoreId?: number; categoryTargetId?: string };
 }
 
 const TITLE_MAX = 200;
@@ -49,8 +52,13 @@ export function runPrecheck(input: PrecheckInput): { ready: boolean; issues: Pre
     });
   }
 
-  // 类目：发布配置或商品上的目标类目缺失。
-  const category = config.categoryTargetId || product.categoryTargetId;
+  // 类目：与发布时同一条兜底链——发布配置 > 商品目标类目 > 同平台搬运时的源商品类目 ID。
+  const category =
+    config.categoryTargetId ||
+    product.categoryTargetId ||
+    (config.targetPlatform && config.targetPlatform === product.sourcePlatform
+      ? product.categoryOriginalId
+      : undefined);
   if (!category || !String(category).trim()) {
     issues.push({
       level: 'block',

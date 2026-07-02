@@ -36,6 +36,7 @@ interface ProcessRepos {
   Jobs: any;
   Steps: any;
   Products: any;
+  Skus: any;
   Media: any;
   MediaJobs: any;
   AuditLogs: any;
@@ -47,6 +48,7 @@ function getProcessRepos(db: any): ProcessRepos {
     Jobs: db.getRepository('aiListingProcessingJobs'),
     Steps: db.getRepository('aiListingTaskSteps'),
     Products: db.getRepository('aiListingProducts'),
+    Skus: db.getRepository('aiListingSkus'),
     Media: db.getRepository('aiListingMediaAssets'),
     MediaJobs: db.getRepository('aiListingMediaJobs'),
     AuditLogs: db.getRepository('aiListingAuditLogs'),
@@ -124,6 +126,7 @@ async function processOneProduct(
   // 进入处理中。
   await repos.Products.update({ filterByTk: productId, values: { status: 'processing' } });
 
+  const skuRows = await repos.Skus.find({ filter: { productId }, sort: ['id'] });
   const input: ProductInput = {
     id: productId,
     titleOriginal: product.get('titleOriginal'),
@@ -131,6 +134,11 @@ async function processOneProduct(
     priceOriginal: product.get('priceOriginal'),
     currencyOriginal: product.get('currencyOriginal'),
     attributesOriginal: product.get('attributesOriginal'),
+    skus: skuRows.map((s: any) => ({
+      id: s.get('id'),
+      priceOriginal: s.get('priceOriginal'),
+      priceTarget: s.get('priceTarget'),
+    })),
   };
 
   try {
@@ -138,6 +146,11 @@ async function processOneProduct(
 
     // 写入建议字段 + 目标字段（绝不写 *Final）。
     await repos.Products.update({ filterByTk: productId, values: result.patch });
+
+    // SKU 逐条目标价：与商品价同一规则换算（发布草稿可走 SKU 规格价）。
+    for (const sp of result.skuPatches) {
+      await repos.Skus.update({ filterByTk: sp.id, values: { priceTarget: sp.priceTarget } });
+    }
 
     // 审计：每个字段变更一条（AI 建议 actorType=ai_employee，价格 actorType=system）。
     const audits: AuditEntry[] = result.changes.map((c) => ({

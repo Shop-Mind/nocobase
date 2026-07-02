@@ -12,6 +12,8 @@
 // 故知识库以「结构化条目 + 关键词/规则匹配」实现，供 Rena/Lena 命中（matchKnowledge）+ Mira/Toby 违禁词扫描（scanBannedWords）。
 // 后续接入向量库时，可在不改调用方的前提下把 matchKnowledge 内部替换为向量检索（保持入参/出参结构）。
 
+import { ALIBABA_TITLE_RULES } from '../shared/title-rules';
+
 export type KnowledgeCategory = 'platform_rule' | 'category_rule' | 'title_norm' | 'banned_word' | 'market';
 
 export interface KnowledgeEntry {
@@ -114,6 +116,14 @@ export const KNOWLEDGE_ENTRIES: KnowledgeEntry[] = [
     keywords: ['alibaba', '阿里', '国际站', 'icbu', '关键词', '类目'],
     content:
       'Alibaba.com（ICBU）重关键词与类目属性完整度；标题英文、含行业词与长尾词；MOQ/规格/认证需填全；图片≥6 张，含场景与细节。',
+  },
+  {
+    id: 'kb-alibaba-title',
+    category: 'title_norm',
+    platform: 'alibaba',
+    title: 'Alibaba.com 商品标题官方规范',
+    keywords: ['标题', 'title', '商品名称', '产品名称', 'alibaba', '国际站', '核心词', '堆砌', 'with', 'for'],
+    content: ALIBABA_TITLE_RULES,
   },
   {
     id: 'kb-category-attrs',
