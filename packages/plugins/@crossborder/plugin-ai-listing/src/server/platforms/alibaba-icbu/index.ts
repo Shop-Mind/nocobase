@@ -110,23 +110,35 @@ async function uploadImagesToPhotobank(
   return out;
 }
 
-// 视频银行上传并绑定商品主视频（三步，全按 URL，无需传字节）：
-// video/upload(video_path) → 异步 QUEUE 时按 req_id 轮询 upload/result → COMPLETE 后 relation/product/main 绑定。
-// ⚠️ Video 接口组需在开放平台控制台单独申请权限（与 Product 组分开），未开通时返回 InsufficientPermission。
+// 抓取到的视频常是 play.video.alibaba.com 播放页（302 跳 CDN 直链），video/upload 需要直链——先本地解析终链。
+async function resolveDirectVideoUrl(videoUrl: string): Promise<string> {
+  try {
+    const head = await fetch(videoUrl, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(15000) });
+    if (head.url) return head.url.replace(/^http:/, 'https:');
+  } catch {
+    // 解析失败就按原链接上传，交由平台侧兜底
+  }
+  return videoUrl;
+}
+
+// 视频银行上传（按 URL，无需传字节）：video/upload(video_path) → 异步 QUEUE 时按 req_id 轮询
+// upload/result → COMPLETE 返回 video_id（草稿走 imageVideo 字段、正式发布走 relation 绑定）。
+// ⚠️ Video 接口组需在开放平台控制台单独申请权限；开通后如仍统一报 10000002 illegal param，
+// 是店铺侧视频银行/授权未就绪（重新授权店铺或在 myAlibaba 打开一次媒体中心后恢复）。
 // 全程 best-effort：任何失败只记 notes，不阻断发布/草稿。
-async function uploadAndBindVideo(
+async function uploadVideoToBank(
   cfg: ReturnType<typeof getIopConfig>,
   accessToken: string,
   videoUrl: string,
   videoName: string,
-  productId: string,
   notes: string[],
-): Promise<void> {
+): Promise<string | undefined> {
   try {
+    const directUrl = await resolveDirectVideoUrl(videoUrl);
     const up = await callIop(cfg, {
       apiPath: '/alibaba/icbu/video/upload',
       httpMethod: 'POST',
-      params: { video_path: videoUrl, video_name: videoName.slice(0, 50) || 'product-video' },
+      params: { video_path: directUrl, video_name: videoName.slice(0, 50) || 'product-video' },
       accessToken,
       timeoutMs: 60000,
     });
@@ -143,15 +155,10 @@ async function uploadAndBindVideo(
       model = ((res.result as Record<string, unknown>)?.model ?? res.model ?? {}) as Record<string, unknown>;
     }
     if (model.req_code === 'COMPLETE' && model.video_id) {
-      await callIop(cfg, {
-        apiPath: '/alibaba/icbu/video/relation/product/main',
-        httpMethod: 'POST',
-        params: { video_id: Number(model.video_id), product_id: Number(productId) },
-        accessToken,
-        timeoutMs: 30000,
-      });
-      notes.push('主图视频已上传视频银行并绑定商品');
-    } else if (model.req_code === 'QUEUE') {
+      notes.push('主图视频已上传视频银行');
+      return String(model.video_id);
+    }
+    if (model.req_code === 'QUEUE') {
       notes.push('主图视频仍在平台转码队列（约 1 分钟内未完成），请稍后在编辑页确认或手动绑定');
     } else {
       notes.push(`主图视频上传失败（${model.req_code || '未知状态'}），请在编辑页手动上传`);
@@ -163,6 +170,32 @@ async function uploadAndBindVideo(
         ? '主图视频未上传：App 尚未开通 Video 接口组权限，请到开放平台控制台 API Permission 申请后自动生效'
         : `主图视频上传失败（${(e as Error)?.message || e}），请在编辑页手动上传`,
     );
+  }
+  return undefined;
+}
+
+// 正式发布路径：上传视频银行后用 relation/product/main 绑定为商品主视频。
+async function uploadAndBindVideo(
+  cfg: ReturnType<typeof getIopConfig>,
+  accessToken: string,
+  videoUrl: string,
+  videoName: string,
+  productId: string,
+  notes: string[],
+): Promise<void> {
+  const videoId = await uploadVideoToBank(cfg, accessToken, videoUrl, videoName, notes);
+  if (!videoId) return;
+  try {
+    await callIop(cfg, {
+      apiPath: '/alibaba/icbu/video/relation/product/main',
+      httpMethod: 'POST',
+      params: { video_id: Number(videoId), product_id: Number(productId) },
+      accessToken,
+      timeoutMs: 30000,
+    });
+    notes.push('主图视频已绑定商品');
+  } catch (e) {
+    notes.push(`主图视频已上传但绑定失败（${(e as Error)?.message || e}），请在编辑页手动关联`);
   }
 }
 
@@ -333,10 +366,11 @@ export const alibabaIcbuConnector: PlatformConnector = {
     };
   },
 
-  // 草稿发布（默认策略，schema 引擎）：photobank 上传主图/详情图 → schema/get 取类目规则 →
-  // buildDraftXml（官方示例格式：complex-value 包装 + superText 图文详情 + fileId 主图 + 色卡）→
-  // schema/add/draft 创建草稿。草稿不上架、不触发平台审核，人工在编辑页确认后提交。
-  // 对比 listing/v2 引擎：schema 能带 superText 图文详情（listing/v2 的 description 平台侧必丢）；
+  // 草稿发布（默认策略，schema 引擎）：photobank 上传主图/详情图 →（有视频则先上传视频银行拿 video_id）→
+  // schema/get 取类目规则 → buildDraftXml（官方接入文档格式：complex-value 包装 + 结构化详描
+  // detailImage/textDesc + fileId 主图 + 色卡 + imageVideo）→ schema/add/draft 创建草稿。
+  // 草稿不上架、不触发平台审核，人工在编辑页确认后提交。
+  // 对比 listing/v2 引擎：schema 能带结构化详描（listing/v2 的 description 平台侧必丢）；
   // 代价是标题/描述保持中文（编辑页有一键翻译/优化）、价格按估算汇率折 USD。
   async publishDraft(accessToken, payload) {
     if (!payload.categoryId) {
@@ -376,7 +410,16 @@ export const alibabaIcbuConnector: PlatformConnector = {
     }
     if (!schemaXml) throw lastError;
 
-    const built = buildDraftXml(payload, schemaXml, { mainImages, detailImages: detailImages.map((d) => d.url) });
+    // 视频先上传视频银行拿 video_id，随草稿 XML 的 imageVideo 字段一并写入（草稿池商品 relation 接口不适用）。
+    const videoId = payload.videoUrl
+      ? await uploadVideoToBank(cfg, accessToken, payload.videoUrl, payload.title || 'product-video', notes)
+      : undefined;
+
+    const built = buildDraftXml(payload, schemaXml, {
+      mainImages,
+      detailImages: detailImages.map((d) => d.url),
+      videoId,
+    });
     notes.push(...built.notes);
     const json = await callIop(cfg, {
       apiPath: '/icbu/product/schema/add/draft',
@@ -393,16 +436,6 @@ export const alibabaIcbuConnector: PlatformConnector = {
       throw new OpenApiError('PUBLISH_NO_PRODUCT_ID', '平台未返回草稿商品 ID', {
         traceId: (result.trace_id || json.request_id) as string | undefined,
       });
-    }
-    if (payload.videoUrl) {
-      await uploadAndBindVideo(
-        cfg,
-        accessToken,
-        payload.videoUrl,
-        payload.title || 'product-video',
-        String(draftId),
-        notes,
-      );
     }
     notes.push('标题保持中文，编辑页可一键翻译/优化；必填属性「风格」等请人工确认后提交上架');
     return {

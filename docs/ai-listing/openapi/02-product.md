@@ -521,6 +521,21 @@ ICBU 商品类目、图片银行、商品发布（schema 流程）、库存、�
 | CHK_STEP_CATEGORY_QUALITY_MINSIZE_ERROR | 该类目和单位下起订量不得少于 {0} | 起订量受类目和 priceUnit 字段限制 |
 | CHK_BASIC_REQUIRED | 该字段必填 | schema 中必填字段必须填写，不可置空 |
 
+### 真机修正（2026-07-02，官方《【交易/商机】商品发布接入文档》对照验证）
+
+1. **multiComplex 提交格式**：每个数据实例一个 `<complex-values>` 节点、字段直接挂在其中（官方 demo 格式）。
+   写成 `<complex-values><complex-value>…</complex-value></complex-values>` 会被平台**静默丢弃整个字段**（不报错）——
+   这就是此前「草稿商详写不进去」的真正根因。complex 类型仍是 `<complex-value>` 包装。
+2. **结构化详描草稿可写**：顶层字段 `detailImage`（产品图片，按图集分组：150 尺寸图/200 场景图/300 细节图/350 其他）、
+   `textDesc`（卖点 ≤2000 字符）、`companyDesc`/`companyFaqDesc`/`companyImage` 均可随 `schema.add.draft` 落库
+   （render.draft 与编辑页均确认）。使用结构化详描时**不要设置** `productDescType`/`superText`（那是普通编辑字段）。
+   detailImage 的 imageURL 必须是图片银行 URL；细节图（300）支持每图 `generalText` 配文（≤500）。
+3. **关键词**：`productKeywords` 实际只有一组 `productKeywords_0`（≤384 字节，禁 `[;:,，]`），多个词用换行 `\n`
+   分隔（官方 demo 格式）；`productKeywords_1/2` 会被静默丢弃。
+4. **主图视频**：`imageVideo`（主图视频）/`detailVideo`（详情视频）为 singleCheck，值＝视频银行 `video_id` 直填。
+5. **标题字符集**：en_US 类目 `productTitle` 的 regexRule 把非 ASCII（全部中文）判非法——平台草稿实际接受中文标题，
+   本地预检不要按该规则清洗（会把标题洗成空串），只提示待编辑页翻译。
+
 ---
 
 ## alibaba.icbu.product.schema.get

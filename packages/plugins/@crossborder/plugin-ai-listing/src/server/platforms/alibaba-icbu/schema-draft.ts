@@ -8,20 +8,23 @@
  */
 
 // 草稿发布（schema 流程，主引擎）：/alibaba/icbu/product/schema/get 拿类目规则 XML →
-// buildDraftXml 按官方接入文档（developer.alibaba.com 119213）的示例格式填值 →
+// buildDraftXml 按官方《【交易/商机】商品发布接入文档》（alibabawork.yuque.com ohmqh3/hwnrm9w9felq7ibv）填值 →
 // /icbu/product/schema/add/draft 创建草稿（不上架、不触发平台审核；人工在编辑页提交时才审核）。
 //
-// ⚠️ 值 XML 格式以官方示例为准（曾用 <fields> 包装导致字段被平台静默丢弃，只有顶层 input 落库）：
+// ⚠️ 值 XML 格式以官方接入文档为准（两次真机踩坑：<fields> 包装、multiComplex 用 complex-value 包装，都会被平台静默丢弃）：
 //   complex      → <complex-value>…</complex-value>（不是 <fields>！）
-//   multiComplex → <complex-values><complex-value>…</complex-value>…</complex-values>
+//   multiComplex → 每个实例一个 <complex-values>…</complex-values>，字段直挂其中（不是 <complex-values><complex-value>！）
 //   singleCheck  → <value>optionId</value>；自定义 <value inputValue="自定义名">-1</value>（负数）
 //   multiCheck   → <values><value …>…</value></values>；自定义色可带色卡 <value img="…" inputValue="灰色">-1</value>
 //   主图 scImages_n → <value fileId="图片银行ID">图片银行URL</value>（必须来自 photobank.upload）
-//   商详         → productDescType=2（普通编辑）+ superText（富文本 HTML，可嵌图片银行图；
-//                  官方明确「api 只支持普通编辑类型的商品详情」，结构化商详无 API，编辑页「一键回填」转换）
+//   关键词       → 只有一组 productKeywords_0（≤384 字节），多个词用换行分隔，禁 [;:,，]（官方 demo 格式）
+//   商详（结构化）→ 顶层结构化详描字段 detailImage（产品图片，按图集分组）+ textDesc（卖点）等，
+//                  用官方 multiComplex 格式真机验证草稿可落库；不设 productDescType/superText（那是普通编辑的字段）
+//   主图视频     → imageVideo=视频银行 video_id（singleCheck 直填）
 //
 // 类目相关字段（p-* 属性）每个类目不同：必填项从规则 XML 解析，能按值匹配的匹配，
 // 匹配不上的取第一个选项并记入 notes——草稿本来就要人工审核，宁可留给人改也不能发不出去。
+// 文本值发布前按 schema rule 做本地预检/清洗（长度按 byte/character、非法字符正则），违规自动修正并记 notes。
 
 import type { PublishPayload } from '../../publish/adapters';
 import { stripThumbSuffix } from './publish-mappers';
@@ -94,6 +97,88 @@ function escXml(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// —— 校验层：按 schema rule 做本地预检/清洗（官方 2.3 字段规则）——
+
+export interface FieldRules {
+  required: boolean;
+  // maxLengthRule：unit=byte 按 UTF-8 字节数截断，unit=character 按字符数截断。
+  maxLength?: { value: number; unit: 'byte' | 'character' };
+  // regexRule exProperty="not include"：命中即非法，本地直接剔除命中片段。
+  notInclude: string[];
+}
+
+// 从规则 XML 提取指定字段的本地可执行规则（长度/非法字符/必填）。
+export function parseFieldRules(schemaXml: string, fieldId: string): FieldRules {
+  const rules: FieldRules = { required: false, notInclude: [] };
+  const m = schemaXml.match(new RegExp(`<field id="${fieldId}"[^>]*>`));
+  if (!m || m.index === undefined) return rules;
+  const next = schemaXml.slice(m.index + m[0].length).search(/<field id="/);
+  const chunk = schemaXml.slice(m.index, next >= 0 ? m.index + m[0].length + next : undefined);
+  rules.required = /name="requiredRule" value="true"/.test(chunk);
+  const len = chunk.match(/name="maxLengthRule" value="(\d+)"[^/]*?unit="(byte|character)"/);
+  if (len) rules.maxLength = { value: Number(len[1]), unit: len[2] as 'byte' | 'character' };
+  for (const r of chunk.matchAll(/name="regexRule" value="([^"]+)" exProperty="not include"/g)) {
+    rules.notInclude.push(r[1]);
+  }
+  return rules;
+}
+
+// 按 byte 截断 UTF-8 字符串（不切断多字节字符）。
+function truncateBytes(s: string, maxBytes: number): string {
+  if (Buffer.byteLength(s, 'utf8') <= maxBytes) return s;
+  let out = '';
+  let used = 0;
+  for (const ch of s) {
+    const b = Buffer.byteLength(ch, 'utf8');
+    if (used + b > maxBytes) break;
+    out += ch;
+    used += b;
+  }
+  return out;
+}
+
+// 文本预检清洗：剔除 not-include 正则命中的片段（HTML 实体形式的规则先反转义）、按规则截断长度。
+// 修正过的内容记入 notes，让运营在编辑页知道哪里被动过。
+// ⚠️ en_US 类目的标题规则会把非 ASCII（即全部中文）判为非法——我们有意保留中文原文给编辑页一键翻译，
+// 所以命中过半内容的字符集类规则只提示不清洗，避免把标题洗成空串（真机踩坑）。
+export function sanitizeByRules(text: string, rules: FieldRules, label: string, notes: string[]): string {
+  let out = String(text ?? '');
+  for (const raw of rules.notInclude) {
+    const source = raw
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"');
+    try {
+      const re = new RegExp(source, 'g');
+      const cleaned = out
+        .replace(re, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (cleaned === out) continue;
+      if (cleaned.length < out.length / 2) {
+        notes.push(
+          `${label}多数内容命中平台字符限制（多为中文等非拉丁字符）：草稿保留原文，提交上架前请在编辑页翻译/修正`,
+        );
+        continue;
+      }
+      notes.push(`${label}含平台非法字符（规则 ${source.slice(0, 40)}…），已自动剔除，请人工复核`);
+      out = cleaned;
+    } catch {
+      // Java 风格正则 JS 编译失败时跳过该条（平台侧仍会校验，草稿允许人工兜底）
+    }
+  }
+  if (rules.maxLength) {
+    const { value, unit } = rules.maxLength;
+    const over = unit === 'byte' ? Buffer.byteLength(out, 'utf8') > value : [...out].length > value;
+    if (over) {
+      out = unit === 'byte' ? truncateBytes(out, value) : [...out].slice(0, value).join('');
+      notes.push(`${label}超平台长度上限（${value} ${unit === 'byte' ? '字节' : '字符'}），已自动截断`);
+    }
+  }
+  return out;
+}
+
 // 从抓取属性值/标题里为类目选项字段挑一个匹配项；匹配不上取第一个选项。
 function pickOption(field: SchemaField, candidates: string[], notes: string[]): string | undefined {
   if (!field.options.length) return undefined;
@@ -130,6 +215,8 @@ export interface PhotobankImage {
 export interface DraftMedia {
   mainImages: PhotobankImage[];
   detailImages?: string[];
+  // 视频银行 video_id（video/upload → upload/result COMPLETE 后获得），填入 imageVideo 字段。
+  videoId?: string;
 }
 
 // PublishPayload + 类目规则 XML + 图片银行媒体 → schema.add.draft 的值 XML（官方示例格式）。
@@ -142,20 +229,22 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
 
   const parts: string[] = [];
 
-  // 标题
-  parts.push(`<field id="productTitle" type="input"><value>${escXml(payload.title || '')}</value></field>`);
+  // 标题：按类目 schema 的 productTitle 规则本地预检（≤128 字节、剔除邮箱/HTML 标签等非法字符）。
+  const title = sanitizeByRules(payload.title || '', parseFieldRules(schemaXml, 'productTitle'), '标题', notes);
+  parts.push(`<field id="productTitle" type="input"><value>${escXml(title)}</value></field>`);
 
-  // 关键词（productKeywords，最多 3 个）：优先用 payload.keywords（空格分词），否则取标题前 30 字。
+  // 关键词：官方规则只有一组 productKeywords_0（≤384 字节），多个词以换行分隔；禁 [;:,，] 等分隔符。
   if (byId.get('productKeywords')) {
-    const kws = (payload.keywords ? payload.keywords.split(/[,，;；]/) : [String(payload.title || '').slice(0, 30)])
+    const kws = (payload.keywords ? payload.keywords.split(/[,，;；\n]/) : [String(payload.title || '').slice(0, 30)])
       .map((k) => k.trim())
-      .filter(Boolean)
-      .slice(0, 3);
+      .filter(Boolean);
     if (kws.length) {
-      const inner = kws
-        .map((k, i) => `<field id="productKeywords_${i}" type="input"><value>${escXml(k)}</value></field>`)
-        .join('');
-      parts.push(`<field id="productKeywords" type="complex"><complex-value>${inner}</complex-value></field>`);
+      const joined = sanitizeByRules(kws.join('\n'), parseFieldRules(schemaXml, 'productKeywords_0'), '关键词', notes);
+      parts.push(
+        `<field id="productKeywords" type="complex"><complex-value>` +
+          `<field id="productKeywords_0" type="input"><value>${escXml(joined)}</value></field>` +
+          `</complex-value></field>`,
+      );
     }
   }
 
@@ -299,13 +388,55 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     parts.push(`<field id="customMoreProperty" type="complex"><complex-value>${inner}</complex-value></field>`);
   }
 
-  // ⚠️ 商品详情不随草稿写入：真机 5 组对照实验（superText 中/英/转义/CDATA/纯文本 + 智能编辑
-  // detailImage 模块）均不落库，浏览器编辑页确认为空——平台对「草稿商详」无 API 写入口子
-  // （官方 superText 文档面向 schema.add 正式发布）。详情图已备于图片银行，编辑页组装。
+  // 结构化详描（官方 3.4.5/3.4.9）：detailImage=产品图片（图集分组）+ textDesc=卖点。
+  // 真机验证：用官方 multiComplex 格式（重复 <complex-values>，不设 productDescType/superText）草稿可落库。
+  // 曾经的失败根因是 multiComplex 用了 <complex-values><complex-value> 包装（平台静默丢弃整个字段）。
+  const detailField = byId.get('detailImage');
+  const detailImages = (media?.detailImages || []).slice(0, 30);
+  if (detailField && detailImages.length) {
+    // 图集从类目 schema 的 gallery 选项里选：优先「细节图」(300)，否则第一个选项。
+    const galleryField = fieldsBetween(fields, 'detailImage', 'textDesc').find((f) => f.id === 'gallery');
+    const gallery = galleryField?.options.find((o) => o.value === '300') || galleryField?.options[0];
+    if (gallery) {
+      const imgs = detailImages
+        .map(
+          (u) =>
+            `<complex-values><field id="imageURL" type="input"><value>${escXml(u)}</value></field></complex-values>`,
+        )
+        .join('');
+      parts.push(
+        `<field id="detailImage" type="multiComplex">` +
+          `<complex-values>` +
+          `<field id="images" type="multiComplex">${imgs}</field>` +
+          `<field id="gallery" type="singleCheck"><value displayName="${escXml(gallery.name)}">${
+            gallery.value
+          }</value></field>` +
+          `</complex-values>` +
+          `</field>`,
+      );
+      notes.push(`${detailImages.length} 张详情图已随草稿写入结构化详描（图集：${gallery.name}）`);
+    }
+  }
+  if (byId.get('textDesc') && payload.description) {
+    // 卖点为纯文本（官方 ≤2000 字符）：剥掉富文本标签，按 schema rule 清洗截断。
+    const plain = String(payload.description)
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 2000);
+    if (plain) {
+      const text = sanitizeByRules(plain, parseFieldRules(schemaXml, 'textDesc'), '商品卖点', notes);
+      parts.push(`<field id="textDesc" type="input"><value>${escXml(text)}</value></field>`);
+    }
+  }
   if (media?.detailImages?.length || payload.description) {
-    notes.push(
-      '商品详情无法随草稿 API 写入（平台限制）：详情图已备在图片银行，请在编辑页「详情图片 → 从图片银行选取」组装，卖点/描述可用编辑页 AI 一键生成',
-    );
+    notes.push('结构化详描的公司图片/FAQ 需在编辑页补充（选填）；提交前可用编辑页 AI 优化卖点文案');
+  }
+
+  // 主图视频：视频银行 video_id 直填 imageVideo（视频已在发布前上传视频银行）。
+  if (media?.videoId && byId.get('imageVideo')) {
+    parts.push(`<field id="imageVideo" type="singleCheck"><value>${escXml(media.videoId)}</value></field>`);
+    notes.push('主图视频已随草稿写入（imageVideo）');
   }
 
   return { xml: `<itemSchema>${parts.join('')}</itemSchema>`, notes };

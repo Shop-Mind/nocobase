@@ -112,3 +112,15 @@
 
 ### 错误码
 无。
+
+---
+
+## 真机备注（2026-07-02）
+
+- App 的 Video 接口组权限开通后，网关不再报 `InsufficientPermission`；但若店铺侧视频银行/授权未就绪，
+  **所有 Video 组接口**（upload / upload.result / query / relation.product.main）会统一返回业务错误
+  `{"msg_code":"10000002","msg_info":"illegal param error"}`（与参数无关）。处理：让商家重新授权应用
+  （旧 token 刷新无效），并在 myAlibaba 媒体中心打开一次视频银行页面后重试。
+- `video_path` 必须是可直接下载的直链：`play.video.alibaba.com/global/play/*.mp4` 是 302 跳转页，
+  需先本地解析重定向取 CDN 终链（gv.videocdn.alibaba.com/...）再传。
+- 草稿商品绑定视频不用 relation 接口，直接在 schema.add.draft 的 XML 里填 `imageVideo`=video_id。
