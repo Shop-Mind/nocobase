@@ -85,6 +85,55 @@ export function assertIopOk(json: Record<string, unknown>): Record<string, unkno
   return json;
 }
 
+// 文件上传（multipart/form-data）：签名只覆盖普通参数（文件字节不参与签名，与 IOP SDK 一致），
+// 文件作为独立 part 附加。用于 photobank.upload 等 byte[] 参数接口。
+export interface IopUploadFile {
+  field: string; // 文件参数名，如 image_bytes
+  fileName: string;
+  data: Buffer | Uint8Array;
+  contentType?: string;
+}
+
+export async function callIopUpload(
+  config: IopConfig,
+  input: IopCallInput & { file: IopUploadFile },
+): Promise<Record<string, unknown>> {
+  if (!config.appKey || !config.appSecret) {
+    throw new OpenApiError('OPENAPI_NOT_CONFIGURED', '缺少 AppKey / AppSecret');
+  }
+  const gateway = config.gateway || DEFAULT_GATEWAY;
+  const signed = buildSignedParams(config, input, Date.now());
+  const form = new FormData();
+  for (const [k, v] of Object.entries(signed)) form.append(k, v);
+  const bytes = input.file.data instanceof Uint8Array ? input.file.data : new Uint8Array(input.file.data);
+  form.append(
+    input.file.field,
+    new Blob([bytes as BlobPart], { type: input.file.contentType || 'application/octet-stream' }),
+    input.file.fileName,
+  );
+  let resp: Response;
+  try {
+    resp = await fetch(gateway + input.apiPath, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(input.timeoutMs ?? 60000),
+    });
+  } catch (e) {
+    const msg = (e as Error)?.name === 'TimeoutError' ? '平台接口超时' : '平台接口网络错误';
+    throw new OpenApiError('OPENAPI_NETWORK_ERROR', msg, { retryable: true });
+  }
+  let json: Record<string, unknown>;
+  try {
+    json = (await resp.json()) as Record<string, unknown>;
+  } catch {
+    throw new OpenApiError('OPENAPI_BAD_RESPONSE', '平台返回非 JSON 响应', {
+      retryable: resp.status >= 500,
+      httpStatus: resp.status,
+    });
+  }
+  return assertIopOk(json);
+}
+
 // 调 IOP 网关（POST，application/x-www-form-urlencoded）。HTTP/解析/业务错误统一抛 OpenApiError。
 export async function callIop(config: IopConfig, input: IopCallInput): Promise<Record<string, unknown>> {
   if (!config.appKey || !config.appSecret) {

@@ -40,6 +40,8 @@ export default defineCollection({
 
     { type: 'string', name: 'categoryOriginal', interface: 'input', title: 'Category (source)' },
     { type: 'string', name: 'categoryTargetId', interface: 'input', title: 'Category (target)' },
+    // 目标平台类目名/路径（类目预测写回，便于运营核对「预测的类目对不对」）。
+    { type: 'string', name: 'categoryTargetName', interface: 'input', title: 'Category name (target)' },
     { type: 'jsonb', name: 'attributesOriginal', interface: 'json', title: 'Attributes (original)' },
     { type: 'jsonb', name: 'attributesProcessed', interface: 'json', title: 'Attributes (processed)' },
     { type: 'jsonb', name: 'riskFlags', interface: 'json', title: 'Risk flags' },

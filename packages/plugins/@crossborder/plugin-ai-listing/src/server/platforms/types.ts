@@ -29,6 +29,13 @@ export interface ProductRef {
   url?: string;
 }
 
+// 类目预测结果（发布前把源商品标题/图喂给平台类目预测接口，拿到目标平台叶子类目）。
+export interface CategoryPrediction {
+  categoryId: string;
+  categoryName?: string;
+  categoryPath?: string;
+}
+
 export interface PlatformConnector {
   id: string; // 稳定标识：'alibaba-icbu' | '1688-domestic' | 'lazada' | 'pdd' | 'douyin'
   label: string; // 展示名
@@ -43,5 +50,14 @@ export interface PlatformConnector {
   // —— 业务（可选，按 capabilities；入参是已解析好的 access_token）——
   fetchProduct?(accessToken: string, ref: ProductRef, options?: CaptureOptions): Promise<NormalizedProduct>;
   publish?(accessToken: string, payload: PublishPayload): Promise<PublishResult>;
-  queryStatus?(accessToken: string, targetProductId: string): Promise<'online' | 'draft' | 'failed' | 'pending'>;
+  // 发布为草稿（进卖家后台草稿箱，不上架、不触发平台审核；人工确认提交上架时才审核）。
+  publishDraft?(accessToken: string, payload: PublishPayload): Promise<PublishResult>;
+  queryStatus?(
+    accessToken: string,
+    targetProductId: string,
+  ): Promise<{ status: 'online' | 'draft' | 'failed' | 'pending'; description?: string }>;
+  predictCategory?(
+    accessToken: string,
+    input: { title: string; description?: string; imageUrl?: string },
+  ): Promise<CategoryPrediction>;
 }

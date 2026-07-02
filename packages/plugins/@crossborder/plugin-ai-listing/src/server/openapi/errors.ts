@@ -75,6 +75,8 @@ const FRIENDLY: Record<string, { userMessage: string; retryable: boolean; action
   'invalid-timestamp': { userMessage: '请求时间戳误差过大', retryable: true, action: '校准服务器时钟（NTP）' },
   ServiceUnavailable: { userMessage: '平台服务暂不可用', retryable: true, action: '稍后重试' },
   'system-busy': { userMessage: '平台繁忙，请稍后重试', retryable: true, action: '稍后重试' },
+  // 实测 category/predict/v2 等接口偶发返回该错误（平台内部 RPC 超时），重试即可恢复。
+  ServiceTimeout: { userMessage: '平台服务响应超时（接口偶发抖动）', retryable: true, action: '稍后重试' },
 };
 
 export function friendlyMessage(code?: string): { userMessage: string; retryable: boolean; action?: string } | null {

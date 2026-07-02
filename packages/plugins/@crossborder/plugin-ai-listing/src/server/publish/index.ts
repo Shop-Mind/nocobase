@@ -11,7 +11,21 @@ import type { Context, Next } from '@nocobase/actions';
 import type Plugin from '../plugin';
 import { fail } from '../capture/shared';
 import { runPrecheck, type PrecheckIssue } from './precheck';
-import { buildPublishPayload, PublishAdapterError, resolvePublishAdapter, SUPPORTED_PLATFORMS } from './adapters';
+import { buildPublishPayload, PublishAdapterError, SUPPORTED_PLATFORMS } from './adapters';
+import {
+  listPlatformsMeta,
+  predictCategoryWithAccount,
+  queryTargetStatusWithAccount,
+  resolvePublishTarget,
+} from './real-publish';
+
+// 发布速率（条/间隔）：真实平台发布逐条限速，避免触发平台 QPS 限制与风控（短时间大量发品易被判违规）。
+// mock 发布不限速。safe=每 6s 一条（~10/分）、standard=每 2s 一条（~30/分）、fast=每 0.5s 一条（小批量用）。
+const SPEED_DELAY_MS: Record<string, number> = { safe: 6000, standard: 2000, fast: 500 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // 仅「已审核」商品进入待发布池；发布成功→published，校验不通过→保持 reviewed（修复后可重发）。
 const PUBLISHABLE_STATUS = new Set(['reviewed']);
@@ -83,7 +97,7 @@ export function setupPublish(plugin: Plugin): void {
   app.resourceManager.define({
     name: 'aiListingPublish',
     actions: {
-      // 待发布商品池：已审核商品 + 主图。
+      // 待发布商品池：已审核商品 + 主图 + 源/目标类目。platformsMeta 带每个平台的真实接入状态与已授权店铺。
       listPublishable: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
         const { Products, Media } = getRepos(db);
@@ -101,16 +115,88 @@ export function setupPublish(plugin: Plugin): void {
             title: p.get('titleFinal') || p.get('titleProcessed') || p.get('titleOriginal'),
             targetPlatform: p.get('targetPlatform'),
             priceTarget: p.get('priceTarget'),
+            currencyOriginal: p.get('currencyOriginal'),
             stock: p.get('stock'),
+            moq: p.get('moq'),
+            categoryOriginal: p.get('categoryOriginal'),
             categoryTargetId: p.get('categoryTargetId'),
+            categoryTargetName: p.get('categoryTargetName'),
             status: p.get('status'),
             mainImage: main ? main.get('sourceUrl') : null,
           });
         }
         ctx.body = {
           ok: true,
-          data: { products, total: products.length, platforms: SUPPORTED_PLATFORMS },
+          data: {
+            products,
+            total: products.length,
+            platforms: SUPPORTED_PLATFORMS,
+            platformsMeta: await listPlatformsMeta(plugin),
+          },
           warnings: [],
+          errors: [],
+          traceId,
+        };
+        await next();
+      },
+
+      // 类目预测：用所选店铺账号调平台类目预测接口（标题+主图），把结果写回商品 categoryTargetId/Name。
+      // 平台无预测能力（mock/未接入）时返回 predicted=false，发布时由平台按标题自动识别类目兜底。
+      predictCategory: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as { productIds?: number[]; accountId?: number };
+        const productIds = Array.isArray(v.productIds) ? v.productIds.map(Number).filter((n) => !Number.isNaN(n)) : [];
+        const accountId = Number(v.accountId);
+        if (!productIds.length || !accountId) {
+          ctx.status = 400;
+          ctx.body = fail('CATEGORY_PREDICT_PARAMS', '请选择商品并指定已授权的店铺账号', false, traceId);
+          return await next();
+        }
+        const { Products, Media } = getRepos(db);
+        const results = [];
+        for (const pid of productIds) {
+          const product = await Products.findOne({ filterByTk: pid });
+          if (!product) {
+            results.push({ productId: pid, ok: false, message: '商品不存在' });
+            continue;
+          }
+          const title = product.get('titleFinal') || product.get('titleProcessed') || product.get('titleOriginal');
+          const main = await Media.findOne({ filter: { productId: pid, role: 'main' } });
+          try {
+            const prediction = await predictCategoryWithAccount(plugin, accountId, {
+              title,
+              imageUrl: main ? main.get('sourceUrl') : undefined,
+            });
+            if (!prediction) {
+              results.push({
+                productId: pid,
+                ok: false,
+                predicted: false,
+                message: '该平台暂无类目预测能力（发布时平台自动识别）',
+              });
+              continue;
+            }
+            const categoryTargetName = prediction.categoryPath || prediction.categoryName || null;
+            await Products.update({
+              filterByTk: pid,
+              values: { categoryTargetId: prediction.categoryId, categoryTargetName },
+            });
+            results.push({
+              productId: pid,
+              ok: true,
+              categoryId: prediction.categoryId,
+              categoryName: categoryTargetName,
+            });
+          } catch (e) {
+            const code = e instanceof PublishAdapterError ? e.code : 'CATEGORY_PREDICT_FAILED';
+            results.push({ productId: pid, ok: false, code, message: (e as Error)?.message || '类目预测失败' });
+          }
+        }
+        const okCount = results.filter((r) => r.ok).length;
+        ctx.body = {
+          ok: true,
+          data: { results, okCount, failCount: results.length - okCount },
+          warnings: okCount < results.length ? [`${results.length - okCount} 个商品类目预测失败`] : [],
           errors: [],
           traceId,
         };
@@ -161,7 +247,8 @@ export function setupPublish(plugin: Plugin): void {
         await next();
       },
 
-      // 模拟发布：对选中商品创建发布批次 + 逐条发布记录。仅校验通过的商品发布（mock adapter）。
+      // 发布：对选中商品创建发布批次 + 逐条发布记录。仅校验通过的商品发布。
+      // 真接入开关开且店铺已授权 → 真实平台发布（带发布速率限速）；否则 mock。
       // 幂等：① idempotencyKey 命中已存在批次则直接返回（防重复点击）；② 同商品+同店铺已有成功记录则跳过（防重复发布）。
       publish: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
@@ -205,21 +292,47 @@ export function setupPublish(plugin: Plugin): void {
           }
         }
 
-        const adapter = resolvePublishAdapter(config.targetPlatform);
+        let resolved;
+        try {
+          resolved = await resolvePublishTarget(plugin, config);
+        } catch (e) {
+          const code = e instanceof PublishAdapterError ? e.code : 'PUBLISH_TARGET_INVALID';
+          ctx.status = 400;
+          ctx.body = fail(code, (e as Error)?.message || '发布目标无效', false, traceId);
+          return await next();
+        }
+        const { adapter, real } = resolved;
+        const delayMs = real ? SPEED_DELAY_MS[config.speedMode || 'standard'] ?? SPEED_DELAY_MS.standard : 0;
+        // 发布策略默认「草稿」：只进卖家后台草稿箱、人工审核后上架（用户要求的安全默认）；
+        // immediate=直接上架（走平台审核）。真实平台不支持草稿接口时明确报错，不静默转直接上架。
+        const strategy = config.strategy || 'draft';
+        const useDraft = strategy === 'draft';
+        if (useDraft && !adapter.publishDraft) {
+          ctx.status = 400;
+          ctx.body = fail(
+            'PUBLISH_DRAFT_UNSUPPORTED',
+            `平台「${config.targetPlatform}」暂不支持草稿发布`,
+            false,
+            traceId,
+          );
+          return await next();
+        }
+        const draftFn = adapter.publishDraft?.bind(adapter);
+        const publishFn = useDraft && draftFn ? draftFn : adapter.publish.bind(adapter);
         const batch = await repos.Batches.create({
           values: {
             targetPlatform: config.targetPlatform,
             targetStoreId: config.targetStoreId,
             categoryTargetId: config.categoryTargetId,
             shippingTemplateId: config.shippingTemplateId,
-            strategy: config.strategy || 'immediate',
+            strategy,
             speedMode: config.speedMode || 'standard',
             status: 'running',
             totalCount: productIds.length,
             successCount: 0,
             failedCount: 0,
             traceId,
-            metadata: { idempotencyKey: v.idempotencyKey || null },
+            metadata: { idempotencyKey: v.idempotencyKey || null, real, adapter: adapter.name, draft: useDraft },
           },
         });
         const batchId = batch.get('id');
@@ -227,6 +340,7 @@ export function setupPublish(plugin: Plugin): void {
         let success = 0;
         let failed = 0;
         let skipped = 0;
+        let attempted = 0;
         const outcomes = [];
         for (const pid of productIds) {
           const pctx = await loadProductContext(repos, pid);
@@ -304,7 +418,9 @@ export function setupPublish(plugin: Plugin): void {
             continue;
           }
 
-          // 模拟发布（mock adapter，不接真实平台）。
+          // 发布速率：真实平台发布时，条与条之间按 speedMode 间隔，避免触发平台限流/风控。
+          if (delayMs && attempted > 0) await sleep(delayMs);
+          attempted++;
           await repos.Products.update({ filterByTk: pid, values: { status: 'publishing' } });
           const payload = buildPublishPayload(
             {
@@ -316,18 +432,25 @@ export function setupPublish(plugin: Plugin): void {
               stock: pctx.product.get('stock'),
               categoryTargetId: pctx.product.get('categoryTargetId'),
               attributesProcessed: pctx.product.get('attributesProcessed'),
+              currencyOriginal: pctx.product.get('currencyOriginal'),
+              moq: pctx.product.get('moq'),
             },
             pctx.skus.map((s: any) => ({
               sku: s.get('sku'),
               priceTarget: s.get('priceTarget'),
               stock: s.get('stock'),
               specValue: s.get('specValue'),
+              specAttrs: s.get('specAttrs'),
+              imageUrl: s.get('imageUrl'),
+              unit: s.get('unit'),
             })),
             pre.images,
             config,
           );
+          const videoAsset = await repos.Media.findOne({ filter: { productId: pid, assetType: 'video' } });
+          if (videoAsset) payload.videoUrl = videoAsset.get('sourceUrl');
           try {
-            const res = await adapter.publish(payload);
+            const res = await publishFn(payload);
             success++;
             await repos.Records.create({
               values: {
@@ -343,14 +466,18 @@ export function setupPublish(plugin: Plugin): void {
                 responsePayload: res.responseSummary,
                 publishedAt: new Date(),
                 traceId,
+                metadata: { draft: useDraft },
               },
             });
             await repos.Products.update({ filterByTk: pid, values: { status: 'published' } });
             outcomes.push({
               productId: pid,
               result: 'success',
+              draft: useDraft,
               targetProductId: res.targetProductId,
               targetUrl: res.targetUrl,
+              draftPath: (res.responseSummary as any)?.draftPath,
+              notes: (res.responseSummary as any)?.notes,
             });
           } catch (e) {
             failed++;
@@ -415,6 +542,8 @@ export function setupPublish(plugin: Plugin): void {
             failed,
             skipped,
             status,
+            real,
+            draft: useDraft,
             outcomes,
           },
           warnings: failed ? [`${failed} 个商品发布失败，可在发布记录中查看原因并重试`] : [],
@@ -447,11 +576,44 @@ export function setupPublish(plugin: Plugin): void {
           categoryTargetId: batch.get('categoryTargetId'),
           shippingTemplateId: batch.get('shippingTemplateId'),
         };
-        const adapter = resolvePublishAdapter(config.targetPlatform);
+        let resolved;
+        try {
+          resolved = await resolvePublishTarget(plugin, config);
+        } catch (e) {
+          const code = e instanceof PublishAdapterError ? e.code : 'PUBLISH_TARGET_INVALID';
+          ctx.status = 400;
+          ctx.body = fail(code, (e as Error)?.message || '发布目标无效', false, traceId);
+          return await next();
+        }
+        const { adapter, real } = resolved;
+        const delayMs = real ? SPEED_DELAY_MS[batch.get('speedMode') || 'standard'] ?? SPEED_DELAY_MS.standard : 0;
+        // 重试沿用原批次的发布策略（草稿批次重试仍发草稿）。
+        const useDraft = (batch.get('strategy') || 'draft') === 'draft';
+        if (useDraft && !adapter.publishDraft) {
+          ctx.status = 400;
+          ctx.body = fail(
+            'PUBLISH_DRAFT_UNSUPPORTED',
+            `平台「${config.targetPlatform}」暂不支持草稿发布`,
+            false,
+            traceId,
+          );
+          return await next();
+        }
+        const draftFn = adapter.publishDraft?.bind(adapter);
+        const publishFn = useDraft && draftFn ? draftFn : adapter.publish.bind(adapter);
         let success = 0;
         let stillFailed = 0;
+        let attempted = 0;
+        // 同一商品可能有多条失败记录（多次重试叠加），只按商品去重重试一次；已有成功记录的商品跳过（防重复发布）。
+        const retriedProducts = new Set<number>();
         for (const rec of failedRecords) {
           const pid = rec.get('productId');
+          if (retriedProducts.has(pid)) continue;
+          retriedProducts.add(pid);
+          const succeeded = await repos.Records.findOne({
+            filter: { productId: pid, targetStoreId: config.targetStoreId || null, result: 'success' },
+          });
+          if (succeeded) continue;
           const pctx = await loadProductContext(repos, pid);
           if (!pctx) {
             stillFailed++;
@@ -478,42 +640,76 @@ export function setupPublish(plugin: Plugin): void {
             });
             continue;
           }
+          if (delayMs && attempted > 0) await sleep(delayMs);
+          attempted++;
           const payload = buildPublishPayload(
             {
               titleFinal: pctx.product.get('titleFinal'),
+              titleProcessed: pctx.product.get('titleProcessed'),
+              descriptionFinal: pctx.product.get('descriptionFinal'),
+              descriptionProcessed: pctx.product.get('descriptionProcessed'),
               priceTarget: pctx.product.get('priceTarget'),
               stock: pctx.product.get('stock'),
               categoryTargetId: pctx.product.get('categoryTargetId'),
               attributesProcessed: pctx.product.get('attributesProcessed'),
+              currencyOriginal: pctx.product.get('currencyOriginal'),
+              moq: pctx.product.get('moq'),
             },
             pctx.skus.map((s: any) => ({
               sku: s.get('sku'),
               priceTarget: s.get('priceTarget'),
               stock: s.get('stock'),
               specValue: s.get('specValue'),
+              specAttrs: s.get('specAttrs'),
+              imageUrl: s.get('imageUrl'),
+              unit: s.get('unit'),
             })),
             pre.images,
             config,
           );
-          const res = await adapter.publish(payload);
-          success++;
-          await repos.Records.create({
-            values: {
-              batchId,
-              productId: pid,
-              targetPlatform: config.targetPlatform,
-              targetStoreId: config.targetStoreId,
-              result: 'success',
-              status: 'success',
-              targetProductId: res.targetProductId,
-              targetUrl: res.targetUrl,
-              responsePayload: res.responseSummary,
-              publishedAt: new Date(),
-              traceId,
-              metadata: { retryOf: rec.get('id') },
-            },
-          });
-          await repos.Products.update({ filterByTk: pid, values: { status: 'published' } });
+          const videoAsset = await repos.Media.findOne({ filter: { productId: pid, assetType: 'video' } });
+          if (videoAsset) payload.videoUrl = videoAsset.get('sourceUrl');
+          try {
+            const res = await publishFn(payload);
+            success++;
+            await repos.Records.create({
+              values: {
+                batchId,
+                productId: pid,
+                targetPlatform: config.targetPlatform,
+                targetStoreId: config.targetStoreId,
+                result: 'success',
+                status: 'success',
+                targetProductId: res.targetProductId,
+                targetUrl: res.targetUrl,
+                responsePayload: res.responseSummary,
+                publishedAt: new Date(),
+                traceId,
+                metadata: { retryOf: rec.get('id'), draft: useDraft },
+              },
+            });
+            await repos.Products.update({ filterByTk: pid, values: { status: 'published' } });
+          } catch (e) {
+            stillFailed++;
+            const code = e instanceof PublishAdapterError ? e.code : 'PUBLISH_FAILED';
+            const retryable = e instanceof PublishAdapterError ? e.retryable : true;
+            await repos.Products.update({ filterByTk: pid, values: { status: 'publish_failed' } });
+            await repos.Records.create({
+              values: {
+                batchId,
+                productId: pid,
+                targetPlatform: config.targetPlatform,
+                targetStoreId: config.targetStoreId,
+                result: 'failed',
+                status: 'failed',
+                failureReason: (e as Error)?.message || '发布失败',
+                errorCode: code,
+                retryable,
+                traceId,
+                metadata: { retryOf: rec.get('id') },
+              },
+            });
+          }
         }
         const total = batch.get('totalCount') || 0;
         const newSuccess = (batch.get('successCount') || 0) + success;
@@ -530,6 +726,61 @@ export function setupPublish(plugin: Plugin): void {
           errors: [],
           traceId,
         };
+        await next();
+      },
+
+      // 查询目标平台发布状态：真实发布后跟踪商品在平台侧是 online / pending（审核中）/ draft / failed。
+      queryTargetStatus: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const recordId = Number((ctx.action?.params?.values as any)?.recordId);
+        if (!recordId) {
+          ctx.status = 400;
+          ctx.body = fail('NO_RECORD_ID', '缺少发布记录 recordId', false, traceId);
+          return await next();
+        }
+        const repos = getRepos(db);
+        const rec = await repos.Records.findOne({ filterByTk: recordId });
+        if (!rec || !rec.get('targetProductId')) {
+          ctx.status = 404;
+          ctx.body = fail('RECORD_NOT_FOUND', '发布记录不存在或无目标商品 ID', false, traceId);
+          return await next();
+        }
+        try {
+          const res = await queryTargetStatusWithAccount(
+            plugin,
+            Number(rec.get('targetStoreId')),
+            String(rec.get('targetProductId')),
+          );
+          if (res) {
+            const values: Record<string, unknown> = {
+              metadata: {
+                ...(rec.get('metadata') || {}),
+                platformStatus: res.status,
+                platformStatusDesc: res.description,
+              },
+            };
+            // 平台异步 bizcheck 判失败 → 把发布记录与商品状态同步为失败，运营可修复后走「重试失败项」。
+            if (res.status === 'failed' && rec.get('result') === 'success') {
+              values.result = 'failed';
+              values.status = 'failed';
+              values.failureReason = `平台审核失败：${res.description || '(平台未给出原因)'}`;
+              values.retryable = true;
+              await repos.Products.update({ filterByTk: rec.get('productId'), values: { status: 'publish_failed' } });
+            }
+            await repos.Records.update({ filterByTk: recordId, values });
+          }
+          ctx.body = {
+            ok: true,
+            data: { recordId, status: res?.status ?? null, description: res?.description },
+            warnings: [],
+            errors: [],
+            traceId,
+          };
+        } catch (e) {
+          const code = e instanceof PublishAdapterError ? e.code : 'STATUS_QUERY_FAILED';
+          ctx.status = 400;
+          ctx.body = fail(code, (e as Error)?.message || '平台状态查询失败', false, traceId);
+        }
         await next();
       },
 
@@ -563,4 +814,6 @@ export function setupPublish(plugin: Plugin): void {
   app.acl.allow('aiListingPublish', 'publish', 'loggedIn');
   app.acl.allow('aiListingPublish', 'retryFailed', 'loggedIn');
   app.acl.allow('aiListingPublish', 'getBatchProgress', 'loggedIn');
+  app.acl.allow('aiListingPublish', 'predictCategory', 'loggedIn');
+  app.acl.allow('aiListingPublish', 'queryTargetStatus', 'loggedIn');
 }

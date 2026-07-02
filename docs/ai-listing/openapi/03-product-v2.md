@@ -68,8 +68,17 @@
 - **方法**：GET/POST
 - **功能**：创建新商品，可开启 AI 配置自动优化标题、描述、关键词。
 
+> ⚠️ **真机实测修正（2026-07-02，以官方 SDK 示例为准，下述与早期整理不一致处以本节为准）**：
+> 1. 顶层是 **两个** API 参数：`product_info` 与 `ai_optimization_config`（平级）。把 ai 配置嵌进 product_info 平台读不到。
+> 2. `attributes` 嵌在 `category_info` 里（`category_info.attributes[]`），不是 product_info 顶层；属性值长度 ≤70，超长报 `B_ATTRIBUTE_INVALID`。
+> 3. `sku_info[].sku_price` 是对象 `{ price, currency }`，传数字触发网关 `InvalidParameter`（"null#null"）。
+> 4. SKU 图挂在 `sale_attributes[].image.image_url`（通常挂颜色属性值上），sku 级没有 image 字段。
+> 5. `sale_attributes[].attribute_name` 必须能对上「Query Category Attributes」返回的销售属性名（英文，如 Color）；对不上的维度会被拒/判空。
+> 6. 实测 `keywords` 必须显式提供——只开 `keyword_optimization_enabled=true` 仍报 `B_KEYWORD_NOT_FOUND`。
+> 7. 返回商品 ID 只代表**提交成功**，平台异步 bizcheck 后才定成败：务必用「Query product listing status」跟踪（failed 时 `status_desc` 带原因，如 `PUB_BIZCHECK_DESCRIPTION_IS_REQUIRED`）。
+
 ### 请求参数（`product_info` 结构）
-顶层：`product_info`（必填）。其下分为 `basic_info`、`trade_info`、`logistics_info`、`ai_optimization_config`。
+顶层：`product_info`（必填）与 `ai_optimization_config`（可选，平级）。product_info 下分 `basic_info`、`category_info`、`trade_info`、`logistics_info`。
 
 **basic_info（基础信息，必填）**
 | 参数 | 类型 | 必填 | 说明 |
