@@ -176,9 +176,7 @@ export function applyRule(
   });
 
   const descRaw = (product.descriptionOriginal || '').trim();
-  const descProcessed = descRaw
-    ? `${titleProcessed}. ${descRaw}`.slice(0, 2000)
-    : `${titleProcessed}. High quality, fast shipping.`;
+  const descProcessed = descRaw ? descRaw.slice(0, 2000) : `${titleProcessed}. High quality, fast shipping.`;
   patch.descriptionProcessed = descProcessed;
   changes.push({
     stage: STAGES.rewriteI18n,

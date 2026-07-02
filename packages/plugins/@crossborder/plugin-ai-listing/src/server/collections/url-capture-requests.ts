@@ -43,12 +43,22 @@ export default defineCollection({
       },
     },
     selectField('capturePlatform', '来源平台', PLATFORM_OPTIONS),
+    // 展示语言与币种：决定抓到的标题/描述语言与价格币种，与源页展示对齐（中文站页面选中文·人民币）。
+    selectField(
+      'captureLocale',
+      '语言与币种',
+      [
+        { value: 'zh-CNY', label: '中文 · 人民币 ¥', color: 'red' },
+        { value: 'en-USD', label: 'English · 美元 $', color: 'blue' },
+      ],
+      { defaultValue: 'zh-CNY' },
+    ),
     {
       type: 'array',
       name: 'captureScope',
       interface: 'checkboxGroup',
       title: '抓取内容',
-      defaultValue: ['basic', 'images', 'sku', 'priceStock'],
+      defaultValue: ['basic', 'images', 'sku', 'priceStock', 'shop', 'attributes', 'inventory'],
       uiSchema: {
         type: 'array',
         title: '抓取内容',
@@ -58,6 +68,14 @@ export default defineCollection({
           { value: 'images', label: '图片', color: 'cyan' },
           { value: 'sku', label: 'SKU', color: 'green' },
           { value: 'priceStock', label: '价格库存', color: 'gold' },
+          // 扩展抓取项：店铺信息随详情返回；关键属性/实时库存/证书各需额外一次接口调用。
+          { value: 'shop', label: '店铺信息', color: 'purple' },
+          { value: 'attributes', label: '关键属性', color: 'geekblue' },
+          { value: 'inventory', label: '实时库存', color: 'orange' },
+          { value: 'cert', label: '证书', color: 'magenta' },
+          // 评论两项：Alibaba 买家 OpenAPI 无评论接口，勾选会在任务步骤里得到明确告警；真实抓取待爬虫 worker。
+          { value: 'productReviews', label: '产品评价', color: 'volcano' },
+          { value: 'shopReviews', label: '店铺评价', color: 'lime' },
         ],
       },
     },

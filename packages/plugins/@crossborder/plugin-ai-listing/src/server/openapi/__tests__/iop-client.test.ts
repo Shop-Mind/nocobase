@@ -60,6 +60,17 @@ describe('buildSignedParams 组装系统参数 + 签名', () => {
     expect(p.n).toBe('5');
     expect(p.s).toBe('a');
   });
+
+  it('嵌套对象/数组参数被 JSON 序列化（buyer 组 query_req/param0 需要）', () => {
+    const p = buildSignedParams(
+      config,
+      { apiPath: '/eco/buyer/product/description', params: { query_req: { product_id: 50148840, language: 'en-US' } } },
+      1700000000000,
+    );
+    expect(p.query_req).toBe('{"product_id":50148840,"language":"en-US"}');
+    const p2 = buildSignedParams(config, { apiPath: '/x', params: { param0: { product_ids: [1, 2] } } }, 1700000000000);
+    expect(p2.param0).toBe('{"product_ids":[1,2]}');
+  });
 });
 
 describe('assertIopOk 平台错误识别', () => {

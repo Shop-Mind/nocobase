@@ -24,13 +24,14 @@ export interface IopConfig {
   gateway?: string;
 }
 
-export type IopParamValue = string | number | boolean | undefined | null;
+export type IopParamValue = string | number | boolean | undefined | null | Record<string, unknown> | unknown[];
 
 export interface IopCallInput {
   apiPath: string; // 如 /auth/token/create、/alibaba/icbu/product/get/v2
   params?: Record<string, IopParamValue>;
   accessToken?: string; // 业务接口需要；token 接口不传
   timeoutMs?: number;
+  httpMethod?: 'GET' | 'POST'; // 默认 POST；buyer/eco 组接口需 GET，否则报 UnsupportedHTTPMethod
 }
 
 // 清洗业务参数：去掉 undefined/null，对象/数组序列化为 JSON 字符串，其余转字符串。
@@ -39,7 +40,8 @@ function normalizeParams(params?: Record<string, IopParamValue>): Record<string,
   if (!params) return out;
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || k === 'sign') continue;
-    out[k] = typeof v === 'string' ? v : String(v);
+    // 对象/数组序列化为 JSON 字符串（buyer 组的 query_req / param0 等嵌套对象参数需要）。
+    out[k] = typeof v === 'string' ? v : typeof v === 'object' ? JSON.stringify(v) : String(v);
   }
   return out;
 }
@@ -91,17 +93,23 @@ export async function callIop(config: IopConfig, input: IopCallInput): Promise<R
   const gateway = config.gateway || DEFAULT_GATEWAY;
   const url = gateway + input.apiPath;
   const signed = buildSignedParams(config, input, Date.now());
-  const body = new URLSearchParams();
-  for (const [k, v] of Object.entries(signed)) body.append(k, v);
+  const form = new URLSearchParams();
+  for (const [k, v] of Object.entries(signed)) form.append(k, v);
+  const method = input.httpMethod ?? 'POST';
 
   let resp: Response;
   try {
-    resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-      signal: AbortSignal.timeout(input.timeoutMs ?? 20000),
-    });
+    resp = await fetch(
+      method === 'GET' ? `${url}?${form.toString()}` : url,
+      method === 'GET'
+        ? { method: 'GET', signal: AbortSignal.timeout(input.timeoutMs ?? 20000) }
+        : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: form,
+            signal: AbortSignal.timeout(input.timeoutMs ?? 20000),
+          },
+    );
   } catch (e) {
     const msg = (e as Error)?.name === 'TimeoutError' ? '平台接口超时' : '平台接口网络错误';
     throw new OpenApiError('OPENAPI_NETWORK_ERROR', msg, { retryable: true });

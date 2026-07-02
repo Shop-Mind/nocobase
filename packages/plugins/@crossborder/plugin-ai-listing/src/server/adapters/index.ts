@@ -10,11 +10,31 @@
 // 抓取适配器层：把不同来源（Alibaba OpenAPI 优先、Crawl4AI 兜底）统一成 NormalizedProduct。
 // 适配器只负责“取数 + 归一化”，不写库、不依赖 NocoBase ctx，便于单测与替换为真实实现。
 
+// 阶梯价一档：min_quantity 起、max_quantity 止（-1 = 无上限）、单价 + 币种。搬运须保留完整阶梯，不能拍平成单价。
+export interface NormalizedLadderTier {
+  minQuantity?: number;
+  maxQuantity?: number;
+  price: number;
+  currency?: string;
+}
+
+// SKU 销售属性一项（结构化）：属性名 / 值 / 值配图（色卡）。用于按维度（颜色/尺寸）做源站同款展示。
+export interface NormalizedSkuAttr {
+  name: string;
+  value: string;
+  image?: string;
+}
+
 export interface NormalizedSku {
   sku?: string;
   specName?: string;
   specValue?: string;
+  specAttrs?: NormalizedSkuAttr[];
+  imageUrl?: string;
+  // 展示基准价：起订档（最小起订量那一档）单价，而非阶梯最低价。完整阶梯见 ladderPrice。
   priceOriginal?: number;
+  ladderPrice?: NormalizedLadderTier[];
+  unit?: string;
   stock?: number;
 }
 
@@ -25,24 +45,54 @@ export interface NormalizedMedia {
   sort?: number;
 }
 
+// 供应商/店铺信息（来自 buyer description 响应的 supplier / eCompanyId，买家侧无独立店铺接口）。
+export interface NormalizedShopInfo {
+  supplierName?: string;
+  companyId?: string;
+}
+
+// 商品证书（/eco/buyer/product/cert）。
+export interface NormalizedCertificate {
+  certName?: string;
+  certNo?: string;
+  certUrls?: string[];
+}
+
 export interface NormalizedProduct {
   sourcePlatform: string;
   sourceProductId?: string;
   sourceUrl: string;
   titleOriginal: string;
   descriptionOriginal?: string;
+  // 装修 HTML 原文（descriptionOriginal 是清洗后的纯文本）。发布到自有店铺 / 富文本预览需要原始 HTML。
+  descriptionHtmlOriginal?: string;
   priceOriginal?: number;
   currencyOriginal?: string;
   stock?: number;
   categoryOriginal?: string;
   attributesOriginal?: Record<string, unknown>;
+  // 起订量（min_order_quantity）与源平台商品状态（如 PRODUCT_ONLINE）。
+  moq?: number;
+  statusOriginal?: string;
+  shopInfo?: NormalizedShopInfo;
+  // 贸易信息（wholesale_trade：unit_type/sale_type/handling_time/weight/package_size/volume/deliver_periods 等），
+  // 平台字段差异大，按源结构归一成 plain object 存 jsonb。
+  tradeInfo?: Record<string, unknown>;
+  certifications?: NormalizedCertificate[];
   skus?: NormalizedSku[];
   media?: NormalizedMedia[];
+  // 抓取过程中的非致命告警（如库存/证书接口单项失败），由任务步骤记录展示。
+  captureWarnings?: string[];
 }
 
 export interface CaptureOptions {
-  // 抓取内容选项（基本信息 / 图片 / SKU / 价格库存），缺省全抓。
+  // 抓取内容选项：basic/images/sku/priceStock + shop(店铺信息)/attributes(关键属性)/inventory(实时库存)/cert(证书)
+  // + productReviews(产品评价)/shopReviews(店铺评价，两者 Alibaba OpenAPI 均不提供，勾选会得到明确告警)。
+  // 缺省全抓（评论除外，需显式勾选）；attributes/inventory/cert 各需额外一次接口调用。
   fields?: string[];
+  // 抓取展示语言与币种（决定标题/描述语言与价格币种，与源页展示一致）。缺省 zh-CN / CNY。
+  language?: string;
+  currency?: string;
 }
 
 export interface CaptureAdapter {

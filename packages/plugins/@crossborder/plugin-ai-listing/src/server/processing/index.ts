@@ -153,7 +153,8 @@ async function processOneProduct(
       traceId,
     }));
 
-    // 媒体任务占位（仅结构与状态，不做真实处理）。为该商品每个图片资产建对应类型任务。
+    // 媒体处理任务（白底图/去水印等）：原图/视频已在抓取阶段真实下载落存储，这里按规则登记后续图像处理任务。
+    // 白底图/去水印本身待接入图像服务，先建 pending 任务（在已下载的原图上执行）。为每个图片资产建对应类型任务。
     const assets = await repos.Media.find({ filter: { productId, assetType: 'image' }, sort: ['sort'] });
     let mediaJobCount = 0;
     for (const spec of result.mediaJobSpecs) {
@@ -166,7 +167,7 @@ async function processOneProduct(
             jobType: spec.jobType,
             status: 'pending',
             traceId,
-            metadata: { placeholder: true, note: '媒体处理占位任务，未做真实去水印/白底图' },
+            metadata: { placeholder: true, note: '图像处理占位（在已下载原图上执行），待接入白底图/去水印服务' },
           },
         });
         mediaJobCount++;
@@ -445,11 +446,23 @@ export function setupProcessing(plugin: Plugin): void {
       pendingProducts: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
         const Products = db.getRepository('aiListingProducts');
+        const Skus = db.getRepository('aiListingSkus');
+        const Media = db.getRepository('aiListingMediaAssets');
         const rows = await Products.find({
           filter: { status: { $in: ['captured', 'process_failed'] } },
           sort: ['-id'],
           limit: 200,
         });
+        // 批量数 SKU / 媒体，避免 N+1：一次取回按 productId 分组计数。
+        const ids = rows.map((p: any) => p.get('id'));
+        const skuCounts: Record<number, number> = {};
+        const mediaCounts: Record<number, number> = {};
+        if (ids.length) {
+          const skuRows = await Skus.find({ filter: { productId: { $in: ids } }, fields: ['id', 'productId'] });
+          for (const s of skuRows) skuCounts[s.get('productId')] = (skuCounts[s.get('productId')] ?? 0) + 1;
+          const mediaRows = await Media.find({ filter: { productId: { $in: ids } }, fields: ['id', 'productId'] });
+          for (const m of mediaRows) mediaCounts[m.get('productId')] = (mediaCounts[m.get('productId')] ?? 0) + 1;
+        }
         const products = rows.map((p: any) => ({
           id: p.get('id'),
           titleOriginal: p.get('titleOriginal'),
@@ -458,6 +471,12 @@ export function setupProcessing(plugin: Plugin): void {
           currencyOriginal: p.get('currencyOriginal'),
           status: p.get('status'),
           createdAt: p.get('createdAt'),
+          // 处理上下文：供应商 / 起订量 / SKU 与媒体数量 / 属性数，帮助判断这条商品信息完整度。
+          supplierName: (p.get('shopInfo') || {}).supplierName || null,
+          moq: p.get('moq'),
+          skuCount: skuCounts[p.get('id')] ?? 0,
+          mediaCount: mediaCounts[p.get('id')] ?? 0,
+          attrCount: Object.keys(p.get('attributesOriginal') || {}).length,
         }));
         ctx.body = { ok: true, data: { products, total: products.length }, warnings: [], errors: [], traceId };
         await next();

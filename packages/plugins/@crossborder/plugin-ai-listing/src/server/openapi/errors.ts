@@ -66,6 +66,11 @@ const FRIENDLY: Record<string, { userMessage: string; retryable: boolean; action
     retryable: false,
     action: '到控制台 IP Whitelist 加入服务器出口公网 IP',
   },
+  InsufficientPermission: {
+    userMessage: 'App 尚无该接口的调用权限',
+    retryable: false,
+    action: '到控制台 Apply process / API Permission Group 申请 Product(ICBU) 相关 API 权限，审批通过后重试',
+  },
   IllegalAccessToken: { userMessage: '访问令牌无效或已过期', retryable: false, action: '触发刷新或重新授权' },
   'invalid-timestamp': { userMessage: '请求时间戳误差过大', retryable: true, action: '校准服务器时钟（NTP）' },
   ServiceUnavailable: { userMessage: '平台服务暂不可用', retryable: true, action: '稍后重试' },

@@ -44,6 +44,17 @@ export default defineCollection({
     { type: 'jsonb', name: 'attributesProcessed', interface: 'json', title: 'Attributes (processed)' },
     { type: 'jsonb', name: 'riskFlags', interface: 'json', title: 'Risk flags' },
 
+    // 抓取全量信息（真实 OpenAPI）：装修 HTML 原文、起订量、源平台商品状态、供应商/店铺、贸易信息、证书。
+    { type: 'text', name: 'descriptionHtmlOriginal', interface: 'textarea', title: 'Description HTML (original)' },
+    { type: 'integer', name: 'moq', interface: 'integer', title: 'MOQ' },
+    { type: 'string', name: 'statusOriginal', interface: 'input', title: 'Status (source)' },
+    { type: 'jsonb', name: 'shopInfo', interface: 'json', title: 'Shop info' },
+    { type: 'jsonb', name: 'tradeInfo', interface: 'json', title: 'Trade info' },
+    { type: 'jsonb', name: 'certifications', interface: 'json', title: 'Certifications' },
+    // 评论（产品评价/店铺评价）：Alibaba OpenAPI 不提供，列为爬虫 worker 预留的落库目标，当前恒为空。
+    { type: 'jsonb', name: 'productReviews', interface: 'json', title: 'Product reviews' },
+    { type: 'jsonb', name: 'shopReviews', interface: 'json', title: 'Shop reviews' },
+
     // 商品库运营维度：标签（字符串数组，用于分组/检索）与优先级（批量维护）。
     { type: 'jsonb', name: 'tags', interface: 'json', title: 'Tags' },
     selectField('priority', 'Priority', [

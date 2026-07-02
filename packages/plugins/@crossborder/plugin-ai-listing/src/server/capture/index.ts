@@ -10,8 +10,10 @@
 import type { Context, Next } from '@nocobase/actions';
 import type { Model } from '@nocobase/database';
 import type Plugin from '../plugin';
-import { AdapterError, resolveAdapter, type CaptureOptions, type NormalizedProduct } from '../adapters';
+import { AdapterError, type CaptureOptions, type NormalizedProduct } from '../adapters';
+import { resolveCaptureAdapter } from './real-capture';
 import { createProductDraft, fail, getRepos, isValidHttpUrl } from './shared';
+import { downloadProductMedia } from '../media/download';
 
 type UrlCaptureInput = { url?: string; sourcePlatform?: string; options?: CaptureOptions; traceId: string };
 type UrlCaptureResult = {
@@ -45,7 +47,8 @@ export async function executeUrlCapture(plugin: Plugin, input: UrlCaptureInput):
 
   const repos = getRepos(db);
   const { Tasks, Steps } = repos;
-  const adapter = resolveAdapter(url);
+  // 真接入开关开且平台已授权 → 走连接器真实抓取；否则 mock（resolveCaptureAdapter 内部决策）。
+  const adapter = await resolveCaptureAdapter(plugin, url);
   const task = await Tasks.create({
     values: {
       captureType: 'url',
@@ -106,6 +109,8 @@ export async function executeUrlCapture(plugin: Plugin, input: UrlCaptureInput):
       title: normalized.titleOriginal,
       skus: normalized.skus?.length || 0,
       media: normalized.media?.length || 0,
+      // 补充端点（关键属性/库存/证书）的单项失败告警：不阻塞主详情，但要可见。
+      warnings: normalized.captureWarnings?.length ? normalized.captureWarnings : undefined,
     },
     rawSnapshot: normalized,
     durationMs: Date.now() - t,
@@ -144,6 +149,11 @@ export async function executeUrlCapture(plugin: Plugin, input: UrlCaptureInput):
       filterByTk: taskId,
       values: { status: 'success', successCount: 1, progress: 100, metadata: { productId } },
     });
+    // 媒体真实下载（主图/详情图/视频落存储）在后台异步进行，不阻塞抓取返回；完成后写 download_media 步骤。
+    downloadProductMedia(plugin, Number(productId), { traceId, taskId, Steps }).catch(
+      (e) =>
+        logger?.warn(`[ai-listing][${traceId}] background media download failed`, { message: (e as Error)?.message }),
+    );
     return { ok: true, taskId, taskNo, productId };
   } catch (e) {
     const message = (e as Error)?.message || '保存商品草稿失败';
@@ -302,12 +312,15 @@ export function setupCapture(plugin: Plugin): void {
     }
     const platform = model.get('capturePlatform') as string | undefined;
     const scope = (model.get('captureScope') as string[] | undefined) || [];
+    // 语言与币种（zh-CNY / en-USD）→ 抓取请求的 language/currency，缺省中文 + 人民币（与源页展示对齐）。
+    const locale = (model.get('captureLocale') as string | undefined) || 'zh-CNY';
+    const [language, currency] = locale === 'en-USD' ? ['en-US', 'USD'] : ['zh-CN', 'CNY'];
     const traceId = `form-${model.get('id')}-${Date.now()}`;
     const runCapture = () =>
       executeUrlCapture(plugin, {
         url,
         sourcePlatform: platform ? platformLabels[platform] || platform : undefined,
-        options: { fields: scope },
+        options: { fields: scope, language, currency },
         traceId,
       }).catch(
         (e) =>
