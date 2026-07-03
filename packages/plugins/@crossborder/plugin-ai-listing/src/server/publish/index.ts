@@ -451,6 +451,7 @@ export function setupPublish(plugin: Plugin): void {
               attributesProcessed: pctx.product.get('attributesProcessed'),
               currencyOriginal: pctx.product.get('currencyOriginal'),
               moq: pctx.product.get('moq'),
+              ladderTarget: pctx.product.get('ladderTarget'),
             },
             pctx.skus.map((s: any) => ({
               sku: s.get('sku'),
@@ -673,6 +674,7 @@ export function setupPublish(plugin: Plugin): void {
               attributesProcessed: pctx.product.get('attributesProcessed'),
               currencyOriginal: pctx.product.get('currencyOriginal'),
               moq: pctx.product.get('moq'),
+              ladderTarget: pctx.product.get('ladderTarget'),
             },
             pctx.skus.map((s: any) => ({
               sku: s.get('sku'),

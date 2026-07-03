@@ -42,6 +42,8 @@ export interface PublishPayload {
   keywords?: string;
   moq?: number;
   unit?: string;
+  // 发布阶梯价（payload.currency 币种）：非空时草稿走「按数量阶梯价」并覆盖单价/规格价模式；档数跟随源站、人工可增删改。
+  ladder?: Array<{ minQuantity: number; price: number }>;
   // 商品主视频源 URL（发布后经视频银行上传并绑定为主图视频）。
   videoUrl?: string;
 }
@@ -161,5 +163,10 @@ export function buildPublishPayload(
     currency: product.currencyOriginal || undefined,
     moq: product.moq != null ? Number(product.moq) : undefined,
     unit: skus.find((s) => s.unit)?.unit || undefined,
+    ladder: Array.isArray(product.ladderTarget)
+      ? (product.ladderTarget as Array<Record<string, unknown>>)
+          .map((t) => ({ minQuantity: Math.round(Number(t.minQuantity)), price: Number(t.price) }))
+          .filter((t) => Number.isInteger(t.minQuantity) && t.minQuantity > 0 && t.price > 0)
+      : undefined,
   };
 }

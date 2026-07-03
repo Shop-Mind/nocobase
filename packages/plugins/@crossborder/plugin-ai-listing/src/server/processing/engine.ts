@@ -39,6 +39,8 @@ export interface ProductInput {
   attributesOriginal?: Record<string, unknown> | null;
   // SKU 原价（有则逐条按同一价格规则计算 skuPatches 的目标价，让草稿引擎能走「SKU 规格价」而非单档阶梯价）。
   skus?: Array<{ id: number; priceOriginal?: number | string | null; priceTarget?: number | string | null }>;
+  // 源站采购阶梯（抓取时随 SKU 落库）：≥2 档时按同一价格规则逐档生成发布阶梯 ladderTarget（档数跟随源站）。
+  ladderOriginal?: Array<{ minQuantity?: number | string; price?: number | string; currency?: string }> | null;
 }
 
 // 单个字段变更，用于审计与任务步骤展示。stage 对应处理阶段；actorType 区分 AI 建议与系统计算。
@@ -291,6 +293,30 @@ export function applyRule(
       actorId: 'rule-engine',
       reason: '按目标价 1.2 倍生成划线价',
     });
+
+    // 发布阶梯价：源站有 ≥2 档采购阶梯时，按同一规则逐档换算生成 ladderTarget（档数跟随源站，预览编辑可增删改）。
+    // 源站固定价（无阶梯/单档）不生成——草稿保持固定价形态，人工可在预览编辑手动加档转为阶梯。
+    const priceCfg = config.price;
+    const srcLadder = (product.ladderOriginal || [])
+      .map((t) => ({ minQuantity: Math.round(Number(t.minQuantity)), price: Number(t.price), currency: t.currency }))
+      .filter((t) => Number.isInteger(t.minQuantity) && t.minQuantity > 0 && Number.isFinite(t.price) && t.price > 0)
+      .sort((a, b) => a.minQuantity - b.minQuantity);
+    if (srcLadder.length >= 2) {
+      const ladderTarget = srcLadder.map((t) => ({
+        minQuantity: t.minQuantity,
+        price: convertPrice(t.price, priceCfg, t.currency || product.currencyOriginal).price,
+      }));
+      patch.ladderTarget = ladderTarget;
+      changes.push({
+        stage: STAGES.priceConvert,
+        field: 'ladderTarget',
+        oldValue: srcLadder.map((t) => `≥${t.minQuantity}:${t.price}`).join(' / '),
+        newValue: ladderTarget.map((t) => `≥${t.minQuantity}:${t.price}`).join(' / '),
+        actorType: 'system',
+        actorId: 'rule-engine',
+        reason: `源站 ${srcLadder.length} 档采购阶梯按同一价格规则逐档生成发布阶梯（草稿将按阶梯价写入）`,
+      });
+    }
 
     // SKU 逐条定价：有原价的 SKU 按同一规则换算目标价。SKU 全有售价后，发布草稿可走「SKU 规格价」
     // 而不是退化成单档阶梯价（此前 SKU 无目标价是草稿只有一档价的根因）。

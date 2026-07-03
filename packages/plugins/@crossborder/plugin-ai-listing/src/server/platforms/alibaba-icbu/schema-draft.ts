@@ -219,6 +219,36 @@ export interface DraftMedia {
   videoId?: string;
 }
 
+// 发布阶梯价规整（payload.currency 币种）：按起订量升序、同档去重（留低价）、价格随数量不升（违规档剔除）、
+// 平台上限 4 档（超出截断）。返回空数组表示未设置阶梯 → 沿用固定价/SKU 规格价逻辑。
+function normalizeLadder(
+  ladder: PublishPayload['ladder'],
+  notes: string[],
+): Array<{ quantity: number; price: number }> {
+  const sorted = (ladder || [])
+    .map((t) => ({ quantity: Math.round(Number(t.minQuantity)), price: Number(t.price) }))
+    .filter((t) => Number.isInteger(t.quantity) && t.quantity > 0 && Number.isFinite(t.price) && t.price > 0)
+    .sort((a, b) => a.quantity - b.quantity);
+  const byQty = new Map<number, { quantity: number; price: number }>();
+  for (const t of sorted) {
+    const prev = byQty.get(t.quantity);
+    if (!prev || t.price < prev.price) byQty.set(t.quantity, t);
+  }
+  const kept: Array<{ quantity: number; price: number }> = [];
+  for (const t of [...byQty.values()].sort((a, b) => a.quantity - b.quantity)) {
+    if (kept.length && t.price > kept[kept.length - 1].price) {
+      notes.push(`阶梯价「≥${t.quantity}」档价格高于前一档，已剔除（平台要求价格随数量增加而不升）`);
+      continue;
+    }
+    kept.push(t);
+  }
+  if (kept.length > 4) {
+    notes.push(`阶梯价共 ${kept.length} 档，超出平台上限 4 档，仅带入前 4 档`);
+    return kept.slice(0, 4);
+  }
+  return kept;
+}
+
 // PublishPayload + 类目规则 XML + 图片银行媒体 → schema.add.draft 的值 XML（官方示例格式）。
 export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?: DraftMedia): DraftXmlResult {
   const notes: string[] = [];
@@ -277,10 +307,14 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     return v;
   };
 
+  // 发布阶梯价：payload.ladder 非空（档数跟随源站生成、预览编辑可增删改）→ 走「按数量阶梯价」，
+  // 与 SKU 规格价平台二选一——设了阶梯就以阶梯为准，清空阶梯才按 SKU 售价走规格价。
+  const ladderTiers = normalizeLadder(payload.ladder, notes);
+
   // 销售属性 + SKU 矩阵（官方 3.5.8/3.5.9）：把商品规格维度映射到类目 saleProp 字段，
   // 匹配上的维度全部写入（值优先匹配类目选项，匹配不上且允许自定义时用全局唯一负数编号），
   // 变体按匹配维度组合合并（库存求和、售价取最低、编码取首个），逐 SKU 写入 sku multiComplex。
-  const skuInfo = buildSaleAndSku(payload, fields, byId, toUsd, notes);
+  const skuInfo = buildSaleAndSku(payload, fields, byId, toUsd, notes, ladderTiers.length > 0);
   if (skuInfo) parts.push(skuInfo.salePropXml, skuInfo.skuXml);
 
   // 主图（≤6）：必须来自图片银行，value 带 fileId 属性（官方示例格式）。
@@ -297,11 +331,15 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     parts.push(`<field id="scImages" type="complex"><complex-value>${inner}</complex-value></field>`);
   }
 
-  // 售卖与价格：按件（normal）。价格模式二选一（官方 3.5.1：1=阶梯价、3=SKU 规格价）：
-  // 变体齐备逐 SKU 售价且类目支持规格价 → scPrice=3 + sku.price；否则 scPrice=1 + 商品级阶梯价。
+  // 售卖与价格：按件（normal）。价格模式（官方 3.5.1：1=阶梯价、3=SKU 规格价）：
+  // 设了发布阶梯（ladderTiers）→ scPrice=1 多档阶梯；否则变体齐备逐 SKU 售价且类目支持 → scPrice=3；
+  // 都不满足 → scPrice=1 单档（≥起订量 × 目标价，即固定价形态，与源站固定价对齐）。
   const rawPrice = payload.price != null && payload.price > 0 ? payload.price : undefined;
   const usdPrice = rawPrice != null ? toUsd(rawPrice) : undefined;
-  const moq = payload.moq != null && payload.moq > 0 ? Math.round(payload.moq) : 1;
+  const baseMoq = payload.moq != null && payload.moq > 0 ? Math.round(payload.moq) : 1;
+  // 起订量必须与阶梯首档一致（官方要求），设了阶梯以首档为准。
+  const moq = !skuInfo?.skuPricing && ladderTiers.length ? ladderTiers[0].quantity : baseMoq;
+  if (moq !== baseMoq) notes.push(`起订量按阶梯首档调整为 ${moq}（原 ${baseMoq}）`);
   parts.push(`<field id="saleType" type="singleCheck"><value>normal</value></field>`);
   parts.push(`<field id="scPrice" type="singleCheck"><value>${skuInfo?.skuPricing ? '3' : '1'}</value></field>`);
 
@@ -317,15 +355,32 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
   }
 
   parts.push(`<field id="minOrderQuantity" type="input"><value>${moq}</value></field>`);
-  if (!skuInfo?.skuPricing && usdPrice != null) {
-    parts.push(
-      `<field id="ladderPrice" type="complex"><complex-value>` +
-        `<field id="ladderPrice_0" type="complex"><complex-value>` +
-        `<field id="quantity" type="input"><value>${moq}</value></field>` +
-        `<field id="price" type="input"><value>${usdPrice.toFixed(2)}</value></field>` +
-        `</complex-value></field>` +
-        `</complex-value></field>`,
-    );
+  // 阶梯价写入：设了发布阶梯 → 逐档写入（档数跟随源站/人工编辑，≤4 档）；未设 → 单档固定价（≥moq × 目标价）。
+  const priceTiers = !skuInfo?.skuPricing
+    ? ladderTiers.length
+      ? ladderTiers
+      : usdPrice != null && rawPrice != null
+        ? [{ quantity: moq, price: rawPrice }]
+        : []
+    : [];
+  if (priceTiers.length) {
+    const inner = priceTiers
+      .map(
+        (t, i) =>
+          `<field id="ladderPrice_${i}" type="complex"><complex-value>` +
+          `<field id="quantity" type="input"><value>${t.quantity}</value></field>` +
+          `<field id="price" type="input"><value>${toUsd(t.price).toFixed(2)}</value></field>` +
+          `</complex-value></field>`,
+      )
+      .join('');
+    parts.push(`<field id="ladderPrice" type="complex"><complex-value>${inner}</complex-value></field>`);
+    if (ladderTiers.length > 1) {
+      notes.push(
+        `阶梯价 ${priceTiers.length} 档随草稿写入：${priceTiers
+          .map((t) => `≥${t.quantity}→$${toUsd(t.price).toFixed(2)}`)
+          .join('、')}`,
+      );
+    }
   }
 
   // 校验（G1.1）：起订量不应大于库存（官方 3.5.4），违规只警告不拦截（草稿人工兜底）。
@@ -351,17 +406,29 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     );
   }
 
-  // 发货期（官方 3.6.1，必填组件）：首档 quantity=moq、7 天兜底；官方要求档位起订量与阶梯价一致且递增。
+  // 发货期（官方 3.6.1，必填组件）：区间语义「≤数量 → 天数」，平台约束最多 3 个区间、天数必须由小到大递增
+  // （编辑页校验「发货期必须由小到大」；发货期作为订单约定进入信保流程，帮助中心知识 20142120）。
+  // 多档阶梯价时取价格档位的最后 ≤3 个数量作上界、天数 7/15/30 递增预填；单档/无阶梯保持 ≤moq → 7 天。
   if (byId.get('ladderPeriod')) {
-    parts.push(
-      `<field id="ladderPeriod" type="complex"><complex-value>` +
-        `<field id="ladderPeriod_0" type="complex"><complex-value>` +
-        `<field id="quantity" type="input"><value>${moq}</value></field>` +
-        `<field id="day" type="input"><value>7</value></field>` +
-        `</complex-value></field>` +
-        `</complex-value></field>`,
+    const PERIOD_DAYS = [7, 15, 30];
+    const bounds = priceTiers.length > 1 ? priceTiers.slice(-3).map((t) => t.quantity) : [moq];
+    const inner = bounds
+      .map(
+        (q, i) =>
+          `<field id="ladderPeriod_${i}" type="complex"><complex-value>` +
+          `<field id="quantity" type="input"><value>${q}</value></field>` +
+          `<field id="day" type="input"><value>${PERIOD_DAYS[i]}</value></field>` +
+          `</complex-value></field>`,
+      )
+      .join('');
+    parts.push(`<field id="ladderPeriod" type="complex"><complex-value>${inner}</complex-value></field>`);
+    notes.push(
+      bounds.length > 1
+        ? `发货期按数量区间预填：${bounds
+            .map((q, i) => `≤${q}→${PERIOD_DAYS[i]}天`)
+            .join('、')}（发货期是信保履约承诺），请按实际产能在编辑页调整`
+        : '发货期默认按起订量档 7 天填写，请按实际交期在编辑页调整',
     );
-    notes.push('发货期默认按起订量档 7 天填写，请按实际交期在编辑页调整');
   }
 
   // 物流属性（官方 3.6.2，必填）：默认「普货」，类目选项匹配不上取第一项并提示。
@@ -488,6 +555,7 @@ function buildSaleAndSku(
   byId: Map<string, SchemaField>,
   toUsd: (n: number) => number,
   notes: string[],
+  ladderMode = false,
 ): SaleSkuResult | null {
   const saleFields = fieldsBetween(fields, 'saleProp', 'sku').filter(
     (f) => f.id.startsWith('p-') && f.type === 'multiCheck',
@@ -586,14 +654,17 @@ function buildSaleAndSku(
   if (!salePropInner) return null;
   const salePropXml = `<field id="saleProp" type="complex"><complex-value>${salePropInner}</complex-value></field>`;
 
-  // 定价模式：类目支持 SKU 规格价（scPrice 选项含 3）且全部 SKU 有正售价 → 逐 SKU price（USD）。
+  // 定价模式：设了发布阶梯（ladderMode）→ 阶梯价优先（平台上阶梯价与规格价二选一）；
+  // 否则类目支持 SKU 规格价（scPrice 选项含 3）且全部 SKU 有正售价 → 逐 SKU price（USD）。
   const supportsSkuPricing = !!byId.get('scPrice')?.options.some((o) => o.value === '3');
-  const skuPricing = supportsSkuPricing && aligned.every((r) => r.price != null && r.price > 0);
+  const skuPricing = !ladderMode && supportsSkuPricing && aligned.every((r) => r.price != null && r.price > 0);
   if (aligned.some((r) => r.price != null && r.price > 0) && !skuPricing) {
     notes.push(
-      supportsSkuPricing
-        ? '部分 SKU 缺售价，整体走商品级阶梯价；逐 SKU 售价补齐后重发可切换为规格价'
-        : '类目不支持 SKU 规格价，逐 SKU 售价未带入（走商品级阶梯价）',
+      ladderMode
+        ? '已设置发布阶梯价，SKU 售价未带入（平台上阶梯价与规格价二选一；清空阶梯后重发可走规格价）'
+        : supportsSkuPricing
+          ? '部分 SKU 缺售价，整体走商品级阶梯价；逐 SKU 售价补齐后重发可切换为规格价'
+          : '类目不支持 SKU 规格价，逐 SKU 售价未带入（走商品级阶梯价）',
     );
   }
 

@@ -139,6 +139,8 @@ async function processOneProduct(
       priceOriginal: s.get('priceOriginal'),
       priceTarget: s.get('priceTarget'),
     })),
+    // 源站采购阶梯：抓取时随 SKU 落库（各 SKU 通常共享同一 wholesale 阶梯），取第一个非空的。
+    ladderOriginal: skuRows.map((s: any) => s.get('ladderPrice')).find((l: unknown) => Array.isArray(l) && l.length),
   };
 
   try {

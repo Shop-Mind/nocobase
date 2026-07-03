@@ -36,6 +36,9 @@ export default defineCollection({
     { type: 'string', name: 'currencyOriginal', interface: 'input', title: 'Currency (original)' },
     { type: 'decimal', name: 'priceTarget', interface: 'number', title: 'Price (target)' },
     { type: 'decimal', name: 'listPriceTarget', interface: 'number', title: 'List price (target)' },
+    // 发布阶梯价（目标币种）：[{minQuantity,price}]，档数跟随源站生成、预览编辑可增删改；
+    // 非空时草稿走「按数量阶梯价」，清空则回固定价（SKU 全有售价走规格价，否则单档）。
+    { type: 'jsonb', name: 'ladderTarget', interface: 'json', title: 'Ladder price (target)' },
     { type: 'integer', name: 'stock', interface: 'integer', title: 'Stock' },
 
     { type: 'string', name: 'categoryOriginal', interface: 'input', title: 'Category (source)' },

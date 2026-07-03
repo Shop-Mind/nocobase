@@ -229,10 +229,38 @@ export function setupCapture(plugin: Plugin): void {
           filter.captureType = values.captureType;
         }
         const rows = await Tasks.find({ filter, sort: ['-id'], limit });
+        // 多商品任务（店铺/关键词/批量）不写 metadata.productId：从成功步骤取第一个产出商品做代表 + 产出计数。
+        const multiTaskIds = rows
+          .filter((r) => !Number((r.get('metadata') || {}).productId))
+          .map((r) => Number(r.get('id')));
+        const firstPidByTask: Record<number, number> = {};
+        const productCountByTask: Record<number, number> = {};
+        if (multiTaskIds.length) {
+          const Steps = db.getRepository('aiListingTaskSteps');
+          const steps = await Steps.find({
+            filter: {
+              taskType: 'capture',
+              taskId: { $in: multiTaskIds },
+              stepName: 'capture_item',
+              status: 'success',
+            },
+            sort: ['id'],
+          });
+          for (const s of steps) {
+            const tid = Number(s.get('taskId'));
+            const pid = Number((s.get('outputSnapshot') || {}).productId);
+            if (Number.isInteger(pid) && pid > 0) {
+              if (firstPidByTask[tid] == null) firstPidByTask[tid] = pid;
+              productCountByTask[tid] = (productCountByTask[tid] || 0) + 1;
+            }
+          }
+        }
         // 批量取产出商品（标题/状态）与主图，避免 N+1。
         const productIds = [
           ...new Set(
-            rows.map((r) => Number((r.get('metadata') || {}).productId)).filter((n) => Number.isInteger(n) && n > 0),
+            rows
+              .map((r) => Number((r.get('metadata') || {}).productId) || firstPidByTask[Number(r.get('id'))] || 0)
+              .filter((n) => Number.isInteger(n) && n > 0),
           ),
         ];
         const productById: Record<number, { id: number; title: string; status: string; mainImage: string | null }> = {};
@@ -260,7 +288,8 @@ export function setupCapture(plugin: Plugin): void {
           }
         }
         const data = rows.map((r) => {
-          const pid = Number((r.get('metadata') || {}).productId);
+          const tid = Number(r.get('id'));
+          const pid = Number((r.get('metadata') || {}).productId) || firstPidByTask[tid] || 0;
           return {
             id: r.get('id'),
             taskNo: r.get('taskNo'),
@@ -273,6 +302,7 @@ export function setupCapture(plugin: Plugin): void {
             createdAt: r.get('createdAt'),
             metadata: r.get('metadata'),
             product: productById[pid] || null,
+            productTotal: productCountByTask[tid] || (productById[pid] ? 1 : 0),
           };
         });
         ctx.body = { ok: true, data, warnings: [], errors: [], traceId };

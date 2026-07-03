@@ -7,7 +7,13 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
-import { AdapterError, resolveAdapter, type CaptureOptions, type NormalizedProduct } from '../adapters';
+import {
+  AdapterError,
+  resolveAdapter,
+  type CaptureAdapter,
+  type CaptureOptions,
+  type NormalizedProduct,
+} from '../adapters';
 
 // 统一失败信封（PRD §7.5）。
 export function fail(code: string, message: string, recoverable: boolean, traceId: string, data?: unknown) {
@@ -111,15 +117,17 @@ export interface CaptureItemResult {
 }
 
 // 单条 URL 抓取到草稿：取数（OpenAPI 优先 / Crawl4AI 兜底）→ 建草稿。失败抛出标准化结果，不写步骤（由调用方写步骤）。
+// adapter 由调用方传入（通常来自 resolveCaptureAdapter，真接入开关开则走平台真实抓取）；不传则回退 mock resolveAdapter。
 export async function captureOneToDraft(
   repos: CaptureRepos,
   url: string,
   options?: CaptureOptions,
+  adapterOverride?: CaptureAdapter,
 ): Promise<CaptureItemResult> {
   if (!isValidHttpUrl(url)) {
     return { url, ok: false, errorCode: 'INVALID_URL', errorMessage: '链接无效（需 http/https）', retryable: false };
   }
-  const adapter = resolveAdapter(url);
+  const adapter = adapterOverride ?? resolveAdapter(url);
   try {
     const normalized = await adapter.fetchProductByUrl(url, options);
     const productId = await createProductDraft(repos, normalized);

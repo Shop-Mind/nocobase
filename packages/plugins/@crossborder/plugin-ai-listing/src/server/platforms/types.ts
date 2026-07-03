@@ -36,6 +36,40 @@ export interface CategoryPrediction {
   categoryPath?: string;
 }
 
+// 店铺（自有）商品概要：卖家侧商品列表接口返回，供「店铺抓取」勾选后按 detailUrl/productId 走买家侧详情抓取。
+export interface StoreProductSummary {
+  productId: string;
+  title: string;
+  imageUrl?: string;
+  detailUrl?: string;
+  status?: string;
+  display?: boolean;
+}
+
+export interface StoreProductPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  products: StoreProductSummary[];
+}
+
+// 全网关键词搜索结果（买家侧搜索接口，不限店铺——搬运他人商品的主通道之一）。
+export interface MarketProductCard {
+  productId: string;
+  title: string;
+  priceText?: string;
+  currency?: string;
+  imageUrl?: string;
+  detailUrl?: string;
+}
+
+export interface MarketSearchPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  products: MarketProductCard[];
+}
+
 export interface PlatformConnector {
   id: string; // 稳定标识：'alibaba-icbu' | '1688-domestic' | 'lazada' | 'pdd' | 'douyin'
   label: string; // 展示名
@@ -49,6 +83,18 @@ export interface PlatformConnector {
 
   // —— 业务（可选，按 capabilities；入参是已解析好的 access_token）——
   fetchProduct?(accessToken: string, ref: ProductRef, options?: CaptureOptions): Promise<NormalizedProduct>;
+  // 列出已授权店铺自己的商品（卖家侧接口）。买家侧无「按店铺列商品」且公开页有反爬，「店铺抓取」靠此枚举自家店。
+  listOwnProducts?(
+    accessToken: string,
+    query: { page?: number; pageSize?: number; subject?: string },
+  ): Promise<StoreProductPage>;
+  // 全网关键词搜索（买家侧接口，不限店铺）：搜索他人商品 → 选中后按 productId 走 fetchProduct 真实抓取。
+  searchProducts?(
+    accessToken: string,
+    query: { keyword: string; page?: number; pageSize?: number; language?: string; currency?: string },
+  ): Promise<MarketSearchPage>;
+  // 轻量查询商品的供应商公司（单跳 description）：「按制造商归组搜索」用；买家侧没有独立的工厂/公司搜索接口。
+  fetchSupplier?(accessToken: string, productId: string): Promise<{ supplierName?: string; companyId?: string }>;
   publish?(accessToken: string, payload: PublishPayload): Promise<PublishResult>;
   // 发布为草稿（进卖家后台草稿箱，不上架、不触发平台审核；人工确认提交上架时才审核）。
   publishDraft?(accessToken: string, payload: PublishPayload): Promise<PublishResult>;

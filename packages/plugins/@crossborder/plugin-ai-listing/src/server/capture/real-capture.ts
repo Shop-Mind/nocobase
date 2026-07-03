@@ -33,7 +33,7 @@ function resolveConnectorId(url: string): string | undefined {
 }
 
 // 找该 connector 对应的、已连接的平台账号 id。多账号时优先「默认账号」（平台连接页可设），否则取第一个已连接的。
-async function findConnectedAccountId(plugin: Plugin, connectorId: string): Promise<number | undefined> {
+export async function findConnectedAccountId(plugin: Plugin, connectorId: string): Promise<number | undefined> {
   const repo = plugin.app.db.getRepository('aiListingPlatformAccounts');
   const rows = (await repo.find({ filter: { authStatus: 'connected' }, sort: ['id'] })) as Array<
     Record<string, unknown>

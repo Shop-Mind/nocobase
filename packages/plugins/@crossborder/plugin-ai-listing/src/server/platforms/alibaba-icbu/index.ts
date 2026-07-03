@@ -316,6 +316,124 @@ export const alibabaIcbuConnector: PlatformConnector = {
     return normalized;
   },
 
+  // 店铺商品枚举（卖家侧 /alibaba/icbu/product/list）：按修改时间倒序、每页最多 30 条，支持 subject 标题模糊搜索。
+  // 只能列「自己已授权店铺」的商品；他人店铺公开页有反爬且买家侧无对应接口，由上层 analyzeStore 给出引导。
+  async listOwnProducts(accessToken, query) {
+    const cfg = getIopConfig();
+    const pageSize = Math.min(Math.max(query.pageSize || 20, 1), 30);
+    const page = Math.max(query.page || 1, 1);
+    const params: Record<string, unknown> = { current_page: page, page_size: pageSize };
+    if (query.subject) params.subject = query.subject;
+    type IcbuProductListJson = {
+      result?: {
+        total_item?: number;
+        curr_page?: number;
+        page_size?: number;
+        products?: Array<{
+          id?: number | string;
+          subject?: string;
+          status?: string;
+          display?: string;
+          pc_detail_url?: string;
+          main_image?: { images?: string[] } | string;
+        }>;
+      };
+    };
+    const json = (await callIop(cfg, {
+      apiPath: '/alibaba/icbu/product/list',
+      httpMethod: 'POST',
+      params,
+      accessToken,
+      timeoutMs: 30000,
+    })) as IcbuProductListJson;
+    const result = json.result || {};
+    const products = (result.products || [])
+      .map((p) => ({
+        productId: String(p.id ?? ''),
+        title: String(p.subject ?? ''),
+        imageUrl: typeof p.main_image === 'string' ? p.main_image : p.main_image?.images?.[0],
+        detailUrl: p.pc_detail_url,
+        status: p.status,
+        display: p.display === 'Y',
+      }))
+      .filter((p) => p.productId);
+    return {
+      total: Number(result.total_item ?? products.length),
+      page: Number(result.curr_page ?? page),
+      pageSize: Number(result.page_size ?? pageSize),
+      products,
+    };
+  },
+
+  // 全网关键词搜索（买家侧 /eco/buyer/product/search）：不限店铺搜索 Alibaba.com 在售商品，
+  // 每页最多 50 条、页码从 1 起；搜到的商品选中后按 permalink/product_id 走买家详情真实抓取。
+  async searchProducts(accessToken, query) {
+    const cfg = getIopConfig();
+    const size = Math.min(Math.max(query.pageSize || 20, 1), 50);
+    const index = Math.max(query.page || 1, 1);
+    const param0: Record<string, unknown> = { keyword: query.keyword, size, index };
+    if (query.language) param0.language = query.language;
+    if (query.currency) param0.currency = query.currency;
+    type BuyerSearchData = {
+      products?: Array<{
+        product_id?: number | string;
+        title?: string;
+        price?: string | number;
+        permalink?: string;
+        image?: { main_image?: string; multi_image?: string[] } | string;
+      }>;
+      pagination?: { current?: number; page_size?: number; total_product_count?: number };
+    };
+    // 真机响应包在 result.data 下（result.code='200'）；兜底兼容顶层 data。
+    const json = (await callIop(cfg, {
+      apiPath: '/eco/buyer/product/search',
+      httpMethod: 'GET',
+      params: { param0 },
+      accessToken,
+      timeoutMs: 30000,
+    })) as { result?: { data?: BuyerSearchData }; data?: BuyerSearchData };
+    const data = json.result?.data || json.data || {};
+    const httpsUrl = (u?: string) => (u && u.startsWith('//') ? `https:${u}` : u);
+    const products = (data.products || [])
+      .map((p) => ({
+        productId: String(p.product_id ?? ''),
+        title: String(p.title ?? ''),
+        priceText: p.price != null ? String(p.price) : undefined,
+        currency: query.currency,
+        imageUrl: httpsUrl(typeof p.image === 'string' ? p.image : p.image?.main_image),
+        detailUrl: httpsUrl(p.permalink),
+      }))
+      .filter((p) => p.productId);
+    const pg = data.pagination || {};
+    return {
+      total: Number(pg.total_product_count ?? products.length),
+      page: Number(pg.current ?? index),
+      pageSize: Number(pg.page_size ?? size),
+      products,
+    };
+  },
+
+  // 轻量查询商品供应商（description 单跳，仅取 supplier/eCompanyId）：「按制造商归组」搜索用。
+  // 注意：batch/description 不回公司名且结果乱序无法映射回商品，必须走单条接口。
+  async fetchSupplier(accessToken, productId) {
+    const cfg = getIopConfig();
+    const json = (await callIop(cfg, {
+      apiPath: '/eco/buyer/product/description',
+      httpMethod: 'GET',
+      params: { query_req: { product_id: Number(productId), language: 'zh-CN', currency: 'CNY' } },
+      accessToken,
+      timeoutMs: 30000,
+    })) as {
+      result?: { result_data?: { supplier?: string; eCompanyId?: string } };
+      data?: { resultData?: { supplier?: string; eCompanyId?: string } };
+    };
+    const rd = json.result?.result_data || json.data?.resultData || {};
+    return {
+      supplierName: rd.supplier ? String(rd.supplier) : undefined,
+      companyId: rd.eCompanyId ? String(rd.eCompanyId) : undefined,
+    };
+  },
+
   // 发布（Phase F）：标准化 payload → listing/v2 请求（product_info 与 ai_optimization_config 两个顶层参数）。
   // 有类目且有 SKU 时先拉类目销售属性做维度对齐（对不上的维度剔除、组合去重），对齐说明随结果回传。
   // 成功返回平台商品 ID；商品先进平台审核（pending/draft），用 queryStatus 跟踪是否 online。

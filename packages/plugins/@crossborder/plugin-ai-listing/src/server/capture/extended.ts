@@ -10,11 +10,17 @@
 import type { Context, Next } from '@nocobase/actions';
 import * as XLSX from 'xlsx';
 import { AdapterError, enumerateStoreProducts, searchAlibabaProducts } from '../adapters';
+import { OpenApiError } from '../openapi/errors';
+import { getValidAccessToken } from '../openapi/token-store';
+import { findConnector, isRealEnabled } from '../platforms/registry';
 import type Plugin from '../plugin';
+import { findConnectedAccountId, resolveCaptureAdapter } from './real-capture';
 import { captureOneToDraft, fail, getRepos, isValidHttpUrl, type CaptureRepos } from './shared';
 
 // 逐条抓取并写任务明细：每条 URL 都写一条 aiListingTaskSteps，单条失败用 try/catch 隔离，不影响其它条；实时更新任务进度与成功/失败统计。
+// 适配器按条 resolveCaptureAdapter 决策：真接入开关开且平台已授权 → 平台真实抓取，否则 mock（与 URL 抓取同一决策）。
 async function runItems(
+  plugin: Plugin,
   repos: CaptureRepos,
   taskId: number,
   traceId: string,
@@ -27,7 +33,8 @@ async function runItems(
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
     const t = Date.now();
-    const r = await captureOneToDraft(repos, url, options);
+    const adapter = await resolveCaptureAdapter(plugin, url);
+    const r = await captureOneToDraft(repos, url, options, adapter);
     if (r.ok) {
       success++;
       await repos.Steps.create({
@@ -93,41 +100,130 @@ export function setupCaptureExtended(plugin: Plugin): void {
   // 把扩展 action 挂到已 define 的 aiListingCapture 资源上（registerActionHandlers 不会给已有资源新增 action）。
   const captureResource = app.resourceManager.getResource('aiListingCapture');
 
-  // 店铺抓取：分析店铺 -> 返回商品列表（OpenAPI 买家侧无按店铺列商品，走 Crawl4AI 枚举公开页，当前 mock）。
+  // 店铺抓取：分析店铺 -> 返回商品列表。店铺公开页有平台反爬（验证码拦截）、买家侧 OpenAPI 也没有「按店铺列商品」
+  // 接口，因此真实通道是卖家侧 /alibaba/icbu/product/list 枚举「你已授权店铺」的商品（即搬运自己的店）；
+  // 他人店铺请走 URL 抓取 / 关键词抓取。平台从链接域名自动识别，无需用户选择。
   captureResource?.addAction('analyzeStore', async (ctx: Context, next: Next) => {
     const traceId = ctx.reqId || `srv-${Date.now()}`;
-    const { storeUrl } = (ctx.action?.params?.values || {}) as { storeUrl?: string };
+    const values = (ctx.action?.params?.values || {}) as {
+      storeUrl?: string;
+      page?: number;
+      pageSize?: number;
+      subject?: string;
+    };
+    const { storeUrl } = values;
     try {
       if (!isValidHttpUrl(storeUrl)) {
         ctx.status = 400;
         ctx.body = fail('INVALID_STORE_URL', '请输入有效的店铺链接（需 http/https）', false, traceId);
         return await next();
       }
-      const products = await enumerateStoreProducts(storeUrl);
+      const host = new URL(storeUrl).hostname.toLowerCase();
+      const connector =
+        host.includes('alibaba.') || host.includes('1688.com') ? findConnector('alibaba-icbu') : undefined;
+      if (!connector) {
+        ctx.status = 400;
+        ctx.body = fail(
+          'STORE_PLATFORM_UNSUPPORTED',
+          '暂不支持该店铺链接所属平台，当前支持 Alibaba.com 店铺（如 xxx.en.alibaba.com）',
+          false,
+          traceId,
+        );
+        return await next();
+      }
+      if (!isRealEnabled(connector.id) || !connector.listOwnProducts) {
+        // 真接入开关未开（演示环境）：保留 mock 枚举便于联调，并明确标注来源。
+        const products = await enumerateStoreProducts(storeUrl);
+        ctx.body = {
+          ok: true,
+          data: {
+            storeUrl,
+            platform: connector.label,
+            total: products.length,
+            page: 1,
+            pageSize: products.length,
+            products,
+            source: 'mock',
+            notice: '真实平台接入未开启，以下为演示数据',
+          },
+          warnings: [],
+          errors: [],
+          traceId,
+        };
+        return await next();
+      }
+      const accountId = await findConnectedAccountId(plugin, connector.id);
+      if (accountId == null) {
+        ctx.status = 400;
+        ctx.body = fail(
+          'OPENAPI_NOT_CONNECTED',
+          '该平台尚未授权连接，请先到「平台连接」页授权店铺账号',
+          false,
+          traceId,
+        );
+        return await next();
+      }
+      const token = await getValidAccessToken(plugin, accountId);
+      const pageData = await connector.listOwnProducts(token, {
+        page: values.page,
+        pageSize: values.pageSize,
+        subject: values.subject,
+      });
+      const account = await db.getRepository('aiListingPlatformAccounts').findOne({ filterByTk: accountId });
+      const storeName = String(account?.get('storeName') || account?.get('platform') || '已授权店铺');
+      const products = pageData.products.map((p) => ({
+        sourceProductId: p.productId,
+        title: p.title,
+        priceText: '',
+        imageUrl: p.imageUrl,
+        sourceUrl: p.detailUrl || `https://www.alibaba.com/product-detail/item_${p.productId}.html`,
+        sourcePlatform: 'Alibaba.com',
+        status: p.status,
+        display: p.display,
+      }));
       ctx.body = {
         ok: true,
-        data: { storeUrl, total: products.length, products },
+        data: {
+          storeUrl,
+          platform: connector.label,
+          total: pageData.total,
+          page: pageData.page,
+          pageSize: pageData.pageSize,
+          products,
+          source: 'seller_openapi',
+          account: { id: accountId, name: storeName },
+          notice: `阿里对店铺公开页有反爬拦截，已改用你授权店铺「${storeName}」的卖家接口列出在售商品（仅支持搬运自己的店铺；他人店铺请用 URL 抓取或关键词抓取）。`,
+        },
         warnings: [],
         errors: [],
         traceId,
       };
     } catch (e) {
-      const code = e instanceof AdapterError ? e.code : 'STORE_ANALYZE_FAILED';
-      const retryable = e instanceof AdapterError ? e.retryable : true;
+      const code = e instanceof AdapterError || e instanceof OpenApiError ? e.code : 'STORE_ANALYZE_FAILED';
+      const retryable = e instanceof AdapterError || e instanceof OpenApiError ? e.retryable : true;
       ctx.body = fail(code, (e as Error)?.message || '店铺分析失败', retryable, traceId);
     }
     await next();
   });
 
-  // 店铺抓取：对选中商品逐个抓取生成草稿。
+  // 店铺抓取：对选中商品逐个抓取生成草稿。异步执行（选中量可能很大），立即返回 taskId，
+  // 前端用 aiListingTasks:getProgress 轮询进度；每条明细逐一落 aiListingTaskSteps。
   captureResource?.addAction('startStoreCapture', async (ctx: Context, next: Next) => {
     const traceId = ctx.reqId || `srv-${Date.now()}`;
     const values = (ctx.action?.params?.values || {}) as {
-      items?: Array<{ url: string }>;
+      items?: Array<{ url?: string; productId?: string }>;
       storeUrl?: string;
       options?: { fields?: string[] };
     };
-    const urls = (values.items || []).map((i) => i.url).filter(isValidHttpUrl);
+    const urls = (values.items || [])
+      .map((i) =>
+        i.url && isValidHttpUrl(i.url)
+          ? i.url
+          : i.productId
+            ? `https://www.alibaba.com/product-detail/item_${i.productId}.html`
+            : '',
+      )
+      .filter(isValidHttpUrl);
     if (!urls.length) {
       ctx.status = 400;
       ctx.body = fail('NO_ITEMS_SELECTED', '请先选择要抓取的商品', false, traceId);
@@ -148,10 +244,18 @@ export function setupCaptureExtended(plugin: Plugin): void {
       },
     });
     const taskId = task.get('id');
-    const stats = await runItems(repos, taskId, traceId, urls, values.options);
+    const markCrashed = async (e: unknown) => {
+      app.logger.error(`[ai-listing] store capture task ${taskId} crashed: ${(e as Error)?.message || e}`);
+      try {
+        await repos.Tasks.update({ filterByTk: taskId, values: { status: 'failed' } });
+      } catch {
+        // 任务状态标记失败仅影响展示，忽略。
+      }
+    };
+    runItems(plugin, repos, taskId, traceId, urls, values.options).catch(markCrashed);
     ctx.body = {
       ok: true,
-      data: { taskId, taskNo: task.get('taskNo'), ...stats },
+      data: { taskId, taskNo: task.get('taskNo'), total: urls.length, async: true },
       warnings: [],
       errors: [],
       traceId,
@@ -159,7 +263,8 @@ export function setupCaptureExtended(plugin: Plugin): void {
     await next();
   });
 
-  // 关键词搜索：OpenAPI /eco/buyer/product/search（mock）。
+  // 关键词搜索：买家侧 /eco/buyer/product/search 全网真实搜索（不限店铺——搬运他人商品的主通道）。
+  // 真接入开关开且已授权 → 真实搜索（排序/价格区间接口不支持，服务端本地后处理）；否则 mock 并标注来源。
   captureResource?.addAction('searchKeyword', async (ctx: Context, next: Next) => {
     const traceId = ctx.reqId || `srv-${Date.now()}`;
     const v = (ctx.action?.params?.values || {}) as {
@@ -169,11 +274,71 @@ export function setupCaptureExtended(plugin: Plugin): void {
       priceMin?: number;
       priceMax?: number;
       size?: number;
+      page?: number;
       currency?: string;
     };
     try {
+      const keyword = (v.keyword || '').trim();
+      if (!keyword) {
+        ctx.status = 400;
+        ctx.body = fail('KEYWORD_REQUIRED', '请输入搜索关键词', false, traceId);
+        return await next();
+      }
+      const connector = findConnector('alibaba-icbu');
+      const accountId =
+        connector && isRealEnabled(connector.id) && connector.searchProducts
+          ? await findConnectedAccountId(plugin, connector.id)
+          : undefined;
+      if (connector && accountId != null && connector.searchProducts) {
+        const token = await getValidAccessToken(plugin, accountId);
+        const pageData = await connector.searchProducts(token, {
+          keyword,
+          page: v.page,
+          pageSize: v.size,
+          currency: v.currency || 'CNY',
+          language: 'zh-CN',
+        });
+        // 排序/价格区间：买家搜索接口不支持，按返回结果本地后处理（价格取字符串中的首个数字，可能是区间下限）。
+        const priceOf = (t?: string) => {
+          const m = String(t ?? '').match(/[\d.]+/);
+          return m ? Number(m[0]) : NaN;
+        };
+        let cards = pageData.products.map((p) => ({
+          sourceProductId: p.productId,
+          title: p.title,
+          priceText: p.priceText || '',
+          currency: p.currency,
+          imageUrl: p.imageUrl,
+          sourceUrl: p.detailUrl || `https://www.alibaba.com/product-detail/item_${p.productId}.html`,
+          sourcePlatform: 'Alibaba.com',
+        }));
+        if (v.priceMin != null) cards = cards.filter((c) => !(priceOf(c.priceText) < Number(v.priceMin)));
+        if (v.priceMax != null) cards = cards.filter((c) => !(priceOf(c.priceText) > Number(v.priceMax)));
+        if (v.sort === 'price_asc' || v.sort === 'price_desc') {
+          cards.sort((a, b) =>
+            v.sort === 'price_asc'
+              ? priceOf(a.priceText) - priceOf(b.priceText)
+              : priceOf(b.priceText) - priceOf(a.priceText),
+          );
+        }
+        ctx.body = {
+          ok: true,
+          data: {
+            keyword,
+            total: pageData.total,
+            page: pageData.page,
+            pageSize: pageData.pageSize,
+            products: cards,
+            source: 'buyer_openapi',
+          },
+          warnings: [],
+          errors: [],
+          traceId,
+        };
+        return await next();
+      }
       const products = await searchAlibabaProducts({
-        keyword: v.keyword || '',
+        keyword,
         platform: v.platform,
         sort: v.sort,
         priceMin: v.priceMin,
@@ -183,16 +348,122 @@ export function setupCaptureExtended(plugin: Plugin): void {
       });
       ctx.body = {
         ok: true,
-        data: { keyword: v.keyword, total: products.length, products },
+        data: {
+          keyword,
+          total: products.length,
+          products,
+          source: 'mock',
+          notice: '真实平台接入未开启，以下为演示数据',
+        },
         warnings: [],
         errors: [],
         traceId,
       };
     } catch (e) {
-      const code = e instanceof AdapterError ? e.code : 'KEYWORD_SEARCH_FAILED';
-      const retryable = e instanceof AdapterError ? e.retryable : true;
+      const code = e instanceof AdapterError || e instanceof OpenApiError ? e.code : 'KEYWORD_SEARCH_FAILED';
+      const retryable = e instanceof AdapterError || e instanceof OpenApiError ? e.retryable : true;
       ctx.status = e instanceof AdapterError && !e.retryable ? 400 : 200;
       ctx.body = fail(code, (e as Error)?.message || '关键词搜索失败', retryable, traceId);
+    }
+    await next();
+  });
+
+  // 制造商搜索（近似实现）：开放平台没有「工厂/制造商搜索」接口（网页端 alibaba.com/factory 未开放 API），
+  // 用「关键词搜商品 → 逐条取供应商（并发 4 路单跳 description）→ 按公司归组」得到该关键词下的真实制造商列表，
+  // 每家含它在搜索结果中的商品（可整厂勾选抓取）。覆盖范围 = 前 N 条搜索结果采样，不是全站厂商名录。
+  captureResource?.addAction('searchManufacturers', async (ctx: Context, next: Next) => {
+    const traceId = ctx.reqId || `srv-${Date.now()}`;
+    const v = (ctx.action?.params?.values || {}) as { keyword?: string; size?: number };
+    try {
+      const keyword = (v.keyword || '').trim();
+      if (!keyword) {
+        ctx.status = 400;
+        ctx.body = fail('KEYWORD_REQUIRED', '请输入搜索关键词', false, traceId);
+        return await next();
+      }
+      const connector = findConnector('alibaba-icbu');
+      if (!connector || !isRealEnabled(connector.id) || !connector.searchProducts || !connector.fetchSupplier) {
+        ctx.status = 400;
+        ctx.body = fail('REAL_NOT_ENABLED', '制造商归组需要真实平台接入（当前环境未开启）', false, traceId);
+        return await next();
+      }
+      const accountId = await findConnectedAccountId(plugin, connector.id);
+      if (accountId == null) {
+        ctx.status = 400;
+        ctx.body = fail(
+          'OPENAPI_NOT_CONNECTED',
+          '该平台尚未授权连接，请先到「平台连接」页授权店铺账号',
+          false,
+          traceId,
+        );
+        return await next();
+      }
+      const token = await getValidAccessToken(plugin, accountId);
+      const sample = Math.min(Math.max(Number(v.size) || 20, 5), 40);
+      const pageData = await connector.searchProducts(token, {
+        keyword,
+        page: 1,
+        pageSize: sample,
+        currency: 'CNY',
+        language: 'zh-CN',
+      });
+      const cards = pageData.products;
+      // 并发 4 路逐条取供应商；单条失败不影响整体（该商品归入「未识别供应商」）。
+      const suppliers: Array<{ supplierName?: string; companyId?: string }> = new Array(cards.length);
+      let cursor = 0;
+      const fetchSupplier = connector.fetchSupplier.bind(connector);
+      const worker = async () => {
+        while (cursor < cards.length) {
+          const i = cursor++;
+          try {
+            suppliers[i] = await fetchSupplier(token, cards[i].productId);
+          } catch {
+            suppliers[i] = {};
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: 4 }, worker));
+      const groups = new Map<
+        string,
+        { companyId?: string; supplierName: string; products: Array<Record<string, unknown>> }
+      >();
+      cards.forEach((c, i) => {
+        const s = suppliers[i] || {};
+        const key = s.companyId || s.supplierName || '__unknown__';
+        const g = groups.get(key) || {
+          companyId: s.companyId,
+          supplierName: s.supplierName || '未识别供应商',
+          products: [],
+        };
+        g.products.push({
+          sourceProductId: c.productId,
+          title: c.title,
+          priceText: c.priceText || '',
+          currency: c.currency,
+          imageUrl: c.imageUrl,
+          sourceUrl: c.detailUrl || `https://www.alibaba.com/product-detail/item_${c.productId}.html`,
+          sourcePlatform: 'Alibaba.com',
+        });
+        groups.set(key, g);
+      });
+      const manufacturers = [...groups.values()].sort((a, b) => b.products.length - a.products.length);
+      ctx.body = {
+        ok: true,
+        data: {
+          keyword,
+          sampled: cards.length,
+          totalMatched: pageData.total,
+          manufacturers,
+          notice: `基于搜索结果前 ${cards.length} 条按供应商归组（全网共 ${pageData.total} 条相关商品）。开放平台无工厂搜索接口，暂不能枚举一家工厂的全部商品——想要某家更多商品，可用它的商品标题关键词继续搜索。`,
+        },
+        warnings: [],
+        errors: [],
+        traceId,
+      };
+    } catch (e) {
+      const code = e instanceof AdapterError || e instanceof OpenApiError ? e.code : 'MANUFACTURER_SEARCH_FAILED';
+      const retryable = e instanceof AdapterError || e instanceof OpenApiError ? e.retryable : true;
+      ctx.body = fail(code, (e as Error)?.message || '制造商搜索失败', retryable, traceId);
     }
     await next();
   });
@@ -226,7 +497,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
       },
     });
     const taskId = task.get('id');
-    const stats = await runItems(repos, taskId, traceId, urls, values.options);
+    const stats = await runItems(plugin, repos, taskId, traceId, urls, values.options);
     ctx.body = {
       ok: true,
       data: { taskId, taskNo: task.get('taskNo'), ...stats },
@@ -312,7 +583,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
           },
         });
         const taskId = task.get('id');
-        const stats = await runItems(repos, taskId, traceId, urls, v.options);
+        const stats = await runItems(plugin, repos, taskId, traceId, urls, v.options);
         ctx.body = {
           ok: true,
           data: { taskId, taskNo: task.get('taskNo'), ...stats },
@@ -328,6 +599,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
   app.acl.allow('aiListingCapture', 'analyzeStore', 'loggedIn');
   app.acl.allow('aiListingCapture', 'startStoreCapture', 'loggedIn');
   app.acl.allow('aiListingCapture', 'searchKeyword', 'loggedIn');
+  app.acl.allow('aiListingCapture', 'searchManufacturers', 'loggedIn');
   app.acl.allow('aiListingCapture', 'startKeywordCapture', 'loggedIn');
   app.acl.allow('aiListingBatchImport', 'parse', 'loggedIn');
   app.acl.allow('aiListingBatchImport', 'start', 'loggedIn');

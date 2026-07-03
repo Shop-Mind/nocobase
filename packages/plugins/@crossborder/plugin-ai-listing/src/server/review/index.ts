@@ -195,6 +195,7 @@ export function setupReview(plugin: Plugin): void {
           currencyOriginal: p.get('currencyOriginal'),
           priceTarget: p.get('priceTarget'),
           listPriceTarget: p.get('listPriceTarget'),
+          ladderTarget: p.get('ladderTarget') || null,
           stock: p.get('stock'),
           attributesOriginal: p.get('attributesOriginal') || {},
           attributesProcessed: p.get('attributesProcessed') || {},
@@ -294,10 +295,55 @@ export function setupReview(plugin: Plugin): void {
           'descriptionFinal',
           'priceTarget',
           'listPriceTarget',
+          'ladderTarget',
           'stock',
           'attributesProcessed',
         ];
         const incoming = v.values || {};
+        // 发布阶梯价校验与规整：数组（空数组=清空回固定价）；每档起订量为正整数、价格>0；
+        // 按起订量升序排序后要求数量严格递增、价格随数量不升。档数不限（跟随源站）。
+        if ('ladderTarget' in incoming && incoming.ladderTarget != null) {
+          if (!Array.isArray(incoming.ladderTarget)) {
+            ctx.status = 400;
+            ctx.body = fail('LADDER_INVALID', '阶梯价格式不正确（应为档位数组）', false, traceId);
+            return await next();
+          }
+          const tiers = (incoming.ladderTarget as Array<Record<string, unknown>>).map((t) => ({
+            minQuantity: Math.round(Number(t?.minQuantity)),
+            price: Math.round(Number(t?.price) * 100) / 100,
+          }));
+          if (tiers.some((t) => !Number.isInteger(t.minQuantity) || t.minQuantity <= 0 || !(t.price > 0))) {
+            ctx.status = 400;
+            ctx.body = fail('LADDER_INVALID', '阶梯价每档需填写正整数起订量和大于 0 的售价', false, traceId);
+            return await next();
+          }
+          tiers.sort((a, b) => a.minQuantity - b.minQuantity);
+          for (let i = 1; i < tiers.length; i++) {
+            if (tiers[i].minQuantity === tiers[i - 1].minQuantity) {
+              ctx.status = 400;
+              ctx.body = fail(
+                'LADDER_INVALID',
+                `阶梯价存在重复的起订量档位（≥${tiers[i].minQuantity}）`,
+                false,
+                traceId,
+              );
+              return await next();
+            }
+            if (tiers[i].price > tiers[i - 1].price) {
+              ctx.status = 400;
+              ctx.body = fail(
+                'LADDER_INVALID',
+                `阶梯价「≥${tiers[i].minQuantity}」档价格高于前一档——量大应更优惠（价格随数量增加而不升）`,
+                false,
+                traceId,
+              );
+              return await next();
+            }
+          }
+          // 档数不设上限——跟随源站/人工设置存储；目标平台的档数限制（如 Alibaba.com 最多 4 档）
+          // 由各平台草稿引擎在写入时截断并在结果说明中明确标注。
+          incoming.ladderTarget = tiers.length ? tiers : null;
+        }
         const patch: Record<string, unknown> = {};
         const audits: AuditEntry[] = [];
         for (const field of editable) {

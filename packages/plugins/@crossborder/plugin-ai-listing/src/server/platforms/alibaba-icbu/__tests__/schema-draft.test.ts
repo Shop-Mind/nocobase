@@ -237,4 +237,78 @@ describe('buildDraftXml', () => {
     expect(xml).not.toContain('imageVideo');
     expect(xml).toContain('<field id="productTitle" type="input">');
   });
+
+  it('发布阶梯价：多档随草稿写入（scPrice=1、逐档折 USD、起订量=首档、发货期逐档对齐），并优先于 SKU 规格价', () => {
+    const schemaWithSkuPricing =
+      SCHEMA_XML.replace('</itemSchema>', '') +
+      '<field id="scPrice" name="Price setting" type="singleCheck">' +
+      '<options><option displayName="Tiered pricing by quantity" value="1"/><option displayName="SKU pricing" value="3"/></options></field>' +
+      '<field id="ladderPeriod" name="Shipping" type="complex"></field>' +
+      '</itemSchema>';
+    const payload = {
+      ...PAYLOAD,
+      moq: 100,
+      // SKU 全有售价，但设置了发布阶梯 → 阶梯价优先（平台二选一）。
+      variants: [
+        { sku: 'a', price: 8.12, stock: 1000, attrs: [{ name: '颜色', value: '灰色' }] },
+        { sku: 'c', price: 9.36, stock: 500, attrs: [{ name: '颜色', value: '蓝色' }] },
+      ],
+      ladder: [
+        { minQuantity: 500, price: 12.51 },
+        { minQuantity: 1000, price: 10.81 },
+        { minQuantity: 5000, price: 9.13 },
+        { minQuantity: 10000, price: 7.44 },
+      ],
+    };
+    const { xml, notes } = buildDraftXml(payload, schemaWithSkuPricing, MEDIA);
+    expect(xml).toContain('<field id="scPrice" type="singleCheck"><value>1</value></field>');
+    // 12.51/7.2=1.74、10.81/7.2=1.50、9.13/7.2=1.27、7.44/7.2=1.03
+    expect(xml).toContain(
+      '<field id="ladderPrice_0" type="complex"><complex-value>' +
+        '<field id="quantity" type="input"><value>500</value></field>' +
+        '<field id="price" type="input"><value>1.74</value></field>',
+    );
+    expect(xml).toContain('<field id="quantity" type="input"><value>10000</value></field>');
+    expect(xml).toContain('<field id="price" type="input"><value>1.03</value></field>');
+    // 起订量按阶梯首档调整（100 → 500）
+    expect(xml).toContain('<field id="minOrderQuantity" type="input"><value>500</value></field>');
+    expect(notes.join('；')).toContain('起订量按阶梯首档调整为 500');
+    // 发货期：最多 3 个区间（取价格档最后 3 个数量作 ≤ 上界），天数 7/15/30 递增（平台要求由小到大）
+    expect(xml).toContain(
+      '<field id="ladderPeriod_0" type="complex"><complex-value>' +
+        '<field id="quantity" type="input"><value>1000</value></field>' +
+        '<field id="day" type="input"><value>7</value></field>',
+    );
+    expect(xml).toContain('<field id="ladderPeriod_2" type="complex">');
+    expect(xml).not.toContain('<field id="ladderPeriod_3"');
+    expect(xml).toContain('<field id="day" type="input"><value>30</value></field>');
+    expect(notes.join('；')).toContain('≤10000→30天');
+    // SKU 售价未带入（阶梯价与规格价二选一）
+    expect(xml).not.toContain('<value>1.13</value>');
+    expect(notes.join('；')).toContain('SKU 售价未带入');
+    expect(notes.join('；')).toContain('阶梯价 4 档随草稿写入');
+  });
+
+  it('发布阶梯价规整：乱序排序、重复档去重留低价、价格上升档剔除、超 4 档截断', () => {
+    const payload = {
+      ...PAYLOAD,
+      ladder: [
+        { minQuantity: 1000, price: 9 },
+        { minQuantity: 100, price: 12 },
+        { minQuantity: 100, price: 11 },
+        { minQuantity: 500, price: 13 }, // 高于前档 11 → 剔除
+        { minQuantity: 2000, price: 8 },
+        { minQuantity: 5000, price: 7 },
+        { minQuantity: 9000, price: 6 },
+      ],
+    };
+    const { xml, notes } = buildDraftXml(payload, SCHEMA_XML);
+    // 剩余 100(11)/1000(9)/2000(8)/5000(7)/9000(6) → 截断为前 4 档
+    expect(xml).toContain('<field id="quantity" type="input"><value>100</value></field>');
+    expect(xml).toContain('<field id="ladderPrice_3" type="complex">');
+    expect(xml).not.toContain('<field id="ladderPrice_4"');
+    expect(xml).not.toContain('<value>9000</value>');
+    expect(notes.join('；')).toContain('已剔除');
+    expect(notes.join('；')).toContain('仅带入前 4 档');
+  });
 });

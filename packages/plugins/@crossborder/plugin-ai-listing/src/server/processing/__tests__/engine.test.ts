@@ -118,4 +118,62 @@ describe('processing engine — 专业化规则', () => {
       expect(r.patch.riskFlags).toEqual([]);
     });
   });
+
+  describe('发布阶梯价生成（档数跟随源站）', () => {
+    it('源站 4 档采购阶梯 → 逐档按同一规则加价生成 ladderTarget', () => {
+      const r = applyRule(
+        {
+          ...baseProduct,
+          priceOriginal: 10.01,
+          ladderOriginal: [
+            { minQuantity: 500, price: 10.01, currency: 'CNY' },
+            { minQuantity: 1000, price: 8.65, currency: 'CNY' },
+            { minQuantity: 5000, price: 7.3, currency: 'CNY' },
+            { minQuantity: 10000, price: 5.95, currency: 'CNY' },
+          ],
+        },
+        priceCfg,
+        [],
+        't',
+      );
+      expect(r.patch.ladderTarget).toEqual([
+        { minQuantity: 500, price: 12.51 },
+        { minQuantity: 1000, price: 10.81 },
+        { minQuantity: 5000, price: 9.13 },
+        { minQuantity: 10000, price: 7.44 },
+      ]);
+    });
+
+    it('源站固定价（无阶梯或仅单档）不生成 ladderTarget，草稿保持固定价形态', () => {
+      const none = applyRule(baseProduct, priceCfg, [], 't');
+      expect(none.patch.ladderTarget).toBeUndefined();
+      const single = applyRule(
+        { ...baseProduct, ladderOriginal: [{ minQuantity: 2, price: 10, currency: 'CNY' }] },
+        priceCfg,
+        [],
+        't',
+      );
+      expect(single.patch.ladderTarget).toBeUndefined();
+    });
+
+    it('源站阶梯乱序/含无效档时先过滤再按起订量升序生成', () => {
+      const r = applyRule(
+        {
+          ...baseProduct,
+          ladderOriginal: [
+            { minQuantity: 1000, price: 8, currency: 'CNY' },
+            { minQuantity: 0, price: 9, currency: 'CNY' },
+            { minQuantity: 100, price: 10, currency: 'CNY' },
+          ],
+        },
+        priceCfg,
+        [],
+        't',
+      );
+      expect(r.patch.ladderTarget).toEqual([
+        { minQuantity: 100, price: 12.5 },
+        { minQuantity: 1000, price: 10 },
+      ]);
+    });
+  });
 });
