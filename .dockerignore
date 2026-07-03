@@ -17,3 +17,7 @@ packages/*/*/node_modules
 
 *.sqlite
 /uploads
+
+# never bake secrets into images
+.env
+.env.*
