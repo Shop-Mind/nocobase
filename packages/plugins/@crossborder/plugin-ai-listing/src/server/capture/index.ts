@@ -221,14 +221,21 @@ export function setupCapture(plugin: Plugin): void {
       // 每条记录附带产出商品的标题/主图/状态（metadata.productId 关联），让历史列表一眼看出「抓的是什么商品」。
       listCaptureHistory: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
-        const values = (ctx.action?.params?.values || {}) as { captureType?: string; limit?: number };
-        const limit = Math.min(Math.max(Number(values.limit) || 10, 1), 50);
+        const values = (ctx.action?.params?.values || {}) as {
+          captureType?: string;
+          limit?: number;
+          page?: number;
+          pageSize?: number;
+        };
+        const limit = Math.min(Math.max(Number(values.pageSize) || Number(values.limit) || 10, 1), 50);
+        const page = Math.max(Number(values.page) || 1, 1);
         const Tasks = db.getRepository('aiListingCaptureTasks');
         const filter: Record<string, unknown> = {};
         if (values.captureType) {
           filter.captureType = values.captureType;
         }
-        const rows = await Tasks.find({ filter, sort: ['-id'], limit });
+        const totalTasks = await Tasks.count({ filter });
+        const rows = await Tasks.find({ filter, sort: ['-id'], limit, offset: (page - 1) * limit });
         // 多商品任务（店铺/关键词/批量）不写 metadata.productId：从成功步骤取第一个产出商品做代表 + 产出计数。
         const multiTaskIds = rows
           .filter((r) => !Number((r.get('metadata') || {}).productId))
@@ -308,7 +315,7 @@ export function setupCapture(plugin: Plugin): void {
             productTotal: productCountByTask[tid] || (productById[pid] ? 1 : 0),
           };
         });
-        ctx.body = { ok: true, data, warnings: [], errors: [], traceId };
+        ctx.body = { ok: true, data, total: totalTasks, page, pageSize: limit, warnings: [], errors: [], traceId };
         await next();
       },
 

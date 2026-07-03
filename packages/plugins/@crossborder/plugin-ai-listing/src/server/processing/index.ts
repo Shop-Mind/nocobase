@@ -472,11 +472,21 @@ export function setupProcessing(plugin: Plugin): void {
         const ids = rows.map((p: any) => p.get('id'));
         const skuCounts: Record<number, number> = {};
         const mediaCounts: Record<number, number> = {};
+        const mainByPid: Record<number, string> = {};
         if (ids.length) {
           const skuRows = await Skus.find({ filter: { productId: { $in: ids } }, fields: ['id', 'productId'] });
           for (const s of skuRows) skuCounts[s.get('productId')] = (skuCounts[s.get('productId')] ?? 0) + 1;
           const mediaRows = await Media.find({ filter: { productId: { $in: ids } }, fields: ['id', 'productId'] });
           for (const m of mediaRows) mediaCounts[m.get('productId')] = (mediaCounts[m.get('productId')] ?? 0) + 1;
+          const mains = await Media.find({
+            filter: { $and: [{ productId: { $in: ids } }, { role: 'main' }] },
+            fields: ['id', 'productId', 'sourceUrl'],
+            sort: ['id'],
+          });
+          for (const m of mains) {
+            const pid = m.get('productId');
+            if (mainByPid[pid] == null && m.get('sourceUrl')) mainByPid[pid] = m.get('sourceUrl');
+          }
         }
         const products = rows.map((p: any) => ({
           id: p.get('id'),
@@ -488,6 +498,7 @@ export function setupProcessing(plugin: Plugin): void {
           createdAt: p.get('createdAt'),
           // 处理上下文：供应商 / 起订量 / SKU 与媒体数量 / 属性数，帮助判断这条商品信息完整度。
           supplierName: (p.get('shopInfo') || {}).supplierName || null,
+          mainImage: mainByPid[p.get('id')] || null,
           moq: p.get('moq'),
           skuCount: skuCounts[p.get('id')] ?? 0,
           mediaCount: mediaCounts[p.get('id')] ?? 0,
