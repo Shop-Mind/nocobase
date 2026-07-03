@@ -36,14 +36,17 @@ const employeeCache: Record<string, unknown> = {};
 export async function fetchEmployee(app: HostApp, username: string): Promise<Record<string, unknown> | undefined> {
   if (employeeCache[username]) return employeeCache[username] as Record<string, unknown>;
   try {
+    // 必须用 listByUser：它对所有登录用户开放并按当前角色过滤；aiEmployees:list 属于管理员设置页快照，
+    // 普通角色（如店铺管理员）调用会 403 "No permissions"，导致头像点开抽屉失败。与原生 AIEmployeeShortcut 同源。
     const res = await app.apiClient.request({
       resource: 'aiEmployees',
-      action: 'list',
-      params: { filter: { username }, pageSize: 1 },
+      action: 'listByUser',
     });
-    const emp = res?.data?.data?.[0] as Record<string, unknown> | undefined;
-    if (emp) employeeCache[username] = emp;
-    return emp;
+    const rows = (res?.data?.data as Record<string, unknown>[] | undefined) || [];
+    for (const row of rows) {
+      if (row && typeof row.username === 'string') employeeCache[row.username] = row;
+    }
+    return employeeCache[username] as Record<string, unknown> | undefined;
   } catch {
     return undefined;
   }
