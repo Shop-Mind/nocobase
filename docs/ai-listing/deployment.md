@@ -80,6 +80,15 @@ docker build -f Dockerfile.incremental \
 
 页面/块改动(jsBlock)存数据库,推库即生效,连镜像都不用动。
 
+## 品牌(懂店 ShopMind)
+
+平台品牌为「懂店 ShopMind — 更懂商家的电商工具服务商」,AI 商品搬运工具是其下第一个模块。品牌落点(2026-07-03):
+
+- **系统 logo + 标题**:存数据库 `systemSettings`(logo 附件 `/storage/uploads/ai-listing-logo-r0h6ml.svg`,标题 `懂店 ShopMind`),线上本地共库同款;换 logo 走「系统设置 → Logo 上传」即可,无需发版。
+  注意共库不共文件:一边上传的 logo 文件要手动复制到另一边的 `storage/uploads/`(同名)。
+- **favicon**:nginx 直接供,文件 `/data/nginx/html/shopmind-favicon.png`,vhost `app-xuanwu-space.conf` 里 `location = /favicon.ico { alias /usr/share/nginx/html/shopmind-favicon.png; }`。Cloudflare 对 .ico 默认缓存 4 小时,换图后想立即生效需在 CF 控制台 Purge Cache。
+- **源文件**:`docs/ai-listing/brand/shopmind-logo.svg`(横版字标,深色底用)、`shopmind-favicon.png`(64×64 方形图标)。
+
 ## 构建资源经验(2026-07-03 实测)
 
 - **ACR 个人版云构建做不了全量构建**:构建机约 2C4G,`yarn build` 的 tsc 声明编译阶段直接 OOM(rpc EOF,恰好 30 分钟被杀)。全量构建只能在服务器(7.4G+swap,~10 分钟编译)或本地(Intel Mac 16C/16G 更快)。增量构建资源占用小,ACR 理论可行(未验证)。

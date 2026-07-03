@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 430 120" role="img" aria-label="懂店 ShopMind">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1677ff"/>
+      <stop offset="1" stop-color="#13c2c2"/>
+    </linearGradient>
+    <linearGradient id="t" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#69b1ff"/>
+      <stop offset="1" stop-color="#5cdbd3"/>
+    </linearGradient>
+  </defs>
+  <!-- mark: rounded square -->
+  <rect x="6" y="10" width="100" height="100" rx="24" fill="url(#g)"/>
+  <!-- storefront awning -->
+  <polygon points="27,52 85,52 79,34 33,34" fill="#ffffff"/>
+  <circle cx="37" cy="52" r="9" fill="#ffffff"/>
+  <circle cx="56" cy="52" r="9" fill="#ffffff"/>
+  <circle cx="75" cy="52" r="9" fill="#ffffff"/>
+  <!-- shop body: door + window -->
+  <rect x="33" y="64" width="17" height="24" rx="3" fill="#ffffff" opacity="0.9"/>
+  <rect x="56" y="64" width="23" height="15" rx="3" fill="#ffffff" opacity="0.55"/>
+  <!-- mind spark above the shop -->
+  <path d="M88 12 L91.5 22 L101 25.5 L91.5 29 L88 39 L84.5 29 L75 25.5 L84.5 22 Z" fill="#ffffff"/>
+  <circle cx="99" cy="38" r="3" fill="#ffffff" opacity="0.85"/>
+  <!-- wordmark -->
+  <text x="124" y="76" font-family="PingFang SC, Microsoft YaHei, Noto Sans SC, sans-serif" font-size="48" font-weight="650" fill="#ffffff" letter-spacing="2">懂店</text>
+  <text x="238" y="76" font-family="Avenir Next, PingFang SC, sans-serif" font-size="38" font-weight="600" fill="url(#t)" letter-spacing="0.5">ShopMind</text>
+</svg>
