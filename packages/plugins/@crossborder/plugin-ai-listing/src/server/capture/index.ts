@@ -223,6 +223,7 @@ export function setupCapture(plugin: Plugin): void {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
         const values = (ctx.action?.params?.values || {}) as {
           captureType?: string;
+          status?: string;
           limit?: number;
           page?: number;
           pageSize?: number;
@@ -233,6 +234,9 @@ export function setupCapture(plugin: Plugin): void {
         const filter: Record<string, unknown> = {};
         if (values.captureType) {
           filter.captureType = values.captureType;
+        }
+        if (values.status) {
+          filter.status = values.status;
         }
         const totalTasks = await Tasks.count({ filter });
         const rows = await Tasks.find({ filter, sort: ['-id'], limit, offset: (page - 1) * limit });

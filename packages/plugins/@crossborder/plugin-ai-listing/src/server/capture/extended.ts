@@ -234,7 +234,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
       values: {
         captureType: 'store',
         sourcePlatform: 'Alibaba.com',
-        input: { storeUrl: values.storeUrl, count: urls.length },
+        input: { storeUrl: values.storeUrl, count: urls.length, options: values.options },
         status: 'running',
         traceId,
         totalCount: urls.length,
@@ -256,6 +256,70 @@ export function setupCaptureExtended(plugin: Plugin): void {
     ctx.body = {
       ok: true,
       data: { taskId, taskNo: task.get('taskNo'), total: urls.length, async: true },
+      warnings: [],
+      errors: [],
+      traceId,
+    };
+    await next();
+  });
+
+  // 失败重试：取原任务失败明细里的 URL 建一个新任务重跑（沿用原任务的语言/币种），整单失败无步骤时回退 input.url。
+  captureResource?.addAction('retryTask', async (ctx: Context, next: Next) => {
+    const traceId = ctx.reqId || `srv-${Date.now()}`;
+    const v = (ctx.action?.params?.values || {}) as { taskId?: number };
+    const taskId = Number(v.taskId);
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      ctx.status = 400;
+      ctx.body = fail('TASK_ID_REQUIRED', '缺少要重试的任务 id', false, traceId);
+      return await next();
+    }
+    const repos = getRepos(db);
+    const orig = await repos.Tasks.findOne({ filterByTk: taskId });
+    if (!orig) {
+      ctx.status = 404;
+      ctx.body = fail('TASK_NOT_FOUND', '抓取任务不存在', false, traceId);
+      return await next();
+    }
+    const failedSteps = await repos.Steps.find({
+      filter: { taskType: 'capture', taskId, status: 'failed' },
+      sort: ['id'],
+    });
+    const input = (orig.get('input') || {}) as { url?: string; options?: CaptureOptions };
+    let urls = failedSteps
+      .map((st) => String(((st.get('inputSnapshot') as Record<string, unknown>) || {}).url || ''))
+      .filter(isValidHttpUrl);
+    if (!urls.length && input.url && isValidHttpUrl(input.url)) urls = [input.url];
+    urls = [...new Set(urls)];
+    if (!urls.length) {
+      ctx.status = 400;
+      ctx.body = fail('NOTHING_TO_RETRY', '该任务没有可重试的失败明细', false, traceId);
+      return await next();
+    }
+    const task = await repos.Tasks.create({
+      values: {
+        captureType: orig.get('captureType'),
+        sourcePlatform: orig.get('sourcePlatform'),
+        input: { ...input, count: urls.length, retryOf: taskId },
+        status: 'running',
+        traceId,
+        totalCount: urls.length,
+        successCount: 0,
+        failedCount: 0,
+        progress: 0,
+      },
+    });
+    const newTaskId = task.get('id');
+    runItems(plugin, repos, newTaskId, traceId, urls, input.options).catch(async (e) => {
+      app.logger.error(`[ai-listing] retry task ${newTaskId} crashed: ${(e as Error)?.message || e}`);
+      try {
+        await repos.Tasks.update({ filterByTk: newTaskId, values: { status: 'failed' } });
+      } catch {
+        // 状态标记失败仅影响展示
+      }
+    });
+    ctx.body = {
+      ok: true,
+      data: { taskId: newTaskId, taskNo: task.get('taskNo'), total: urls.length, async: true },
       warnings: [],
       errors: [],
       traceId,
@@ -550,7 +614,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
       values: {
         captureType: 'keyword',
         sourcePlatform: 'Alibaba.com',
-        input: { keyword: values.keyword, count: urls.length },
+        input: { keyword: values.keyword, count: urls.length, options: values.options },
         status: 'running',
         traceId,
         totalCount: urls.length,
@@ -643,6 +707,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
             input: {
               count: urls.length,
               filename: typeof v.filename === 'string' ? v.filename.slice(0, 200) : undefined,
+              options: v.options,
             },
             status: 'running',
             traceId,
@@ -669,6 +734,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
   app.acl.allow('aiListingCapture', 'analyzeStore', 'loggedIn');
   app.acl.allow('aiListingCapture', 'startStoreCapture', 'loggedIn');
   app.acl.allow('aiListingCapture', 'previewUrls', 'loggedIn');
+  app.acl.allow('aiListingCapture', 'retryTask', 'loggedIn');
   app.acl.allow('aiListingCapture', 'searchKeyword', 'loggedIn');
   app.acl.allow('aiListingCapture', 'searchManufacturers', 'loggedIn');
   app.acl.allow('aiListingCapture', 'startKeywordCapture', 'loggedIn');

@@ -115,7 +115,11 @@ export function setupReview(plugin: Plugin): void {
           keyword?: string;
           status?: string;
           platform?: string;
+          page?: number;
+          pageSize?: number;
         };
+        const page = Math.max(Number(v.page) || 1, 1);
+        const pageSize = Math.min(Math.max(Number(v.pageSize) || 20, 1), 100);
         const filter: Record<string, unknown> = {};
         const and: unknown[] = [{ status: { $in: REVIEWABLE_STATUS } }];
         if (v.status && REVIEWABLE_STATUS.includes(v.status)) and.push({ status: v.status });
@@ -132,7 +136,8 @@ export function setupReview(plugin: Plugin): void {
         }
         (filter as any).$and = and;
         const { Products, Media } = getRepos(db);
-        const rows = await Products.find({ filter, sort: ['-id'], limit: 200 });
+        const total = await Products.count({ filter });
+        const rows = await Products.find({ filter, sort: ['-id'], offset: (page - 1) * pageSize, limit: pageSize });
         const products = [];
         for (const p of rows) {
           const pid = p.get('id');
@@ -149,7 +154,7 @@ export function setupReview(plugin: Plugin): void {
             mainImage: main ? main.get('sourceUrl') : null,
           });
         }
-        ctx.body = { ok: true, data: { products, total: products.length }, warnings: [], errors: [], traceId };
+        ctx.body = { ok: true, data: { products, total, page, pageSize }, warnings: [], errors: [], traceId };
         await next();
       },
 

@@ -92,7 +92,7 @@ function captureTaskName(row: Record<string, unknown>): string {
 }
 
 // 真实聚合：商品状态分布、今日抓取、发布成功率、平台连接、最近任务（抓取/处理/发布合并）、真实通知。
-async function buildSummary(plugin: Plugin): Promise<DashboardSummary> {
+async function buildSummary(plugin: Plugin, trendDays = 14): Promise<DashboardSummary> {
   const db = plugin.app.db;
   const Products = db.getRepository('aiListingProducts');
   const CaptureTasks = db.getRepository('aiListingCaptureTasks');
@@ -123,7 +123,7 @@ async function buildSummary(plugin: Plugin): Promise<DashboardSummary> {
   // 近 14 天趋势：抓取入库商品（按 createdAt）/ 发布成功记录（按 createdAt）。数据量小，取回后按天归并。
   const trendStart = new Date();
   trendStart.setHours(0, 0, 0, 0);
-  trendStart.setDate(trendStart.getDate() - 13);
+  trendStart.setDate(trendStart.getDate() - (trendDays - 1));
   const dayKey = (v: unknown) => {
     const d = new Date(v as string);
     return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -142,7 +142,7 @@ async function buildSummary(plugin: Plugin): Promise<DashboardSummary> {
   for (const p of trendPublished)
     publishedByDay[dayKey(p.get('createdAt'))] = (publishedByDay[dayKey(p.get('createdAt'))] ?? 0) + 1;
   const trends: DashboardSummary['trends'] = [];
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < trendDays; i++) {
     const d = new Date(trendStart);
     d.setDate(trendStart.getDate() + i);
     const key = dayKey(d);
@@ -391,10 +391,12 @@ export function setupDashboard(plugin: Plugin): void {
     actions: {
       summary: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const vDays = Number((ctx.action?.params?.values as { trendDays?: number } | undefined)?.trendDays);
+        const trendDays = [7, 14, 30].includes(vDays) ? vDays : 14;
         try {
           ctx.body = {
             ok: true,
-            data: await buildSummary(plugin),
+            data: await buildSummary(plugin, trendDays),
             warnings: [],
             errors: [],
             traceId,
