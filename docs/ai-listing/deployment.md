@@ -19,32 +19,85 @@ Cloudflare(app.xuanwu.space, 橙云代理)
 
 | 路径 | 用途 |
 |---|---|
-| `/opt/build/nocobase-src/` | 构建上下文(rsync 自本地仓库,不含 node_modules/.git/storage/docs/.env) |
-| `/opt/build/nocobase-src/Dockerfile.aliyun` | 生产镜像:node:22-bookworm + npmmirror 源 + `yarn install` + `yarn build`,CMD `yarn start` |
+| `/opt/build/nocobase-src/` | **备用**服务器构建上下文(标准流程为本地构建;rsync 自本地仓库,不含 node_modules/.git/storage/docs/.env) |
+| 仓库根 `Dockerfile.aliyun` | 全量镜像:node:22-bookworm + npmmirror 源 + `yarn install` + `yarn build`,CMD `yarn start` |
+| 仓库根 `Dockerfile.incremental` | 增量镜像:FROM 上一版全量镜像,只重编 `@crossborder/plugin-ai-listing` |
 | `/opt/app/nocobase-v2/docker-compose.yml` | compose 项目 `nocobase-ai-listing-v2` |
 | `/opt/app/nocobase-v2/.env` | 环境变量(600 权限;APP_KEY/AI_LISTING_TOKEN_SECRET 与本地一致——DB 里的加密令牌才解得开) |
 | `/data/nginx/conf/conf.d/servers/app-xuanwu-space.conf` | app 子域 vhost(变量 + docker DNS resolver,容器未启动不阻塞 nginx) |
 
-## 发布新版本
+## 发布新版本(标准流程:本地构建 → 推阿里云 ACR → 服务器拉取)
+
+镜像仓库:`registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase`,tag 约定 `v2-<YYYYMMDD>-<NNN>`(如 `v2-20260704-001`)。
+
+### 第 1 步:本地构建镜像(Mac,OrbStack)
 
 ```bash
-# 本地
-rsync -az --delete \
-  --exclude node_modules --exclude '**/node_modules' --exclude .git \
-  --exclude storage --exclude docs --exclude '.env' --exclude '.env.*' \
-  --exclude '**/.umi' --exclude '**/.umi-production' \
-  ./ root@120.76.157.51:/opt/build/nocobase-src/
+# 0) 确保 OrbStack 在跑(docker info 报错就先启动)
+open -a OrbStack
 
-# 服务器
-cd /opt/build/nocobase-src
-docker build -f Dockerfile.aliyun -t registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:v2-<YYYYMMDD-NNN> .
-docker push registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:v2-<YYYYMMDD-NNN>   # 备份(可选)
-sed -i 's|^NOCOBASE_IMAGE=.*|NOCOBASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:v2-<YYYYMMDD-NNN>|' /opt/app/nocobase-v2/.env
-cd /opt/app/nocobase-v2 && docker compose up -d
-docker compose logs -f nocobase   # 观察启动
+cd /Users/wuzhixuan/code/project/nocobase
+TAG=v2-$(date +%Y%m%d)-001   # 同一天发多版就递增 -002、-003
+IMG=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:$TAG
 ```
 
-集合结构有变时在容器里跑一次:`docker compose exec nocobase yarn nocobase db:sync`。
+按改动范围二选一:
+
+```bash
+# A. 只改了 @crossborder/plugin-ai-listing(日常,2-5 分钟)—— 基于上一版镜像只重编插件
+docker build -f Dockerfile.incremental \
+  --build-arg BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<上一版tag> \
+  -t $IMG .
+
+# B. 改了核心框架 / 升级了依赖 / 动了 yarn.lock(全量,本地约 15-25 分钟)
+docker build -f Dockerfile.aliyun -t $IMG .
+```
+
+> 增量构建要求上一版镜像在本地存在;第一次用增量前先 `docker pull <上一版镜像>`(约 11GB,只需一次,之后每版都在本地）。
+
+### 第 2 步:推送到阿里云 ACR
+
+```bash
+# 登录态失效时才需要(密码=ACR 控制台设置的固定密码)
+docker login --username=<ACR用户名> registry.cn-shenzhen.aliyuncs.com
+
+docker push $IMG
+```
+
+> 增量镜像与上一版共享绝大部分层,实际只上传插件重编那一层(几百 MB 内,很快);全量镜像层全新,~11GB 上传较慢,尽量少发全量。
+
+### 第 3 步:服务器拉取并切换
+
+```bash
+ssh root@120.76.157.51
+cd /opt/app/nocobase-v2
+
+# 把 .env 里的镜像 tag 换成新版(<新tag> 替换成本次 tag)
+sed -i 's|^NOCOBASE_IMAGE=.*|NOCOBASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<新tag>|' .env
+
+docker compose pull nocobase    # 从 ACR 拉新镜像(增量版只拉差异层)
+docker compose up -d            # 切换容器
+docker compose logs -f nocobase # 看到 "app started" 即成功(Ctrl+C 退出跟踪)
+```
+
+### 第 4 步:验证与收尾
+
+```bash
+# 服务器上或本地任选
+curl -s -o /dev/null -w "%{http_code}\n" https://app.xuanwu.space/api/app:getLang   # 期望 200
+```
+
+- 集合结构有变时在容器里跑一次:`docker compose exec nocobase yarn nocobase db:sync`。
+- 服务器磁盘只有 40G,确认新版稳定后删旧镜像(**只删本项目的 nocobase 旧 tag,保留上一版用于回滚**):
+  `docker images | grep wuzhixuan/nocobase`,然后 `docker image rm <更早的tag>`。
+
+### 回滚
+
+`.env` 的 `NOCOBASE_IMAGE` 改回上一版 tag → `docker compose up -d`,一分钟内完成(旧镜像还在本地,无需重新拉取)。
+
+### 备选:服务器上构建(本地网络上传 11GB 太慢时)
+
+`/opt/build/nocobase-src/` 保留为服务器构建上下文,流程:本地 `rsync -az --delete --exclude node_modules --exclude '**/node_modules' --exclude .git --exclude storage --exclude docs --exclude '.env' --exclude '.env.*' --exclude '**/.umi' --exclude '**/.umi-production' ./ root@120.76.157.51:/opt/build/nocobase-src/`,然后在该目录 `docker build`(命令同上),构建完 `docker push` 到 ACR 留档。服务器全量构建约 20 分钟。
 
 ## 环境变量要点
 
@@ -68,17 +121,9 @@ docker compose logs -f nocobase   # 观察启动
 - 本地 `yarn dev` 与线上共库:同版本代码无碍;改集合结构后先在一边跑 `db:sync`,另一边重启即可。
 - 旧部署(13000 端口、库 nocobase)确认不再需要后可 `docker compose -p nocobase-ai-listing down` 下线回收 1.7G 镜像。
 
-## 增量发版(日常,2-5 分钟)
+## 不需要发镜像的改动
 
-只改了 `@crossborder/plugin-ai-listing` 时用 `Dockerfile.incremental`(基于上一版全量镜像只重编插件):
-
-```bash
-docker build -f Dockerfile.incremental \
-  --build-arg BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<上一版tag> \
-  -t registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<新tag> .
-```
-
-页面/块改动(jsBlock)存数据库,推库即生效,连镜像都不用动。
+页面/块改动(jsBlock)存数据库,推库即生效,连镜像都不用动;系统 logo/标题同理(系统设置里改)。只有 server/client 插件代码、核心框架、依赖变化才需要走上面的镜像发布流程。
 
 ## 品牌(懂店 ShopMind)
 

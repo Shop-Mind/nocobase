@@ -1,3 +1,10 @@
+# 本地构建瘦身:依赖在镜像内 yarn install,运行期 storage 由 volume 挂载,这些都不进构建上下文
+node_modules
+**/node_modules
+.git
+storage
+docs
+
 # Ignore everything under the storage/app-dev directory
 storage/app-dev
 
