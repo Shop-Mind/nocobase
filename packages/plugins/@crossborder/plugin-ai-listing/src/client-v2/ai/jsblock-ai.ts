@@ -39,7 +39,8 @@ type BlockKit = {
   register: (key: string, api: JsBlockApi) => void;
   unregister: (key: string) => void;
   applyPatch: (key: string, patch: Record<string, unknown>) => boolean;
-  openAI: (key: string, opts?: { username?: string; prompt?: string }) => Promise<boolean>;
+  // autoSend=true：抽屉打开后自动发送预填 prompt（仿平台官方「标题优化」一键即开始优化）。
+  openAI: (key: string, opts?: { username?: string; prompt?: string; autoSend?: boolean }) => Promise<boolean>;
   // 返回 AI 员工「原生头像」data URI（dicebear，紫底人像）。options 直接透传给 plugin-ai 的 avatars()，
   // 用于复刻原生 AIEmployeeShortcut 的 hover 转头：常态 { mouth: undefined, mask: ['dark'] }；hover { mask: undefined, flip: true }。
   getAvatar: (username: string, options?: Record<string, unknown>) => Promise<string | undefined>;
@@ -89,6 +90,7 @@ function buildSystemMessage(key: string, api: JsBlockApi): string {
       api.submitLabel || '提交'
     }』按钮」。`,
     '3. 中文回复，简洁。',
+    '4. 优化标题/描述/参数时由你直接撰写内容并调用 jsBlockApplyPatch 写入暂存；不要调用 aiListingReviewWriteSuggestion 等「写建议字段」类工具——它们只改数据库参考列、不会更新用户眼前的页面，还会打断对话等待确认。',
   ].join('\n');
 }
 
@@ -121,6 +123,7 @@ export function installBlockKit(app: HostApp): BlockKit {
         username: opts?.username || 'lst-toby',
         systemMessage: buildSystemMessage(key, api),
         userPrompt: opts?.prompt || '',
+        autoSend: opts?.autoSend,
       });
     },
     async getAvatar(username, options) {

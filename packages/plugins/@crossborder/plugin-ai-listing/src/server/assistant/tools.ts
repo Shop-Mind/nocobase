@@ -24,21 +24,17 @@ export const TOOL_NAMES = {
   knowledgeHit: 'aiListingKnowledgeHit',
   bannedScan: 'aiListingBannedWordScan',
   productStats: 'aiListingProductStats',
-  fieldSuggest: 'aiListingFieldSuggest',
   reviewGetProduct: 'aiListingReviewGetProduct',
   reviewWriteSuggestion: 'aiListingReviewWriteSuggestion',
 } as const;
+// 已移除 aiListingFieldSuggest（早期占位工具：只返回模板建议值，且 ASK 权限会打断对话等确认）。
+// 真实优化统一走「LLM 直接撰写 + jsBlockApplyPatch 写暂存」；员工绑定里的残留引用需同步从 aiEmployees.skillSettings 清掉。
 
 // 员工 → 可调用工具（用于绑定 skillSettings 与「工具列表」交付物）。
 export const EMPLOYEE_TOOLS: Record<string, string[]> = {
   'lst-mira': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.bannedScan, TOOL_NAMES.productStats, TOOL_NAMES.reviewGetProduct],
   'lst-rena': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.bannedScan, TOOL_NAMES.reviewGetProduct],
-  'lst-toby': [
-    TOOL_NAMES.bannedScan,
-    TOOL_NAMES.fieldSuggest,
-    TOOL_NAMES.reviewGetProduct,
-    TOOL_NAMES.reviewWriteSuggestion,
-  ],
+  'lst-toby': [TOOL_NAMES.bannedScan, TOOL_NAMES.reviewGetProduct, TOOL_NAMES.reviewWriteSuggestion],
   'lst-lena': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.productStats],
   'lst-kai': [TOOL_NAMES.knowledgeHit, TOOL_NAMES.productStats],
 };
@@ -71,13 +67,6 @@ export const TOOL_CATALOG: {
     access: 'read-only',
     permission: 'ALLOW',
     description: '按状态聚合商品数量，用于选品/发布卡点评估。',
-  },
-  {
-    name: TOOL_NAMES.fieldSuggest,
-    title: '字段优化建议（只给建议不入库）',
-    access: 'suggest-only',
-    permission: 'ASK',
-    description: '对标题/描述/参数给出优化建议值；不写库，用户在表单 Submit 才保存。',
   },
   {
     name: TOOL_NAMES.reviewGetProduct,
@@ -154,49 +143,6 @@ function buildTools(plugin: Plugin) {
         return ok({ total, byStatus });
       } catch (e) {
         return fail(`产品统计失败：${(e as Error).message}`);
-      }
-    },
-  };
-
-  const fieldSuggest = {
-    scope: 'GENERAL' as const,
-    defaultPermission: 'ASK' as const, // 建议类需 Ask，提醒用户「建议不入库，Submit 才保存」
-    introduction: { title: '字段优化建议', about: '给标题/描述/参数优化建议（不入库）' },
-    definition: {
-      name: TOOL_NAMES.fieldSuggest,
-      description:
-        'Suggest optimized title/description/attributes for a product. Returns suggestions only; never writes. User must Submit to save.',
-      schema: z.object({
-        productId: z.union([z.string(), z.number()]).describe('商品 ID'),
-        field: z.enum(['title', 'description', 'attributes']).describe('要优化的字段'),
-      }),
-    },
-    invoke: async (_ctx: Context, args: { productId?: string | number; field?: string }): Promise<ToolResult> => {
-      try {
-        const repo = db.getRepository('aiListingProducts');
-        const p: any = await repo.findOne({ filterByTk: args?.productId as any });
-        if (!p) return fail('未找到该商品');
-        const field = args?.field || 'title';
-        const titleOriginal = p.get('titleOriginal') || p.get('titleProcessed') || '';
-        const banned = scanBannedWords(String(titleOriginal));
-        const suggestion: Record<string, unknown> = {
-          field,
-          writeBack: false,
-          note: '建议值，不入库；用户在表单 Submit 才保存',
-        };
-        if (field === 'title') {
-          suggestion.value = String(titleOriginal)
-            .replace(/[!！。.]+$/g, '')
-            .slice(0, 100);
-          suggestion.removedBannedWords = banned.map((b) => b.word);
-        } else if (field === 'description') {
-          suggestion.value = '【卖点】材质/规格/适用场景三段式；【参数】补全类目必填属性；【合规】移除违禁词。';
-        } else {
-          suggestion.value = { 材质: '待补全', 规格: '待补全', 适用人群: '待补全' };
-        }
-        return ok(suggestion);
-      } catch (e) {
-        return fail(`字段建议失败：${(e as Error).message}`);
       }
     },
   };
@@ -328,7 +274,7 @@ function buildTools(plugin: Plugin) {
     },
   };
 
-  return [knowledgeHit, bannedScan, productStats, fieldSuggest, reviewGetProduct, reviewWriteSuggestion];
+  return [knowledgeHit, bannedScan, productStats, reviewGetProduct, reviewWriteSuggestion];
 }
 
 /**

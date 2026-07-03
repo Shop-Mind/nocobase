@@ -448,11 +448,38 @@ export function setupReview(plugin: Plugin): void {
           );
           return await next();
         }
+        // 免采纳兜底：最终标题未填时自动沿用原标题（仅做平台合规清洗），不再强制先点「采纳」。
+        // 只有连原始标题都没有的商品才拒绝审核（发布必然失败，早拦截）。
+        let titleAutoFilled: string | null = null;
         const titleFinal = p.get('titleFinal');
         if (!titleFinal || !String(titleFinal).trim()) {
-          ctx.status = 400;
-          ctx.body = fail('REVIEW_TITLE_REQUIRED', '请先填写或采纳「最终标题」再标记审核通过。', true, traceId);
-          return await next();
+          const fallbackTitle = cleanTitle(String(p.get('titleOriginal') || '')).trim();
+          if (!fallbackTitle) {
+            ctx.status = 400;
+            ctx.body = fail(
+              'REVIEW_TITLE_REQUIRED',
+              '商品没有任何可用标题（原始标题为空），请先填写「商品标题」再标记审核。',
+              true,
+              traceId,
+            );
+            return await next();
+          }
+          titleAutoFilled = fallbackTitle;
+          await Products.update({ filterByTk: id, values: { titleFinal: fallbackTitle } });
+          await AuditLogs.create({
+            values: {
+              actorType: 'system',
+              actorId: 'rule-engine',
+              action: 'review.title_autofill',
+              resourceType: 'product',
+              resourceId: id,
+              fieldName: 'titleFinal',
+              oldValue: titleFinal ?? null,
+              newValue: fallbackTitle,
+              reason: '标记审核时最终标题未填，自动沿用原标题（合规清洗后）',
+              traceId,
+            },
+          });
         }
         await Products.update({ filterByTk: id, values: { status: 'reviewed', reviewStatus: 'reviewed' } });
         await AuditLogs.create({
@@ -469,7 +496,13 @@ export function setupReview(plugin: Plugin): void {
             traceId,
           },
         });
-        ctx.body = { ok: true, data: { id, status: 'reviewed' }, warnings: [], errors: [], traceId };
+        ctx.body = {
+          ok: true,
+          data: { id, status: 'reviewed', titleAutoFilled: Boolean(titleAutoFilled) },
+          warnings: titleAutoFilled ? [`最终标题未填，已自动沿用原标题：「${titleAutoFilled}」`] : [],
+          errors: [],
+          traceId,
+        };
         await next();
       },
 
@@ -844,8 +877,17 @@ function setupAiActions(plugin: Plugin): void {
           return await next();
         }
         const issues: Array<{ level: 'block' | 'warn'; field: string; message: string }> = [];
+        // 最终标题未填不再阻断：标记审核时会自动沿用原标题（免采纳兜底）；只有原始标题也为空才真正阻断。
         if (!p.get('titleFinal') || !String(p.get('titleFinal')).trim()) {
-          issues.push({ level: 'block', field: 'titleFinal', message: '最终标题未填写' });
+          if (cleanTitle(String(p.get('titleOriginal') || '')).trim()) {
+            issues.push({
+              level: 'warn',
+              field: 'titleFinal',
+              message: '最终标题未填写（标记审核时将自动沿用原标题）',
+            });
+          } else {
+            issues.push({ level: 'block', field: 'titleFinal', message: '商品没有任何可用标题（原始标题为空）' });
+          }
         }
         const price = Number(p.get('priceTarget'));
         if (!price || Number.isNaN(price) || price <= 0) {

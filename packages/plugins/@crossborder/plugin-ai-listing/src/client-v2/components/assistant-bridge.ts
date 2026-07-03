@@ -56,11 +56,37 @@ function randomKey(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+// autoSend：抽屉打开后自动把预填的 prompt 发出去（仿平台官方「标题优化」一键即开始）。
+// 原生 send 只能从 React hook（useChatBoxActions）拿到，桥接层拿不到；这里用「点原生发送按钮」等价触发：
+// 轮询 chat-box store 里的 senderRef（Sender 组件挂载后写入），在其 nativeElement 内找唯一的 ant-btn-primary（发送键）点一次。
+// 找不到/超时则静默放弃——prompt 仍留在输入框，用户手动点发送即可（渐进增强，绝不影响抽屉本身）。
+function autoSendWhenReady(getChatBoxState: () => Record<string, unknown> | undefined): void {
+  const deadline = Date.now() + 6000;
+  const tick = () => {
+    try {
+      const st = getChatBoxState();
+      const senderRef = st?.senderRef as { current?: { nativeElement?: HTMLElement } } | undefined;
+      const rootEl = senderRef?.current?.nativeElement;
+      const btn = rootEl?.querySelector('button.ant-btn-primary') as HTMLButtonElement | null;
+      const value = st?.senderValue as string | undefined;
+      if (!value) return; // 已发送（submit 会清空 senderValue）或被用户清空，停止
+      if (btn && !btn.disabled) {
+        btn.click();
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    if (Date.now() < deadline) setTimeout(tick, 200);
+  };
+  setTimeout(tick, 300);
+}
+
 // 复用的原生抽屉打开器：绑定员工 + 预置 system/user 消息，打开 plugin-ai 原生右侧抽屉。
 // 供 aiListingOpenAssistant（旧「问 Toby」入口）与 jsBlock kit（新紫色头像入口）共用。
 export async function openNativeAssistant(
   app: HostApp,
-  opts: { username: string; systemMessage?: string; userPrompt?: string },
+  opts: { username: string; systemMessage?: string; userPrompt?: string; autoSend?: boolean },
 ): Promise<boolean> {
   try {
     const emp = await fetchEmployee(app, opts.username);
@@ -96,6 +122,9 @@ export async function openNativeAssistant(
     if (opts.systemMessage) cm.setSessionSystemMessage?.(KEY, opts.systemMessage);
     if (opts.userPrompt) cb.setSenderValue?.(opts.userPrompt);
     cb.setOpen?.(true);
+    if (opts.autoSend && opts.userPrompt) {
+      autoSendWhenReady(() => mod.useChatBoxStore?.getState?.() as Record<string, unknown> | undefined);
+    }
     return true;
   } catch (e) {
     // eslint-disable-next-line no-console
