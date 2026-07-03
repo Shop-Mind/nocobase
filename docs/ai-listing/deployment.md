@@ -67,3 +67,21 @@ docker compose logs -f nocobase   # 观察启动
 - 服务器磁盘 40G 较紧(构建期镜像+缓存约需 10G+),构建失败先查 `df -h`;swap 已加至 6G(2G+4G)。
 - 本地 `yarn dev` 与线上共库:同版本代码无碍;改集合结构后先在一边跑 `db:sync`,另一边重启即可。
 - 旧部署(13000 端口、库 nocobase)确认不再需要后可 `docker compose -p nocobase-ai-listing down` 下线回收 1.7G 镜像。
+
+## 增量发版(日常,2-5 分钟)
+
+只改了 `@crossborder/plugin-ai-listing` 时用 `Dockerfile.incremental`(基于上一版全量镜像只重编插件):
+
+```bash
+docker build -f Dockerfile.incremental \
+  --build-arg BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<上一版tag> \
+  -t registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<新tag> .
+```
+
+页面/块改动(jsBlock)存数据库,推库即生效,连镜像都不用动。
+
+## 构建资源经验(2026-07-03 实测)
+
+- **ACR 个人版云构建做不了全量构建**:构建机约 2C4G,`yarn build` 的 tsc 声明编译阶段直接 OOM(rpc EOF,恰好 30 分钟被杀)。全量构建只能在服务器(7.4G+swap,~10 分钟编译)或本地(Intel Mac 16C/16G 更快)。增量构建资源占用小,ACR 理论可行(未验证)。
+- 首成镜像:`v2-20260703-001`(11GB,含完整 node_modules;后续可优化裁剪)。
+- 踩坑:`.dockerignore` 排除 `.env.*` 会误伤 `.env.e2e.example`——cli-v1 的 p-test.js 模块加载时必读它,导致 yarn install 的 postinstall 失败;须放行 `!.env.*.example`。
