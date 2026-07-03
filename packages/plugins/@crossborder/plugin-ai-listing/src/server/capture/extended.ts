@@ -9,7 +9,7 @@
 
 import type { Context, Next } from '@nocobase/actions';
 import * as XLSX from 'xlsx';
-import { AdapterError, enumerateStoreProducts, searchAlibabaProducts } from '../adapters';
+import { AdapterError, enumerateStoreProducts, searchAlibabaProducts, type CaptureOptions } from '../adapters';
 import { OpenApiError } from '../openapi/errors';
 import { getValidAccessToken } from '../openapi/token-store';
 import { findConnector, isRealEnabled } from '../platforms/registry';
@@ -25,7 +25,7 @@ async function runItems(
   taskId: number,
   traceId: string,
   urls: string[],
-  options?: { fields?: string[] },
+  options?: CaptureOptions,
 ) {
   let success = 0;
   let failed = 0;
@@ -213,7 +213,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
     const values = (ctx.action?.params?.values || {}) as {
       items?: Array<{ url?: string; productId?: string }>;
       storeUrl?: string;
-      options?: { fields?: string[] };
+      options?: CaptureOptions;
     };
     const urls = (values.items || [])
       .map((i) =>
@@ -474,7 +474,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
     const values = (ctx.action?.params?.values || {}) as {
       items?: Array<{ url: string }>;
       keyword?: string;
-      options?: { fields?: string[] };
+      options?: CaptureOptions;
     };
     const urls = (values.items || []).map((i) => i.url).filter(isValidHttpUrl);
     if (!urls.length) {
@@ -561,7 +561,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
       // 开始批量导入：显式逐行建任务明细，单行失败隔离，汇总成功/失败统计。
       start: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
-        const v = (ctx.action?.params?.values || {}) as { urls?: string[]; options?: { fields?: string[] } };
+        const v = (ctx.action?.params?.values || {}) as { urls?: string[]; options?: CaptureOptions };
         const urls = (v.urls || []).filter(isValidHttpUrl);
         if (!urls.length) {
           ctx.status = 400;
