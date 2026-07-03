@@ -77,10 +77,10 @@ function mapSkus(skuInfo: unknown[]): NormalizedSku[] {
 
 function mapImages(images: unknown[]): NormalizedMedia[] {
   return images
-    .map((raw, i) => {
+    .map((raw, i): NormalizedMedia | null => {
       const url = typeof raw === 'string' ? raw : str(asObj(raw).image_url) || str(asObj(raw).url);
       if (!url) return null;
-      return { assetType: 'image' as const, sourceUrl: url, role: i === 0 ? 'main' : 'detail', sort: i };
+      return { assetType: 'image', sourceUrl: url, role: i === 0 ? 'main' : 'detail', sort: i };
     })
     .filter((m): m is NormalizedMedia => m != null);
 }
@@ -255,7 +255,7 @@ function mapBuyerSkus(skuInfo: unknown[]): NormalizedSku[] {
         if (!name || !value) return null;
         return { name, value, image: str(a.attr_value_image) };
       })
-      .filter((x): x is { name: string; value: string; image?: string } => x != null);
+      .filter((x): x is { name: string; value: string; image: string | undefined } => x != null);
     const ladder = mapLadder(asArr(s.ladder_price));
     return {
       sku: str(s.seller_sku_id) || str(s.sku_id),

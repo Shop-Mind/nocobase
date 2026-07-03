@@ -11,7 +11,7 @@
 // OAuth 三方法 delegate 到 openapi/oauth（已真机验证）。fetchProduct 用 /alibaba/icbu/product/get/v2 拉真实商品。
 
 import { parseAlibabaProductId } from '../../adapters';
-import { callIop, callIopUpload } from '../../openapi/iop-client';
+import { callIop, callIopUpload, type IopParamValue } from '../../openapi/iop-client';
 import { friendlyMessage, OpenApiError } from '../../openapi/errors';
 import { buildAuthorizeUrl, exchangeCode, getIopConfig, refreshAccessToken } from '../../openapi/oauth';
 import { PlatformConnector } from '../types';
@@ -166,7 +166,7 @@ async function uploadVideoToBank(
       const res = await callIop(cfg, {
         apiPath: '/alibaba/icbu/video/upload/result',
         httpMethod: 'POST',
-        params: { req_id: model.req_id },
+        params: { req_id: model.req_id as string },
         accessToken,
         timeoutMs: 30000,
       });
@@ -322,7 +322,7 @@ export const alibabaIcbuConnector: PlatformConnector = {
     const cfg = getIopConfig();
     const pageSize = Math.min(Math.max(query.pageSize || 20, 1), 30);
     const page = Math.max(query.page || 1, 1);
-    const params: Record<string, unknown> = { current_page: page, page_size: pageSize };
+    const params: Record<string, IopParamValue> = { current_page: page, page_size: pageSize };
     if (query.subject) params.subject = query.subject;
     type IcbuProductListJson = {
       result?: {
@@ -371,7 +371,7 @@ export const alibabaIcbuConnector: PlatformConnector = {
     const cfg = getIopConfig();
     const size = Math.min(Math.max(query.pageSize || 20, 1), 50);
     const index = Math.max(query.page || 1, 1);
-    const param0: Record<string, unknown> = { keyword: query.keyword, size, index };
+    const param0: Record<string, IopParamValue> = { keyword: query.keyword, size, index };
     if (query.language) param0.language = query.language;
     if (query.currency) param0.currency = query.currency;
     type BuyerSearchData = {
