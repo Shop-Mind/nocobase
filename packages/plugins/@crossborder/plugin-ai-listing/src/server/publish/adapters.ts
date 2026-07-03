@@ -46,6 +46,9 @@ export interface PublishPayload {
   ladder?: Array<{ minQuantity: number; price: number }>;
   // 商品主视频源 URL（发布后经视频银行上传并绑定为主图视频）。
   videoUrl?: string;
+  // 公司介绍 + FAQ（结构化详描 companyDesc/companyFaqDesc）。账号级配置（settings.companyProfile），
+  // 发布时由 real-publish 按所选店铺自动注入，人工无需逐商品填写。
+  companyProfile?: { companyDesc?: string; faqs?: Array<{ q?: string; a?: string }> };
 }
 
 export interface PublishResult {

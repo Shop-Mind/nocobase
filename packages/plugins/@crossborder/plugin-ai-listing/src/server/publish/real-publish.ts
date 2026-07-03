@@ -19,7 +19,13 @@ import { OpenApiError } from '../openapi/errors';
 import { getValidAccessToken } from '../openapi/token-store';
 import { findConnector, isRealEnabled } from '../platforms/registry';
 import type { PlatformConnector } from '../platforms/types';
-import { PublishAdapterError, resolvePublishAdapter, SUPPORTED_PLATFORMS, type PublishAdapter } from './adapters';
+import {
+  PublishAdapterError,
+  resolvePublishAdapter,
+  SUPPORTED_PLATFORMS,
+  type PublishAdapter,
+  type PublishPayload,
+} from './adapters';
 
 export interface ResolvedPublishAdapter {
   adapter: PublishAdapter;
@@ -36,6 +42,8 @@ interface AccountRow {
   sellerId?: string;
   accountUid?: string;
   authStatus?: string;
+  // 账号级公司介绍/FAQ（settings.companyProfile），发布时注入 payload → 草稿结构化详描 companyDesc/companyFaqDesc。
+  companyProfile?: PublishPayload['companyProfile'];
 }
 
 async function loadAccount(plugin: Plugin, accountId?: number): Promise<AccountRow | null> {
@@ -43,6 +51,7 @@ async function loadAccount(plugin: Plugin, accountId?: number): Promise<AccountR
   const repo = plugin.app.db.getRepository('aiListingPlatformAccounts');
   const row = await repo.findOne({ filterByTk: accountId });
   if (!row) return null;
+  const settings = (row.get('settings') || {}) as Record<string, unknown>;
   return {
     id: row.get('id'),
     platform: row.get('platform'),
@@ -50,6 +59,7 @@ async function loadAccount(plugin: Plugin, accountId?: number): Promise<AccountR
     sellerId: row.get('sellerId'),
     accountUid: row.get('accountUid'),
     authStatus: row.get('authStatus'),
+    companyProfile: (settings.companyProfile || undefined) as PublishPayload['companyProfile'],
   };
 }
 
@@ -90,13 +100,18 @@ export async function resolvePublishTarget(
 
   const publishFn = connector.publish.bind(connector);
   const draftFn = connector.publishDraft ? connector.publishDraft.bind(connector) : undefined;
+  // 账号级公司介绍随每条 payload 注入（商品级如显式给了 companyProfile 则优先）。
+  const withProfile = (payload: PublishPayload): PublishPayload =>
+    payload.companyProfile || !account.companyProfile
+      ? payload
+      : { ...payload, companyProfile: account.companyProfile };
   const adapter: PublishAdapter = {
     name: `${connector.id}-real`,
     platform,
     async publish(payload) {
       const token = await getValidAccessToken(plugin, account.id);
       try {
-        return await publishFn(token, payload);
+        return await publishFn(token, withProfile(payload));
       } catch (e) {
         if (e instanceof OpenApiError) throw new PublishAdapterError(e.code, e.message, e.retryable);
         throw e;
@@ -106,7 +121,7 @@ export async function resolvePublishTarget(
       ? async (payload) => {
           const token = await getValidAccessToken(plugin, account.id);
           try {
-            return await draftFn(token, payload);
+            return await draftFn(token, withProfile(payload));
           } catch (e) {
             if (e instanceof OpenApiError) throw new PublishAdapterError(e.code, e.message, e.retryable);
             throw e;

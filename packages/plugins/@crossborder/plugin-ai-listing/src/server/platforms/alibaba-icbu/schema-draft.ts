@@ -219,6 +219,61 @@ export interface DraftMedia {
   videoId?: string;
 }
 
+// 源站详情页的「栏目导航文字」清单：抓取的 descriptionOriginal 是整页文本提取，页尾常拖着源站模板的
+// 章节标题/导航链接（Company Profile / FAQ / Back To Home / Contact Us…）。这些词不是商品内容，
+// 直灌进卖点(textDesc)会让买家看到一串无意义导航词（用户反馈的「FAQ 上传到商品卖点」即此）。
+// 做法：从文本**尾部**逐个剥离命中的导航短语（只剥尾部，正文中间出现同名词不受影响）。
+const SOURCE_NAV_PHRASES = [
+  'contact us',
+  'back to home',
+  'faq',
+  'faqs',
+  'packing & delivery',
+  'packing &amp; delivery',
+  'packaging & shipping',
+  'packaging & delivery',
+  'company profile',
+  'company information',
+  'company introduction',
+  'about us',
+  'certifications',
+  'certification',
+  'production process',
+  'applicable scene',
+  'application scenario',
+  'oem&odm service',
+  'oem & odm service',
+  'oem&odm',
+  'why choose us',
+  'our service',
+  'our services',
+  'our factory',
+  'customer photos',
+  'customer reviews',
+  'related products',
+  'recommend products',
+  'product description',
+  'exhibition',
+  'hot products',
+];
+
+export function stripSourceNavTail(text: string): string {
+  let s = text.trim();
+  let changed = true;
+  while (changed && s) {
+    changed = false;
+    const lower = s.toLowerCase();
+    for (const phrase of SOURCE_NAV_PHRASES) {
+      if (lower.endsWith(phrase)) {
+        s = s.slice(0, s.length - phrase.length).replace(/[\s|·•\-–—:,;，；:]+$/g, '');
+        changed = true;
+        break;
+      }
+    }
+  }
+  return s;
+}
+
 // 发布阶梯价规整（payload.currency 币种）：按起订量升序、同档去重（留低价）、价格随数量不升（违规档剔除）、
 // 平台上限 4 档（超出截断）。返回空数组表示未设置阶梯 → 沿用固定价/SKU 规格价逻辑。
 function normalizeLadder(
@@ -461,7 +516,7 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     parts.push(`<field id="customMoreProperty" type="complex"><complex-value>${inner}</complex-value></field>`);
   }
 
-  // 结构化详描（官方 3.4.5/3.4.9）：detailImage=产品图片（图集分组）+ textDesc=卖点。
+  // 结构化详描（官方 3.4.5~3.4.9）：detailImage=产品图片（图集分组）+ textDesc=卖点 + companyDesc/companyFaqDesc=公司介绍/FAQ。
   // 真机验证：用官方 multiComplex 格式（重复 <complex-values>，不设 productDescType/superText）草稿可落库。
   // 曾经的失败根因是 multiComplex 用了 <complex-values><complex-value> 包装（平台静默丢弃整个字段）。
   const detailField = byId.get('detailImage');
@@ -491,19 +546,61 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     }
   }
   if (byId.get('textDesc') && payload.description) {
-    // 卖点为纯文本（官方 ≤2000 字符）：剥掉富文本标签，按 schema rule 清洗截断。
-    const plain = String(payload.description)
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 2000);
+    // 卖点为纯文本（官方 ≤2000 字符）：剥掉富文本标签 → 剥掉源站页尾导航词 → 按 schema rule 清洗截断。
+    const plain = stripSourceNavTail(
+      String(payload.description)
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    ).slice(0, 2000);
     if (plain) {
       const text = sanitizeByRules(plain, parseFieldRules(schemaXml, 'textDesc'), '商品卖点', notes);
       parts.push(`<field id="textDesc" type="input"><value>${escXml(text)}</value></field>`);
     }
   }
-  if (media?.detailImages?.length || payload.description) {
-    notes.push('结构化详描的公司图片/FAQ 需在编辑页补充（选填）；提交前可用编辑页 AI 优化卖点文案');
+
+  // 公司介绍 + FAQ（官方 3.4.6/3.4.7）：来自账号级配置（平台连接页维护，发布时随账号注入 payload）。
+  const profile = payload.companyProfile;
+  const companyDesc = String(profile?.companyDesc || '').trim();
+  if (byId.get('companyDesc') && companyDesc) {
+    const text = sanitizeByRules(
+      companyDesc.slice(0, 2000),
+      parseFieldRules(schemaXml, 'companyDesc'),
+      '公司介绍',
+      notes,
+    );
+    parts.push(`<field id="companyDesc" type="input"><value>${escXml(text)}</value></field>`);
+    notes.push('公司介绍已随草稿写入结构化详描（companyDesc）');
+  }
+  const faqs = (profile?.faqs || [])
+    .map((f) => ({
+      q: String(f?.q || '')
+        .trim()
+        .slice(0, 150),
+      a: String(f?.a || '')
+        .trim()
+        .slice(0, 500),
+    }))
+    .filter((f) => f.q && f.a)
+    .slice(0, 8);
+  if (byId.get('companyFaqDesc') && faqs.length) {
+    const inner = faqs
+      .map(
+        (f) =>
+          `<complex-values>` +
+          `<field id="question" type="input"><value>${escXml(f.q)}</value></field>` +
+          `<field id="answers" type="input"><value>${escXml(f.a)}</value></field>` +
+          `</complex-values>`,
+      )
+      .join('');
+    parts.push(`<field id="companyFaqDesc" type="multiComplex">${inner}</field>`);
+    notes.push(`${faqs.length} 条 FAQ 已随草稿写入结构化详描（companyFaqDesc）`);
+  }
+  if ((media?.detailImages?.length || payload.description) && !companyDesc && !faqs.length) {
+    notes.push('公司介绍/FAQ 未配置：到「平台连接」店铺卡片配置（可 AI 一键生成），之后发布会自动随草稿写入');
+  }
+  if (companyDesc || faqs.length) {
+    notes.push('公司图片（companyImage）暂需在平台编辑页补充（需图片银行图集）');
   }
 
   // 主图视频：视频银行 video_id 直填 imageVideo（视频已在发布前上传视频银行）。

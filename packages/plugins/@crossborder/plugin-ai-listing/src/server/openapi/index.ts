@@ -21,6 +21,7 @@ import type { TokenBundle } from './oauth';
 import { saveToken } from './token-store';
 import { findConnector, getConnector, isRealEnabled } from '../platforms/registry';
 import { SUPPORTED_PLATFORMS } from '../publish/adapters';
+import { callModel, parseJsonObject } from '../assistant/llm';
 
 // 通过注册表拿 Alibaba.com 连接器；接多平台时这里按 state/路径解析出对应平台即可。
 const connector = getConnector('alibaba-icbu');
@@ -92,6 +93,59 @@ async function resolveAccountId(plugin: Plugin, bundle: TokenBundle, boundAccoun
     },
   });
   return created.id as number;
+}
+
+// settings.companyProfile → 规范化 {companyDesc, faqs}（历史数据/半截数据都收敛成安全形状）。
+function readCompanyProfile(settings: unknown): { companyDesc: string; faqs: Array<{ q: string; a: string }> } {
+  const p = ((settings as Record<string, unknown>)?.companyProfile || {}) as {
+    companyDesc?: unknown;
+    faqs?: unknown;
+  };
+  return {
+    companyDesc: typeof p.companyDesc === 'string' ? p.companyDesc : '',
+    faqs: (Array.isArray(p.faqs) ? p.faqs : [])
+      .map((f: any) => ({ q: String(f?.q || ''), a: String(f?.a || '') }))
+      .filter((f) => f.q || f.a),
+  };
+}
+
+// 模型不可用时的确定性示例模板（占位表述，绝不编造事实；用户核对修改后再保存）。
+function mockCompanyProfile(
+  storeName: string,
+  categories: string[],
+): { companyDesc: string; faqs: Array<{ q: string; a: string }> } {
+  const name = storeName || 'Our company';
+  const cats = categories.length ? categories.join(', ') : 'a wide range of products';
+  return {
+    companyDesc:
+      `${name} is a professional supplier specializing in ${cats}. ` +
+      'We provide OEM & ODM services covering custom sizes, materials, colors and logo printing. ' +
+      'Every order goes through strict quality inspection before shipment, and our team supports flexible ' +
+      'packaging and shipping solutions for B2B buyers worldwide. We are committed to reliable lead times, ' +
+      'responsive communication and long-term cooperation with our customers.',
+    faqs: [
+      {
+        q: 'Can I get samples before placing a bulk order?',
+        a: 'Yes. Samples are available; sample cost and shipping depend on the product and your location, and are usually refundable against a bulk order.',
+      },
+      {
+        q: 'Do you support OEM / ODM customization?',
+        a: 'Yes. We support custom sizes, materials, colors and logo printing. Please share your design or requirements for a quotation.',
+      },
+      {
+        q: 'What is your lead time?',
+        a: 'Lead time depends on quantity and customization. Typically samples take a few days and bulk orders take 1-3 weeks after confirmation.',
+      },
+      {
+        q: 'What are your payment terms?',
+        a: 'We commonly accept T/T (30% deposit, balance before shipment) and other methods supported by Alibaba.com Trade Assurance.',
+      },
+      {
+        q: 'How will my order be shipped?',
+        a: 'We support sea, air and express shipping. We will recommend the most cost-effective solution based on your quantity and destination.',
+      },
+    ],
+  };
 }
 
 function sanitizeAccount(row: Record<string, unknown>): Record<string, unknown> {
@@ -342,6 +396,134 @@ export function setupOpenApi(plugin: Plugin): void {
         await next();
       },
 
+      // ── 公司介绍 + FAQ（账号级，存 settings.companyProfile；发布草稿时自动写入结构化详描）──
+      async getCompanyProfile(ctx: Context, next: Next) {
+        const id = Number((ctx.action.params.values || ({} as any)).id);
+        const repo = plugin.app.db.getRepository('aiListingPlatformAccounts');
+        const acc = id ? await repo.findOne({ filterByTk: id }) : null;
+        if (!acc) {
+          ctx.status = 404;
+          ctx.body = { ok: false, message: '账号不存在' };
+          return await next();
+        }
+        ctx.body = { ok: true, profile: readCompanyProfile(acc.get('settings')) };
+        await next();
+      },
+
+      async saveCompanyProfile(ctx: Context, next: Next) {
+        const v = (ctx.action.params.values || {}) as {
+          id?: number;
+          companyDesc?: string;
+          faqs?: Array<{ q?: string; a?: string }>;
+        };
+        const id = Number(v.id);
+        const repo = plugin.app.db.getRepository('aiListingPlatformAccounts');
+        const acc = id ? await repo.findOne({ filterByTk: id }) : null;
+        if (!acc) {
+          ctx.status = 404;
+          ctx.body = { ok: false, message: '账号不存在' };
+          return await next();
+        }
+        // 按官方 rule 收敛：介绍 ≤2000 字符；FAQ ≤8 对，Q ≤150 / A ≤500；空对丢弃。
+        const companyDesc = String(v.companyDesc || '')
+          .trim()
+          .slice(0, 2000);
+        const faqs = (Array.isArray(v.faqs) ? v.faqs : [])
+          .map((f) => ({
+            q: String(f?.q || '')
+              .trim()
+              .slice(0, 150),
+            a: String(f?.a || '')
+              .trim()
+              .slice(0, 500),
+          }))
+          .filter((f) => f.q && f.a)
+          .slice(0, 8);
+        const settings = { ...(acc.get('settings') || {}), companyProfile: { companyDesc, faqs } };
+        await repo.update({ filterByTk: id, values: { settings } });
+        await auditAccount(
+          ctx,
+          'account.company_profile',
+          id,
+          null,
+          { companyDescLength: companyDesc.length, faqCount: faqs.length },
+          '保存公司介绍/FAQ（发布草稿时随结构化详描写入 companyDesc/companyFaqDesc）',
+        );
+        ctx.body = { ok: true, profile: { companyDesc, faqs } };
+        await next();
+      },
+
+      // AI 一键生成公司介绍 + FAQ：只生成返回给前端预览，不落库（用户点「保存」才写 settings）。
+      // 铁律：不虚构成立年份/认证/产能等具体事实——要点由用户在 brief 里给，缺失就用中性表述。
+      async generateCompanyProfile(ctx: Context, next: Next) {
+        const v = (ctx.action.params.values || {}) as { id?: number; brief?: string };
+        const id = Number(v.id);
+        const repo = plugin.app.db.getRepository('aiListingPlatformAccounts');
+        const acc = id ? await repo.findOne({ filterByTk: id }) : null;
+        if (!acc) {
+          ctx.status = 404;
+          ctx.body = { ok: false, message: '账号不存在' };
+          return await next();
+        }
+        const storeName = String(acc.get('storeName') || '').trim();
+        const brief = String(v.brief || '')
+          .trim()
+          .slice(0, 1000);
+        // 主营品类参考：取最近商品的源类目（单商家系统，商品即本店经营方向）。
+        const products = await plugin.app.db
+          .getRepository('aiListingProducts')
+          .find({ sort: ['-id'], limit: 30, fields: ['categoryOriginal'] });
+        const categories = [
+          ...new Set(products.map((p: any) => String(p.get('categoryOriginal') || '').trim()).filter(Boolean)),
+        ].slice(0, 5);
+        const userPrompt = [
+          `为 Alibaba.com 国际站卖家「${storeName || '本店'}」生成结构化商详的公司介绍与 FAQ。`,
+          `主营品类参考：${categories.join('、') || '（暂无，按通用外贸供应商写）'}`,
+          `卖家提供的要点：${brief || '（未提供。写通用介绍，突出定制能力/品控/交付，不要编造细节）'}`,
+          '要求：',
+          '1. companyDesc：英文公司介绍，120~200 词，面向 B2B 买家，涵盖主营产品、定制能力（OEM/ODM）、品控与交付；',
+          '   严禁编造具体成立年份、认证证书、产能/员工数字——卖家要点里没有的事实一律用中性表述。',
+          '2. faqs：4~6 条英文 FAQ（起订量/样品/交期/付款/物流/定制），问题 ≤150 字符、回答 ≤500 字符；',
+          '   涉及具体数字（如样品费、交期天数）用区间或「depends on quantity」类表述，不要编造确定数字。',
+          '只返回 JSON：{"companyDesc":"...","faqs":[{"q":"...","a":"..."}]}，不要解释。',
+        ].join('\n');
+        // 75s 超时：默认模型是思考型（DeepSeek v4），生成整段介绍+FAQ 常超过 callModel 默认 20s。
+        const llm = await callModel(
+          plugin,
+          [
+            { role: 'system', content: '你是跨境电商 B2B 文案助手，输出务实、专业、无夸大词的英文内容。' },
+            { role: 'user', content: userPrompt },
+          ],
+          75000,
+        );
+        const parsed = parseJsonObject(llm);
+        const mock = !parsed;
+        const raw = parsed || mockCompanyProfile(storeName, categories);
+        const profile = {
+          companyDesc: String((raw as any).companyDesc || '')
+            .trim()
+            .slice(0, 2000),
+          faqs: (Array.isArray((raw as any).faqs) ? ((raw as any).faqs as Array<{ q?: string; a?: string }>) : [])
+            .map((f) => ({
+              q: String(f?.q || '')
+                .trim()
+                .slice(0, 150),
+              a: String(f?.a || '')
+                .trim()
+                .slice(0, 500),
+            }))
+            .filter((f) => f.q && f.a)
+            .slice(0, 8),
+        };
+        ctx.body = {
+          ok: true,
+          profile,
+          mock,
+          ...(mock ? { message: '当前未配置可用模型或模型调用失败，返回示例模板；请核对修改后再保存。' } : {}),
+        };
+        await next();
+      },
+
       async disconnect(ctx: Context, next: Next) {
         const { id } = ctx.action.params.values || ctx.action.params || {};
         const repo = plugin.app.db.getRepository('aiListingPlatformAccounts');
@@ -367,7 +549,17 @@ export function setupOpenApi(plugin: Plugin): void {
   });
   app.acl.allow(
     'aiListingOpenApi',
-    ['status', 'disconnect', 'createAccount', 'updateAccount', 'deleteAccount', 'setDefaultAccount'],
+    [
+      'status',
+      'disconnect',
+      'createAccount',
+      'updateAccount',
+      'deleteAccount',
+      'setDefaultAccount',
+      'getCompanyProfile',
+      'saveCompanyProfile',
+      'generateCompanyProfile',
+    ],
     'loggedIn',
   );
 }

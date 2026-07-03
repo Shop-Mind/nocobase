@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { PublishPayload } from '../../../publish/adapters';
-import { buildDraftXml, fieldsBetween, parseSchemaFields } from '../schema-draft';
+import { buildDraftXml, fieldsBetween, parseSchemaFields, stripSourceNavTail } from '../schema-draft';
 
 // 迷你版类目规则 XML（结构与真实 schema/get 返回一致：必填材质单选、必填自定义颜色销售属性、售卖单位）。
 const SCHEMA_XML =
@@ -44,6 +44,8 @@ const SCHEMA_XML =
   '<field id="images" name="images" type="multiComplex"></field>' +
   '</field>' +
   '<field id="textDesc" name="Product Highlights" type="input"></field>' +
+  '<field id="companyDesc" name="Company Introduction" type="input"></field>' +
+  '<field id="companyFaqDesc" name="FAQs" type="multiComplex"></field>' +
   '<field id="imageVideo" name="Product Video" type="singleCheck"></field>' +
   '</itemSchema>';
 
@@ -94,6 +96,18 @@ describe('parseSchemaFields / fieldsBetween', () => {
     const sale = fieldsBetween(fields, 'saleProp', 'sku');
     expect(sale.map((f) => f.id)).toEqual(['p-200']);
     expect(sale[0].customInput).toBe(true);
+  });
+});
+
+describe('stripSourceNavTail', () => {
+  it('从尾部逐个剥离导航短语（大小写不敏感、分隔符清理），正文不受影响', () => {
+    expect(stripSourceNavTail('Great bag. Company Profile Packing & Delivery FAQ Back To Home Contact Us')).toBe(
+      'Great bag.',
+    );
+    expect(stripSourceNavTail('Contact us for FAQ details about this bag')).toBe(
+      'Contact us for FAQ details about this bag',
+    );
+    expect(stripSourceNavTail('')).toBe('');
   });
 });
 
@@ -153,6 +167,46 @@ describe('buildDraftXml', () => {
     // 主图视频 video_id 直填 imageVideo
     expect(xml).toContain('<field id="imageVideo" type="singleCheck"><value>6000123456789</value></field>');
     expect(notes.join('；')).toContain('详情图已随草稿写入结构化详描');
+  });
+
+  it('卖点(textDesc)剥离源站页尾导航词：FAQ/Back To Home/Contact Us 等不再混入；正文中间同名词保留', () => {
+    const desc =
+      'Foldable Non Woven Bag, 100% recyclable fabric. See our FAQ page for details. ' +
+      'OEM&ODM SERVICE Applicable Scene Production Process Certifications Company Profile Packing & Delivery FAQ Back To Home Contact Us';
+    const { xml } = buildDraftXml({ ...PAYLOAD, description: desc }, SCHEMA_XML, MEDIA);
+    const m = xml.match(/<field id="textDesc" type="input"><value>([^<]*)<\/value><\/field>/);
+    expect(m).toBeTruthy();
+    // 尾部导航链整串剥掉，正文（含中间的 "FAQ page"）保留
+    expect(m![1]).toBe('Foldable Non Woven Bag, 100% recyclable fabric. See our FAQ page for details.');
+  });
+
+  it('公司介绍/FAQ：companyProfile 随草稿写入 companyDesc + companyFaqDesc（官方 multiComplex），超限收敛', () => {
+    const faqs = Array.from({ length: 9 }, (_, i) => ({ q: `Q${i + 1} ${'x'.repeat(200)}`, a: `A${i + 1}` }));
+    const { xml, notes } = buildDraftXml(
+      { ...PAYLOAD, companyProfile: { companyDesc: ' Our company <b>intro</b> ', faqs } },
+      SCHEMA_XML,
+      MEDIA,
+    );
+    expect(xml).toContain(
+      '<field id="companyDesc" type="input"><value>Our company &lt;b&gt;intro&lt;/b&gt;</value></field>',
+    );
+    // FAQ 最多 8 对；question 截 150 字符；官方 multiComplex（重复 complex-values，无 complex-value 包装）
+    expect(xml).toContain(
+      '<field id="companyFaqDesc" type="multiComplex"><complex-values><field id="question" type="input">',
+    );
+    expect((xml.match(/<field id="question" type="input">/g) || []).length).toBe(8);
+    const q1 = xml.match(/<field id="question" type="input"><value>([^<]*)<\/value>/)![1];
+    expect(q1.length).toBeLessThanOrEqual(150);
+    expect(xml).not.toContain('Q9');
+    expect(notes.join('；')).toContain('公司介绍已随草稿写入');
+    expect(notes.join('；')).toContain('FAQ 已随草稿写入');
+  });
+
+  it('未配置 companyProfile：不输出公司字段，note 提示到平台连接页配置', () => {
+    const { xml, notes } = buildDraftXml(PAYLOAD, SCHEMA_XML, MEDIA);
+    expect(xml).not.toContain('companyDesc');
+    expect(xml).not.toContain('companyFaqDesc');
+    expect(notes.join('；')).toContain('公司介绍/FAQ 未配置');
   });
 
   it('关键词只有一组 productKeywords_0，多词换行分隔并按 384 字节截断', () => {
