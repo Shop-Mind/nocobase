@@ -263,6 +263,69 @@ export function setupCaptureExtended(plugin: Plugin): void {
     await next();
   });
 
+  // 粘贴链接预览：抓取前把每条链接的标题/主图/价格拉回来，供前端勾选后再抓（真实抓取管线不变）。
+  // 只读不落库；4 路并发控制总时长；单条失败不影响其余（error 随条目回传，前端标红且不可选）。
+  captureResource?.addAction('previewUrls', async (ctx: Context, next: Next) => {
+    const traceId = ctx.reqId || `srv-${Date.now()}`;
+    const values = (ctx.action?.params?.values || {}) as { urls?: string[]; options?: CaptureOptions };
+    const all = [...new Set((values.urls || []).filter(isValidHttpUrl))];
+    const urls = all.slice(0, 100);
+    if (!urls.length) {
+      ctx.status = 400;
+      ctx.body = fail('NO_URLS', '请先粘贴商品链接', false, traceId);
+      return await next();
+    }
+    type PreviewItem = {
+      url: string;
+      productId?: string;
+      title?: string;
+      image?: string;
+      price?: number;
+      currency?: string;
+      moq?: number;
+      error?: string;
+    };
+    const items: PreviewItem[] = new Array(urls.length);
+    const options: CaptureOptions = {
+      fields: ['basic', 'images'],
+      language: values.options?.language,
+      currency: values.options?.currency,
+    };
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < urls.length) {
+        const i = cursor++;
+        const url = urls[i];
+        try {
+          const adapter = await resolveCaptureAdapter(plugin, url);
+          const product = await adapter.fetchProductByUrl(url, options);
+          const image = (product.media || []).find((m) => m.assetType === 'image');
+          items[i] = {
+            url,
+            productId: product.sourceProductId,
+            title: product.titleOriginal,
+            image: image?.sourceUrl,
+            price: product.priceOriginal,
+            currency: product.currencyOriginal,
+            moq: product.moq,
+          };
+        } catch (e) {
+          items[i] = { url, error: (e as Error)?.message || '拉取失败' };
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+    const okCount = items.filter((it) => !it.error).length;
+    ctx.body = {
+      ok: true,
+      data: { items, total: items.length, okCount },
+      warnings: all.length > urls.length ? [`链接过多，本次仅预览前 ${urls.length} 条（共 ${all.length} 条）`] : [],
+      errors: [],
+      traceId,
+    };
+    await next();
+  });
+
   // 关键词搜索：买家侧 /eco/buyer/product/search 全网真实搜索（不限店铺——搬运他人商品的主通道）。
   // 真接入开关开且已授权 → 真实搜索（排序/价格区间接口不支持，服务端本地后处理）；否则 mock 并标注来源。
   captureResource?.addAction('searchKeyword', async (ctx: Context, next: Next) => {
@@ -598,6 +661,7 @@ export function setupCaptureExtended(plugin: Plugin): void {
 
   app.acl.allow('aiListingCapture', 'analyzeStore', 'loggedIn');
   app.acl.allow('aiListingCapture', 'startStoreCapture', 'loggedIn');
+  app.acl.allow('aiListingCapture', 'previewUrls', 'loggedIn');
   app.acl.allow('aiListingCapture', 'searchKeyword', 'loggedIn');
   app.acl.allow('aiListingCapture', 'searchManufacturers', 'loggedIn');
   app.acl.allow('aiListingCapture', 'startKeywordCapture', 'loggedIn');
