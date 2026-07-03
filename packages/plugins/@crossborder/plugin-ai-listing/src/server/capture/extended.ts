@@ -624,7 +624,11 @@ export function setupCaptureExtended(plugin: Plugin): void {
       // 开始批量导入：显式逐行建任务明细，单行失败隔离，汇总成功/失败统计。
       start: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
-        const v = (ctx.action?.params?.values || {}) as { urls?: string[]; options?: CaptureOptions };
+        const v = (ctx.action?.params?.values || {}) as {
+          urls?: string[];
+          filename?: string;
+          options?: CaptureOptions;
+        };
         const urls = (v.urls || []).filter(isValidHttpUrl);
         if (!urls.length) {
           ctx.status = 400;
@@ -636,7 +640,10 @@ export function setupCaptureExtended(plugin: Plugin): void {
           values: {
             captureType: 'batch',
             sourcePlatform: 'Alibaba.com',
-            input: { count: urls.length },
+            input: {
+              count: urls.length,
+              filename: typeof v.filename === 'string' ? v.filename.slice(0, 200) : undefined,
+            },
             status: 'running',
             traceId,
             totalCount: urls.length,
