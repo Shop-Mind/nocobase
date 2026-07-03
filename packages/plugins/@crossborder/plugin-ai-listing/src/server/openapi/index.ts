@@ -473,8 +473,12 @@ export function setupOpenApi(plugin: Plugin): void {
         const products = await plugin.app.db
           .getRepository('aiListingProducts')
           .find({ sort: ['-id'], limit: 30, fields: ['categoryOriginal'] });
-        const categories = [
-          ...new Set(products.map((p: any) => String(p.get('categoryOriginal') || '').trim()).filter(Boolean)),
+        const categories: string[] = [
+          ...new Set<string>(
+            (products as Array<{ get: (k: string) => unknown }>)
+              .map((p) => String(p.get('categoryOriginal') || '').trim())
+              .filter((s) => s.length > 0),
+          ),
         ].slice(0, 5);
         const userPrompt = [
           `为 Alibaba.com 国际站卖家「${storeName || '本店'}」生成结构化商详的公司介绍与 FAQ。`,
