@@ -18,6 +18,9 @@ packages/*/*/node_modules
 *.sqlite
 /uploads
 
-# never bake secrets into images
+# never bake secrets into images — but keep the *.example templates:
+# cli-v1 的 p-test.js 在模块加载时读 .env.e2e.example，postinstall 也会用 example 生成缺省配置
 .env
 .env.*
+!.env.example
+!.env.*.example
