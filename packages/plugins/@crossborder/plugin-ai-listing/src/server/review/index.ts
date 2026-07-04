@@ -31,6 +31,24 @@ const LOCKED_STATUS = ['reviewed', 'publishing', 'published'];
 // saveFinal 允许直接写入的状态（publish_failed 编辑后自动回 reviewing）。
 const EDITABLE_STATUS = ['processed', 'reviewing', 'publish_failed'];
 
+// decimal 列从数据库读回是字符串（Sequelize DECIMAL），前端提交的是数字：直接 JSON.stringify 比较会把
+// 「"0.3" vs 0.3」误判成变更，产出一堆 0.3 → 0.3 的无效审计与无效更新。比较前按字段语义归一化。
+const NUMERIC_FINAL_FIELDS = new Set(['priceTarget', 'listPriceTarget', 'stock']);
+function canonFieldValue(field: string, v: unknown): unknown {
+  if (v == null || v === '') return null;
+  if (NUMERIC_FINAL_FIELDS.has(field)) return Number(v);
+  if (field === 'ladderTarget' && Array.isArray(v)) {
+    return v.map((t) => {
+      const tier = t as { minQuantity?: unknown; price?: unknown };
+      return { minQuantity: Number(tier.minQuantity), price: Number(tier.price) };
+    });
+  }
+  return v;
+}
+function sameFieldValue(field: string, a: unknown, b: unknown): boolean {
+  return JSON.stringify(canonFieldValue(field, a)) === JSON.stringify(canonFieldValue(field, b));
+}
+
 interface ReviewRepos {
   Products: any;
   Skus: any;
@@ -355,7 +373,7 @@ export function setupReview(plugin: Plugin): void {
           if (!(field in incoming)) continue;
           const oldValue = p.get(field);
           const newValue = incoming[field];
-          if (JSON.stringify(oldValue) === JSON.stringify(newValue)) continue;
+          if (sameFieldValue(field, oldValue, newValue)) continue;
           patch[field] = newValue;
           audits.push({
             actorType: 'user',
@@ -386,7 +404,8 @@ export function setupReview(plugin: Plugin): void {
           for (const f of ['priceTarget', 'stock'] as const) {
             if (su[f] === undefined) continue;
             const ov = srow.get(f);
-            if (JSON.stringify(ov) === JSON.stringify(su[f])) continue;
+            // SKU 价格/库存同为 decimal 列：读回字符串 vs 提交数字，需归一化比较（见 canonFieldValue 注释）。
+            if (sameFieldValue(f, ov, su[f])) continue;
             sPatch[f] = su[f];
             audits.push({
               actorType: 'user',
