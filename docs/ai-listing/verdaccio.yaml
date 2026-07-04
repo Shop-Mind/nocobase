@@ -1,0 +1,39 @@
+# 构建期临时 npm 私服配置（供 docs/ai-listing/build-image.sh 使用，随构建起停，不长期运行）。
+# 作用：标准 Dockerfile 的 `yarn create nocobase-app` 需要从 npm registry 安装本 fork 的全部包——
+# 这些包（含 @crossborder 插件与未随官方发版的上游改动）不存在于任何公网仓库，故构建前把
+# monorepo 构建产物发布到本私服，构建完即弃。第三方依赖经 uplink 代理 npmmirror。
+storage: /verdaccio/storage/data
+
+# @nocobase/app 等包体积大，放宽发布体积上限。
+max_body_size: 800mb
+
+web:
+  enable: false
+
+auth:
+  htpasswd:
+    file: /verdaccio/storage/htpasswd
+    # 允许 npm login 自助注册（Dockerfile 内置 test/test 登录流程）。仅本机端口、构建期存活，无安全暴露。
+    max_users: 100
+
+uplinks:
+  npmmirror:
+    url: https://registry.npmmirror.com/
+    maxage: 30m
+
+packages:
+  # fork 自有作用域：只认本地发布，绝不代理上游（防止拉到官方同名包）。
+  '@crossborder/*':
+    access: $all
+    publish: $all
+  '@nocobase/*':
+    access: $all
+    publish: $all
+  'create-nocobase-app':
+    access: $all
+    publish: $all
+  '**':
+    access: $all
+    proxy: npmmirror
+
+log: { type: stdout, format: pretty, level: warn }

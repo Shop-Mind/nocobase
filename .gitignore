@@ -83,3 +83,6 @@ paseo.json
 # local QA scratch artifacts
 .playwright-mcp/
 /phase*.png
+
+# 标准 Dockerfile 构建的 docs 归档占位（build-image.sh 自动生成）
+/dist.tar.gz
