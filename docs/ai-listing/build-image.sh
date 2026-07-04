@@ -103,17 +103,23 @@ log "回退临时版本提交"
 git reset --hard HEAD~1 >/dev/null
 VERSION_COMMITTED=0
 
-# ── 5. docker build（标准 Dockerfile；docs 归档不需要，给空占位）──
+# ── 5. docker build（标准 Dockerfile 是两段式：先导出 app-artifact 的 nocobase.tar.gz 到上下文，
+#      最终 runtime 阶段 `ADD nocobase.tar.gz` 从上下文取；docs 归档不需要，给空占位）──
 [ -f dist.tar.gz ] || tar -czf dist.tar.gz --files-from /dev/null
-log "docker build -f Dockerfile → ${IMAGE}"
-docker build -f Dockerfile \
-  --add-host host.docker.internal:host-gateway \
-  --build-arg VERDACCIO_URL="$REGISTRY_URL_IN_DOCKER" \
-  --build-arg APPEND_PRESET_LOCAL_PLUGINS=@crossborder/plugin-ai-listing \
-  --build-arg INCLUDE_DOCS_ARCHIVE=0 \
-  --build-arg USE_ALIYUN_MIRROR=1 \
-  --build-arg COMMIT_HASH="$(git rev-parse HEAD)" \
-  -t "$IMAGE" .
+BUILD_ARGS=(
+  --add-host host.docker.internal:host-gateway
+  --build-arg VERDACCIO_URL="$REGISTRY_URL_IN_DOCKER"
+  --build-arg APPEND_PRESET_LOCAL_PLUGINS=@crossborder/plugin-ai-listing
+  --build-arg INCLUDE_DOCS_ARCHIVE=0
+  --build-arg USE_ALIYUN_MIRROR=1
+  --build-arg COMMIT_HASH="$(git rev-parse HEAD)"
+)
+log "第 1 段：从私服装应用并导出 nocobase.tar.gz（约 5~15 分钟）"
+docker build -f Dockerfile --target app-artifact --output type=local,dest=. "${BUILD_ARGS[@]}" .
+[ -f nocobase.tar.gz ] || { echo '❌ 未导出 nocobase.tar.gz' >&2; exit 1; }
+
+log "第 2 段：组装运行镜像 → ${IMAGE}"
+docker build -f Dockerfile "${BUILD_ARGS[@]}" -t "$IMAGE" .
 
 log "镜像构建完成："
 docker images "$IMAGE" --format '  {{.Repository}}:{{.Tag}}  {{.Size}}'

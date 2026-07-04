@@ -86,3 +86,5 @@ paseo.json
 
 # 标准 Dockerfile 构建的 docs 归档占位（build-image.sh 自动生成）
 /dist.tar.gz
+# 标准 Dockerfile 两段式构建的中间产物（build-image.sh 自动生成）
+/nocobase.tar.gz
