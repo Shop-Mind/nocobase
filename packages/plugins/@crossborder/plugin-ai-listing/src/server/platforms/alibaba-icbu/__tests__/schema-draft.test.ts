@@ -111,6 +111,22 @@ describe('stripSourceNavTail', () => {
   });
 });
 
+describe('卖点剥离内嵌 FAQ 问答段', () => {
+  it('源站详情尾部的 FAQ Q/A 列表整段剥离；正文提到 FAQ 一词不受影响', () => {
+    const desc =
+      'Product Highlights 非接触式测量：快速、准确。环保包装：棉质抽绳袋。可定制订单：请联系我们。 ' +
+      'FAQs Q: 我们如何确保质量 A: 我们严格控制每一个生产过程。 Q: 我们可以提供什么服务? A: 接受 FOB、CIF、EXW。';
+    const { xml } = buildDraftXml({ ...PAYLOAD, description: desc }, SCHEMA_XML, MEDIA_FOR_FAQ);
+    const m = xml.match(/<field id="textDesc" type="input"><value>([^<]*)<\/value><\/field>/);
+    expect(m![1]).toBe('Product Highlights 非接触式测量：快速、准确。环保包装：棉质抽绳袋。可定制订单：请联系我们。');
+    expect(m![1]).not.toContain('FAQ');
+  });
+});
+const MEDIA_FOR_FAQ = {
+  mainImages: [{ url: 'https://photobank.alicdn.com/main.jpg', fileId: '441' }],
+  detailImages: [],
+};
+
 describe('buildDraftXml', () => {
   const MEDIA = {
     mainImages: [

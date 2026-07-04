@@ -98,6 +98,17 @@ describe('processing engine — 专业化规则', () => {
     });
   });
 
+  describe('描述建议剥离源站内嵌 FAQ 段', () => {
+    it('详情尾部的 FAQ Q/A 列表不进 descriptionProcessed', () => {
+      const desc =
+        '产品亮点：非接触式测量，快速准确。环保包装，配有可重复使用的棉质抽绳袋，方便存放与携带，适合长期使用。\n' +
+        'FAQs\nQ: 我们如何确保质量\nA: 我们严格控制每一个生产过程。\nQ: 我们可以提供什么服务?\nA: 接受 FOB、CIF、EXW。';
+      const r = applyRule({ ...baseProduct, descriptionOriginal: desc }, priceCfg, [], 't');
+      expect(String(r.patch.descriptionProcessed)).not.toContain('FAQ');
+      expect(String(r.patch.descriptionProcessed)).toContain('产品亮点');
+    });
+  });
+
   describe('风险词扫描入 riskFlags', () => {
     it('标题/描述命中的违禁词写入 riskFlags 而不是自动删除', () => {
       const r = applyRule(

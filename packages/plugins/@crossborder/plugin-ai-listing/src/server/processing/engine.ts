@@ -14,6 +14,7 @@
 // 价格目标字段（priceTarget / listPriceTarget）属于规则确定性计算，actorType=system；最终字段（*Final）本阶段完全不写。
 
 import { scanBannedWords } from '../assistant/knowledge';
+import { stripEmbeddedFaqSection } from '../shared/text-clean';
 
 export interface RuleConfig {
   targetPlatform?: string;
@@ -217,7 +218,8 @@ export function applyRule(
     reason: config.translate?.enabled ? `改写并本地化为 ${config.translate?.targetLang || 'en'}` : '清洗并改写标题',
   });
 
-  const descRaw = (product.descriptionOriginal || '').trim();
+  // 源站整页文本常在尾部嵌着卖家 FAQ 问答段——属公司层信息（companyFaqDesc 专字段承载），先剥掉再截断。
+  const descRaw = stripEmbeddedFaqSection((product.descriptionOriginal || '').trim());
   const descProcessed = descRaw ? descRaw.slice(0, 2000) : `${titleProcessed}. High quality, fast shipping.`;
   patch.descriptionProcessed = descProcessed;
   changes.push({

@@ -28,6 +28,7 @@
 
 import type { PublishPayload } from '../../publish/adapters';
 import { stripThumbSuffix } from './publish-mappers';
+import { stripEmbeddedFaqSection } from '../../shared/text-clean';
 
 // 常见中文材质/风格值 → 平台选项英文关键词（用于把抓取的中文属性值匹配到类目选项）。
 const CN_VALUE_HINTS: Record<string, string[]> = {
@@ -546,12 +547,15 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
     }
   }
   if (byId.get('textDesc') && payload.description) {
-    // 卖点为纯文本（官方 ≤2000 字符）：剥掉富文本标签 → 剥掉源站页尾导航词 → 按 schema rule 清洗截断。
+    // 卖点为纯文本（官方 ≤2000 字符）：剥富文本标签 → 剥内嵌 FAQ 问答段（先剥，FAQ 连着尾巴一起去）
+    // → 剥源站页尾导航词 → 按 schema rule 清洗截断。存量商品的旧描述也在此兜底清理。
     const plain = stripSourceNavTail(
-      String(payload.description)
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim(),
+      stripEmbeddedFaqSection(
+        String(payload.description)
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
+      ),
     ).slice(0, 2000);
     if (plain) {
       const text = sanitizeByRules(plain, parseFieldRules(schemaXml, 'textDesc'), '商品卖点', notes);
