@@ -71,9 +71,17 @@ fi
 
 # ── 2. 注册/登录拿发布 token（写入仓库外的临时 npmrc，发布时经 NPM_CONFIG_USERCONFIG 使用）──
 log "登录私服（test/test）"
+parse_token() { node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{console.log(JSON.parse(s).token||"")}catch(e){console.log("")}})'; }
+# 首次运行是「注册新用户」；持久卷保留了 htpasswd 时用户已存在，需带 Basic Auth 走「登录」路径。
 NPM_TOKEN=$(curl -s -X PUT "${REGISTRY_URL}/-/user/org.couchdb.user:test" \
   -H 'content-type: application/json' \
-  -d '{"name":"test","password":"test"}' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).token||""))')
+  -d '{"name":"test","password":"test"}' | parse_token)
+if [ -z "$NPM_TOKEN" ]; then
+  NPM_TOKEN=$(curl -s -X PUT "${REGISTRY_URL}/-/user/org.couchdb.user:test" \
+    -H 'content-type: application/json' \
+    -H "Authorization: Basic $(printf 'test:test' | base64)" \
+    -d '{"name":"test","password":"test"}' | parse_token)
+fi
 [ -n "$NPM_TOKEN" ] || { echo '❌ 私服登录失败' >&2; exit 1; }
 REG_HOSTPATH=$(echo "$REGISTRY_URL" | sed -E 's|^https?:||')
 printf '%s/:_authToken=%s\n' "$REG_HOSTPATH" "$NPM_TOKEN" > "$NPMRC_FILE"
