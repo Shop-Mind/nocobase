@@ -119,7 +119,9 @@ VERSION_COMMITTED=0
 BUILD_ARGS=(
   --add-host host.docker.internal:host-gateway
   --build-arg VERDACCIO_URL="$REGISTRY_URL_IN_DOCKER"
+  # APPEND_PRESET_LOCAL_PLUGINS 只把插件写进 .env（启用它）；包本体靠 BEFORE_PACK_NOCOBASE 安装（官方 pro 镜像同款做法）。
   --build-arg APPEND_PRESET_LOCAL_PLUGINS=@crossborder/plugin-ai-listing
+  --build-arg BEFORE_PACK_NOCOBASE="yarn add @crossborder/plugin-ai-listing -W --production"
   --build-arg INCLUDE_DOCS_ARCHIVE=0
   --build-arg USE_ALIYUN_MIRROR=1
   --build-arg COMMIT_HASH="$(git rev-parse HEAD)"
