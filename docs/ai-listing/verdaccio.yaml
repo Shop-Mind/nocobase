@@ -19,7 +19,15 @@ auth:
 uplinks:
   npmmirror:
     url: https://registry.npmmirror.com/
-    maxage: 30m
+    maxage: 60m
+    # 关键：默认 max_fails=2 + fail_timeout=5m —— 上游偶发抖动两次整个 uplink 就被熔断 5 分钟，
+    # 期间代理请求全部 404，yarn 误判「包不存在」（安装几千个包时必踩）。放宽到几乎不熔断。
+    timeout: 60s
+    max_fails: 200
+    fail_timeout: 1s
+    agent_options:
+      keepAlive: true
+      maxSockets: 48
 
 packages:
   # fork 自有作用域：只认本地发布，绝不代理上游（防止拉到官方同名包）。

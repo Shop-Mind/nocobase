@@ -54,8 +54,10 @@ trap cleanup EXIT
 if [ "$REGISTRY_URL" = "http://localhost:${VERDACCIO_PORT}" ]; then
   log "启动构建期 verdaccio（localhost:${VERDACCIO_PORT}，构建完自动销毁）"
   docker rm -f "$VERDACCIO_NAME" >/dev/null 2>&1 || true
+  # storage 挂 named volume：跨轮次保留第三方包代理缓存（几千个包 ~1GB+），失败重跑不用从零拉。
   docker run -d --name "$VERDACCIO_NAME" -p "${VERDACCIO_PORT}:4873" \
     -v "$PWD/docs/ai-listing/verdaccio.yaml:/verdaccio/conf/config.yaml:ro" \
+    -v ai-listing-verdaccio-storage:/verdaccio/storage \
     verdaccio/verdaccio:6 >/dev/null
   for i in $(seq 1 30); do
     curl -sf "http://localhost:${VERDACCIO_PORT}/-/ping" >/dev/null && break
