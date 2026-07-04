@@ -13,7 +13,8 @@
 #   REGISTRY_URL=...        # 换用远程 npm 私服（如云效 Packages，用于 ACR 云构建场景）；默认本地 verdaccio
 #
 # 每个发布版本号形如 <当前版本>-sm.<时间戳>：先临时 commit（lerna publish 强制要求工作区全干净），
-# 发布完成后 `git reset --hard HEAD~1` 精确回退，不进最终历史，与 npmjs 官方版本号永不冲突。
+# 发布完成后回退该临时提交（mixed reset + 只精确还原版本文件，构建期间产生的其它工作区改动不受影响），
+# 不进最终历史，与 npmjs 官方版本号永不冲突。
 # ⚠️ 因此脚本要求启动时 git 工作区完全干净（含未跟踪文件），否则拒绝运行。
 
 set -euo pipefail
@@ -38,12 +39,21 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
+# 回退临时版本提交：mixed reset（改动回到工作区）后只精确还原版本文件——
+# 绝不用 reset --hard，构建期间用户在别的文件上的改动不能被连带清掉。
+revert_version_commit() {
+  git reset -q HEAD~1
+  git checkout -q -- lerna.json 2>/dev/null || true
+  git diff --name-only -- ':(glob)**/package.json' | xargs -r git checkout -- || true
+}
+
 cleanup() {
   log "清理：回退临时版本提交 / 停私服 / 删除临时 npmrc"
   if [ "$VERSION_COMMITTED" = "1" ]; then
-    git reset --hard HEAD~1 >/dev/null
+    revert_version_commit
   else
-    git diff --name-only -- lerna.json ':(glob)**/package.json' | xargs -r git checkout -- || true
+    git checkout -q -- lerna.json 2>/dev/null || true
+    git diff --name-only -- ':(glob)**/package.json' | xargs -r git checkout -- || true
   fi
   rm -f "$NPMRC_FILE"
   if [ -z "${REGISTRY_URL_EXTERNAL:-}" ]; then docker rm -f "$VERDACCIO_NAME" >/dev/null 2>&1 || true; fi
@@ -95,7 +105,7 @@ else
 fi
 
 # ── 4. 临时版本号 + 发布全部包到私服 ──
-# lerna publish 强制要求工作区全干净，所以版本号先临时 commit，发布后 reset --hard 精确回退。
+# lerna publish 强制要求工作区全干净，所以版本号先临时 commit，发布后精确回退（不动其它文件）。
 BASE_VERSION=$(node -p 'require("./lerna.json").version')
 SM_VERSION="${BASE_VERSION}-sm.$(date +%Y%m%d%H%M)"
 log "临时版本 ${SM_VERSION}（临时 commit，发布后自动回退，不进历史）"
@@ -110,7 +120,7 @@ NPM_CONFIG_USERCONFIG="$NPMRC_FILE" \
   --registry "$REGISTRY_URL" --loglevel warn
 
 log "回退临时版本提交"
-git reset --hard HEAD~1 >/dev/null
+revert_version_commit
 VERSION_COMMITTED=0
 
 # ── 5. docker build（标准 Dockerfile 是两段式：先导出 app-artifact 的 nocobase.tar.gz 到上下文，
