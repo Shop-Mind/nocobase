@@ -295,6 +295,20 @@ describe('shapes 3 & 4: DashScope native sync / async task', () => {
     expect(body.input.img_url).toBe('https://x/ref.png');
   });
 
+  it('abort signal cancels polling loops', async () => {
+    mockFetch((url) => {
+      if (url.includes('/tasks/')) return jsonResp({ output: { task_status: 'RUNNING' } });
+      return jsonResp({ output: { task_id: 't-abort' } });
+    });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      provider('wan2.2-t2i-flash').invoker()(
+        taskInput({ task: 'image_gen', model: 'wan2.2-t2i-flash', signal: controller.signal }),
+      ),
+    ).rejects.toThrow(/取消/);
+  });
+
   it('polling failure surfaces the task error message', async () => {
     mockFetch((url) => {
       if (url.includes('/tasks/')) {

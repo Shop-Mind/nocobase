@@ -111,6 +111,8 @@ export class MediaGenChatModel extends BaseChatModel {
       prompt: text || '生成一张图片',
       images,
       audios: [],
+      // 用户点停止(会话 abort)时同步中断生成提交/轮询,避免服务端空转
+      signal: _options?.signal,
     });
     let textOut: string;
     if (result.urls.length) {

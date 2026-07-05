@@ -19,12 +19,22 @@ type APIListResponse = {
 
 type ResourceAction = (params?: Record<string, unknown>) => Promise<unknown>;
 
+// 服务端能力注册中心的判定结果(随 ai:listAllEnabledModels 下发),用于能力驱动 UI
+export interface ModelCapabilityInfo {
+  task: 'chat' | 'image_gen' | 'video_gen' | 'tts' | 'asr';
+  input: string[];
+  output: string[];
+  supportsTools?: boolean;
+  supportsStreaming?: boolean;
+  streamOnly?: boolean;
+}
+
 export interface LLMServiceItem {
   llmService: string;
   llmServiceTitle: string;
   provider?: string;
   providerTitle?: string;
-  enabledModels: { label: string; value: string }[];
+  enabledModels: { label: string; value: string; capability?: ModelCapabilityInfo }[];
   supportWebSearch?: boolean;
   isToolConflict?: boolean;
 }

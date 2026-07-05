@@ -25,6 +25,7 @@ import {
   MediaTaskOutput,
   parseAudioDataURI,
   pcmToWav,
+  taskSignal,
 } from './common/media-task';
 import { persistMediaTaskOutput } from './common/media-persist';
 import { AttachmentModel } from '@nocobase/plugin-file-manager';
@@ -134,27 +135,39 @@ export class DashscopeProvider extends LLMProvider {
       new Error(`${action}(HTTP ${r.status}):${r.json?.message || r.json?.code || '未知错误'}`);
     // 同步生成会长时间占连接,本地代理偶发断连/吞响应(实测)——必须显式超时,把"无限挂起"变成可见错误;
     // 网络层错误重试一次。提交(同步含生成耗时)150s,轮询 15s。
-    const callOnce = async (url: string, init: RequestInit, timeoutMs: number) => {
-      const withSignal = (base: RequestInit) => ({ ...base, signal: AbortSignal.timeout(timeoutMs) });
+    const callOnce = async (url: string, init: RequestInit, timeoutMs: number, signal?: AbortSignal) => {
+      const withSignal = (base: RequestInit) => ({ ...base, signal: taskSignal(timeoutMs, signal) });
       try {
         return await fetch(url, withSignal(init));
       } catch {
         return await fetch(url, withSignal(init));
       }
     };
-    const submit = async (url: string, payload: Record<string, unknown>, asyncMode: boolean): Promise<SubmitResult> => {
+    const submit = async (
+      url: string,
+      payload: Record<string, unknown>,
+      asyncMode: boolean,
+      signal?: AbortSignal,
+    ): Promise<SubmitResult> => {
       const headers = asyncMode ? { ...baseHeaders, 'X-DashScope-Async': 'enable' } : baseHeaders;
-      const resp = await callOnce(url, { method: 'POST', headers, body: JSON.stringify(payload) }, 150000);
+      const resp = await callOnce(url, { method: 'POST', headers, body: JSON.stringify(payload) }, 150000, signal);
       const json = (await resp.json()) as SubmitResult['json'];
       return { ok: resp.ok, status: resp.status, json };
     };
-    const pollTask = async (taskId: string, maxTries: number, timeoutLabel: string): Promise<NativeOutput> => {
+    const pollTask = async (
+      taskId: string,
+      maxTries: number,
+      timeoutLabel: string,
+      signal?: AbortSignal,
+    ): Promise<NativeOutput> => {
       for (let i = 0; i < maxTries; i++) {
+        if (signal?.aborted) throw new Error('生成已取消');
         await new Promise((resolve) => setTimeout(resolve, this.mediaTaskPollIntervalMs));
         const pollResp = await callOnce(
           `${nativeBase}/tasks/${taskId}`,
           { method: 'GET', headers: baseHeaders },
           15000,
+          signal,
         );
         const pollJson = (await pollResp.json()) as { output?: NativeOutput };
         const status = pollJson?.output?.task_status;
@@ -165,8 +178,12 @@ export class DashscopeProvider extends LLMProvider {
       }
       throw new Error(`生成任务超时(${timeoutLabel}),请稍后重试`);
     };
-    const submitAsyncTask = async (url: string, payload: Record<string, unknown>): Promise<string> => {
-      const r = await submit(url, payload, true);
+    const submitAsyncTask = async (
+      url: string,
+      payload: Record<string, unknown>,
+      signal?: AbortSignal,
+    ): Promise<string> => {
+      const r = await submit(url, payload, true, signal);
       const taskId = r.json?.output?.task_id;
       if (!r.ok || !taskId) throw failure('DashScope 任务提交失败', r);
       return taskId;
@@ -176,7 +193,7 @@ export class DashscopeProvider extends LLMProvider {
     // TTS:原生同步,input.{text,voice} → output.audio.url(wav)
     const invokeTTS = async (input: MediaTaskInput): Promise<MediaTaskOutput> => {
       const voice = (input.options?.voice as string) || 'Cherry';
-      const r = await submit(genUrl, { model: input.model, input: { text: input.prompt, voice } }, false);
+      const r = await submit(genUrl, { model: input.model, input: { text: input.prompt, voice } }, false, input.signal);
       if (!r.ok) throw failure('语音合成失败', r);
       const url = r.json?.output?.audio?.url;
       if (!url) throw new Error('模型未返回音频 URL');
@@ -190,7 +207,7 @@ export class DashscopeProvider extends LLMProvider {
         ...(input.prompt ? [{ role: 'system', content: [{ text: input.prompt }] }] : []),
         { role: 'user', content: input.audios.map((audio) => ({ audio })) },
       ];
-      const r = await submit(genUrl, { model: input.model, input: { messages } }, false);
+      const r = await submit(genUrl, { model: input.model, input: { messages } }, false, input.signal);
       if (!r.ok) throw failure('语音识别失败', r);
       const content = r.json?.output?.choices?.[0]?.message?.content;
       const text =
@@ -229,6 +246,7 @@ export class DashscopeProvider extends LLMProvider {
           }),
         },
         150000,
+        input.signal,
       );
       const json = (await resp.json()) as {
         choices?: Array<{ message?: { content?: unknown } }>;
@@ -248,12 +266,16 @@ export class DashscopeProvider extends LLMProvider {
     // ASR 异步(paraformer/fun-asr/sensevoice):file_urls 需公网可达,产物是 transcription_url 指向的 JSON
     const invokeASRFile = async (input: MediaTaskInput): Promise<MediaTaskOutput> => {
       if (!input.audios.length) throw new Error('转写需要音频文件地址(公网可访问)');
-      const taskId = await submitAsyncTask(`${nativeBase}/services/audio/asr/transcription`, {
-        model: input.model,
-        input: { file_urls: input.audios },
-        parameters: { language_hints: ['zh', 'en'] },
-      });
-      const output = await pollTask(taskId, 100, '5 分钟');
+      const taskId = await submitAsyncTask(
+        `${nativeBase}/services/audio/asr/transcription`,
+        {
+          model: input.model,
+          input: { file_urls: input.audios },
+          parameters: { language_hints: ['zh', 'en'] },
+        },
+        input.signal,
+      );
+      const output = await pollTask(taskId, 100, '5 分钟', input.signal);
       const results = (output?.results as Array<{ transcription_url?: string }>) || [];
       const texts: string[] = [];
       for (const item of results) {
@@ -270,12 +292,16 @@ export class DashscopeProvider extends LLMProvider {
 
     // 万相文生图:仅异步,专用 image-synthesis 端点
     const invokeWanT2I = async (input: MediaTaskInput): Promise<MediaTaskOutput> => {
-      const taskId = await submitAsyncTask(`${nativeBase}/services/aigc/text2image/image-synthesis`, {
-        model: input.model,
-        input: { prompt: input.prompt },
-        parameters: { n: 1 },
-      });
-      const output = await pollTask(taskId, 40, '2 分钟');
+      const taskId = await submitAsyncTask(
+        `${nativeBase}/services/aigc/text2image/image-synthesis`,
+        {
+          model: input.model,
+          input: { prompt: input.prompt },
+          parameters: { n: 1 },
+        },
+        input.signal,
+      );
+      const output = await pollTask(taskId, 40, '2 分钟', input.signal);
       const urls = extractUrls(output);
       if (!urls.length) throw new Error('任务成功但未返回媒体 URL');
       return { urls };
@@ -299,7 +325,7 @@ export class DashscopeProvider extends LLMProvider {
             },
           };
       // 1) 同步优先
-      let r = await submit(submitUrl, payload, false);
+      let r = await submit(submitUrl, payload, false, input.signal);
       let taskId = r.json?.output?.task_id;
       if (r.ok && !taskId) {
         const urls = extractUrls(r.json?.output);
@@ -311,12 +337,12 @@ export class DashscopeProvider extends LLMProvider {
         if (!/synchronous|async/i.test(String(r.json?.message || ''))) {
           throw failure('DashScope 生成失败', r);
         }
-        r = await submit(submitUrl, payload, true);
+        r = await submit(submitUrl, payload, true, input.signal);
         taskId = r.json?.output?.task_id;
         if (!r.ok || !taskId) throw failure('DashScope 生成任务提交失败', r);
       }
       // 3) 轮询任务(视频 ≤10min,图片 ≤2min)
-      const output = await pollTask(taskId, isVideo ? 200 : 40, isVideo ? '10 分钟' : '2 分钟');
+      const output = await pollTask(taskId, isVideo ? 200 : 40, isVideo ? '10 分钟' : '2 分钟', input.signal);
       const urls = extractUrls(output);
       if (!urls.length) throw new Error('任务成功但未返回媒体 URL');
       return { urls };

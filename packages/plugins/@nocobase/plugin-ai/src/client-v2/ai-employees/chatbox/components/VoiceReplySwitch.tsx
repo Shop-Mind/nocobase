@@ -17,13 +17,18 @@ import { observer } from '@nocobase/flow-engine';
 import { useT } from '../../../locale';
 import { useChatBoxStore } from '../stores/chat-box';
 import { useChatConversationsStore } from '../stores/chat-conversations';
+import { useCurrentModelCapability } from '../hooks/useModelCapability';
 
 export const VoiceReplySwitch: React.FC<{ disabled?: boolean }> = observer(({ disabled }) => {
   const t = useT();
   const voiceReply = useChatConversationsStore.use.voiceReply();
   const setVoiceReply = useChatConversationsStore.use.setVoiceReply();
   const model = useChatBoxStore.use.model();
-  const supported = /omni/i.test(model?.model || '');
+  const capability = useCurrentModelCapability();
+  // 优先读能力注册中心(对话模型且支持语音输出);能力未下发时退回模型名启发式
+  const supported = capability
+    ? capability.task === 'chat' && !!capability.output?.includes('audio')
+    : /omni/i.test(model?.model || '');
 
   useEffect(() => {
     if (!supported && voiceReply) {

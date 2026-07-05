@@ -18,6 +18,7 @@ import _ from 'lodash';
 import { ToolManager } from './tool-manager';
 import type { Model } from '@nocobase/database';
 import { getRecommendedModels } from '../../common/recommended-models';
+import { getModelCapability, ModelCapability } from '../llm-providers/common/model-capability';
 
 export type LLMProviderMeta = {
   title: string;
@@ -44,6 +45,8 @@ export type LLMModelOptions = {
 export type EnabledLLMModel = {
   label: string;
   value: string;
+  // 能力注册中心判定结果,随 listAllEnabledModels 下发给前端做能力驱动 UI(徽标/控件联动)
+  capability?: ModelCapability;
 };
 
 export type EnabledLLMService = {
@@ -114,7 +117,10 @@ export class AIManager {
       return null;
     }
 
-    const enabledModels = this.getEnabledModels(service);
+    const enabledModels = this.getEnabledModels(service).map((model) => ({
+      ...model,
+      capability: getModelCapability(model.value),
+    }));
     if (!enabledModels.length) {
       return null;
     }

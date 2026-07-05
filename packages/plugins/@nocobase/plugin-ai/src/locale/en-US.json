@@ -516,5 +516,11 @@
   "No ASR model configured": "No ASR model configured. Add an ASR model (e.g. qwen3-asr-flash) to an LLM service.",
   "ASR returned no text": "ASR returned no text, please retry",
   "Enable voice reply": "Enable voice reply",
-  "Disable voice reply": "Disable voice reply"
+  "Disable voice reply": "Disable voice reply",
+  "Describe the image you want to generate": "Describe the image you want to generate…",
+  "Describe the video you want to generate": "Describe the video you want to generate…",
+  "Enter the text to synthesize into speech": "Enter the text to synthesize into speech…",
+  "Current model cannot read images. Switch to a vision model (e.g. qwen-vl-max).": "Current model cannot read images. Switch to a vision model (e.g. qwen-vl-max).",
+  "Current model cannot read audio. Switch to an audio-capable model (e.g. qwen3-omni-flash).": "Current model cannot read audio. Switch to an audio-capable model (e.g. qwen3-omni-flash).",
+  "elapsed {{seconds}}s": "elapsed {{seconds}}s"
 }

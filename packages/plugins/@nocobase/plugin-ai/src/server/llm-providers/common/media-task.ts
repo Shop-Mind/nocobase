@@ -22,7 +22,15 @@ export interface MediaTaskInput {
   prompt: string;
   images: string[];
   audios: string[];
+  // 用户取消(会话 abort)信号:适配器应把它与超时组合,并在轮询循环中检查
+  signal?: AbortSignal;
   options?: Record<string, unknown>;
+}
+
+// 超时与用户取消组合;signal 缺省时退化为纯超时
+export function taskSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([timeout, signal]) : timeout;
 }
 
 // 二进制产物(gpt-image 的 b64_json、OpenAI TTS 的音频流):Phase 2 统一转存 File Manager,当前原样返回
@@ -123,7 +131,7 @@ export function openAICompatibleMediaGeneration(opts: MediaTaskEndpointOptions):
       method: 'POST',
       headers: jsonHeaders(opts.apiKey),
       body: JSON.stringify({ model: input.model, messages: [{ role: 'user', content }], stream: false }),
-      signal: AbortSignal.timeout(180000),
+      signal: taskSignal(180000, input.signal),
     });
     const json = (await resp.json()) as ErrorPayload & {
       choices?: Array<{ message?: { content?: unknown; images?: Array<{ image_url?: { url?: string } }> } }>;
@@ -149,7 +157,7 @@ export async function openAIImagesGeneration(
     method: 'POST',
     headers: jsonHeaders(opts.apiKey),
     body: JSON.stringify({ model: input.model, prompt: input.prompt, n: 1, ...(input.options || {}) }),
-    signal: AbortSignal.timeout(180000),
+    signal: taskSignal(180000, input.signal),
   });
   const json = (await resp.json()) as ErrorPayload & { data?: Array<{ url?: string; b64_json?: string }> };
   if (!resp.ok) {
@@ -176,7 +184,7 @@ export async function openAISpeech(opts: MediaTaskEndpointOptions, input: MediaT
       input: input.prompt,
       voice: (input.options?.voice as string) || 'alloy',
     }),
-    signal: AbortSignal.timeout(120000),
+    signal: taskSignal(120000, input.signal),
   });
   if (!resp.ok) {
     const payload = (await resp.json().catch(() => undefined)) as ErrorPayload | undefined;
@@ -195,7 +203,7 @@ export async function openAITranscription(
   if (!audioUrl) {
     throw new Error('转写需要音频输入');
   }
-  const audioResp = await fetch(audioUrl, { signal: AbortSignal.timeout(60000) });
+  const audioResp = await fetch(audioUrl, { signal: taskSignal(60000, input.signal) });
   if (!audioResp.ok) {
     throw new Error(`音频文件下载失败(HTTP ${audioResp.status})`);
   }
@@ -208,7 +216,7 @@ export async function openAITranscription(
     method: 'POST',
     headers: authHeaders(opts.apiKey),
     body: form,
-    signal: AbortSignal.timeout(120000),
+    signal: taskSignal(120000, input.signal),
   });
   const json = (await resp.json()) as ErrorPayload & { text?: string };
   if (!resp.ok) {

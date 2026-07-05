@@ -23,6 +23,7 @@ import {
   MODEL_PREFERENCE_STORAGE_KEY,
   resolveModel,
 } from '../model';
+import { capabilityBadges } from '../hooks/useModelCapability';
 import { useChatBoxStore, type ModelRef } from '../stores/chat-box';
 import { useChatConversationsStore } from '../stores/chat-conversations';
 import { AddLLMModal } from './AddLLMModal';
@@ -121,11 +122,19 @@ export const ModelSwitcher: React.FC<{
       service.enabledModels.forEach((item) => {
         const target = { llmService: service.llmService, model: item.value };
         const isSelected = selectedModel && isSameModel(selectedModel, target);
+        const badges = capabilityBadges(item.capability);
         items.push({
           key: getModelKey(target),
           label: (
             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span>{t(item.label)}</span>
+              <span>
+                {t(item.label)}
+                {badges ? (
+                  <span aria-hidden style={{ marginLeft: 6, fontSize: 11, opacity: 0.75 }}>
+                    {badges}
+                  </span>
+                ) : null}
+              </span>
               {isSelected ? <CheckOutlined style={{ fontSize: 12, color: token.colorPrimary }} /> : null}
             </span>
           ),

@@ -7,7 +7,7 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
-import React, { memo, useEffect, useMemo } from 'react';
+import React, { memo, useEffect, useMemo, useState } from 'react';
 import { Bubble } from '@ant-design/x';
 import { Alert, App as AntdApp, Button, Collapse, Flex, Space, Spin, theme, Tooltip, Typography } from 'antd';
 import {
@@ -30,6 +30,7 @@ import { useChatMessageActions } from '../hooks/useChatMessageActions';
 import { useChatBoxStore } from '../stores/chat-box';
 import { useChatConversationsStore } from '../stores/chat-conversations';
 import { useMessageTTS, useTTSAvailable } from '../hooks/useTTSSpeech';
+import { useCurrentModelCapability } from '../hooks/useModelCapability';
 import { FileCardList } from './Attachments';
 import { Actions } from './Actions';
 import { ContextItem } from './ContextItem';
@@ -568,12 +569,22 @@ export const TaskMessage: React.FC<{
 
 TaskMessage.displayName = 'TaskMessage';
 
-export const AIThinking: React.FC<{ nickname?: string }> = ({ nickname }) => {
+export const AIThinking: React.FC<{ nickname?: string }> = observer(({ nickname }) => {
   const t = useT();
   const { token } = theme.useToken();
   const currentConversation = useChatConversationsStore.use.currentConversation();
   const chat = useChat(currentConversation);
   const webSearching = chat.use.webSearching();
+  // 生成类模型(生图/视频/合成语音)等待较久:显示任务态文案 + 已用时,替代"思考中"
+  const capability = useCurrentModelCapability();
+  const generating = capability && ['image_gen', 'video_gen', 'tts'].includes(capability.task);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!generating) return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [generating]);
 
   return (
     <Space direction="vertical">
@@ -585,7 +596,11 @@ export const AIThinking: React.FC<{ nickname?: string }> = ({ nickname }) => {
         }}
       >
         <Spin indicator={<LoadingOutlined spin />} />
-        {webSearching ? t('AI is searching', { nickname }) : t('AI is thinking', { nickname })}
+        {generating
+          ? `${t('Generating')}${elapsed > 1 ? `(${t('elapsed {{seconds}}s', { seconds: elapsed })})` : ''}`
+          : webSearching
+            ? t('AI is searching', { nickname })
+            : t('AI is thinking', { nickname })}
       </Space>
       {webSearching?.query ? (
         <Paragraph>
@@ -596,7 +611,9 @@ export const AIThinking: React.FC<{ nickname?: string }> = ({ nickname }) => {
       ) : null}
     </Space>
   );
-};
+});
+
+AIThinking.displayName = 'AIThinking';
 
 function stringifyContent(content: unknown) {
   if (typeof content === 'string') {

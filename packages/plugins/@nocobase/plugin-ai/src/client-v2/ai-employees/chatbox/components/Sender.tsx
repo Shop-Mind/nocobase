@@ -12,7 +12,9 @@ import { Attachments, Sender as AntSender } from '@ant-design/x';
 import { Alert, Button, Flex, Space, Spin, theme, Tooltip, type GetRef, type UploadFile } from 'antd';
 import { EditOutlined, InfoCircleOutlined, PaperClipOutlined } from '@ant-design/icons';
 import { css } from '@emotion/css';
+import { observer } from '@nocobase/flow-engine';
 import { useT } from '../../../locale';
+import { useCurrentModelCapability } from '../hooks/useModelCapability';
 import type { Attachment } from '../../types';
 import { useChat } from '../hooks/useChat';
 import { useChatBoxActions } from '../hooks/useChatBoxActions';
@@ -50,7 +52,7 @@ const senderClassName = css`
   }
 `;
 
-export const Sender: React.FC = () => {
+export const Sender: React.FC = observer(() => {
   const t = useT();
   const senderRef = useRef<SenderRef | null>(null);
   const currentConversation = useChatConversationsStore.use.currentConversation();
@@ -73,6 +75,14 @@ export const Sender: React.FC = () => {
   const { send } = useChatBoxActions();
   const { cancelRequest, finishEditingMessage } = useChatMessageActions();
   const [value, setValue] = useState(senderValue);
+  // 能力驱动占位文案:生成/合成类模型给出对应引导
+  const capability = useCurrentModelCapability();
+  const placeholderByTask: Record<string, string> = {
+    image_gen: t('Describe the image you want to generate'),
+    video_gen: t('Describe the video you want to generate'),
+    tts: t('Enter the text to synthesize into speech'),
+  };
+  const placeholder = (capability && placeholderByTask[capability.task]) || t('Enter your question');
 
   useEffect(() => {
     setSenderRef(senderRef);
@@ -195,13 +205,15 @@ export const Sender: React.FC = () => {
         loading={responseLoading}
         footer={({ components }) => <SenderFooter components={components} handleSubmit={submit} />}
         disabled={!currentEmployee || readonly}
-        placeholder={t('Enter your question')}
+        placeholder={placeholder}
         actions={false}
         autoSize={{ minRows: 2, maxRows: 8 }}
       />
     </div>
   );
-};
+});
+
+Sender.displayName = 'Sender';
 
 const SenderHeader: React.FC = () => {
   const currentEmployee = useChatBoxStore.use.currentEmployee();
@@ -234,9 +246,43 @@ const SenderHeader: React.FC = () => {
       ) : null}
       {currentEmployee ? <ContextItemsHeader /> : null}
       {currentEmployee ? <AttachmentsHeader readonly={readonly} /> : null}
+      {currentEmployee ? <AttachmentCapabilityHint /> : null}
     </div>
   );
 };
+
+// 附件与当前模型能力不匹配时的内联提示(替代静默降级):贴图给不看图的模型/传音频给不听音的模型
+const AttachmentCapabilityHint: React.FC = observer(() => {
+  const t = useT();
+  const currentConversation = useChatConversationsStore.use.currentConversation();
+  const chat = useChat(currentConversation);
+  const attachments = chat.use.attachments();
+  const capability = useCurrentModelCapability();
+  if (!capability || !attachments?.length) {
+    return null;
+  }
+  const mimeOf = (attachment: Attachment) =>
+    String((attachment as Attachment & { mimetype?: string }).mimetype || attachment.type || '');
+  const hasImage = attachments.some((item) => mimeOf(item).startsWith('image/'));
+  const hasAudio = attachments.some((item) => mimeOf(item).startsWith('audio/'));
+  const imageMismatch = hasImage && !capability.input?.includes('image');
+  const audioMismatch = hasAudio && !capability.input?.includes('audio');
+  if (!imageMismatch && !audioMismatch) {
+    return null;
+  }
+  return (
+    <Alert
+      type="warning"
+      showIcon
+      style={{ marginTop: 8, borderRadius: 8 }}
+      message={
+        imageMismatch
+          ? t('Current model cannot read images. Switch to a vision model (e.g. qwen-vl-max).')
+          : t('Current model cannot read audio. Switch to an audio-capable model (e.g. qwen3-omni-flash).')
+      }
+    />
+  );
+});
 
 const SenderFooter: React.FC<{
   components: {

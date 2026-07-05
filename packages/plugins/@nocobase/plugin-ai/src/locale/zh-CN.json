@@ -522,5 +522,11 @@
   "No ASR model configured": "未配置语音识别模型:请在 LLM 服务的启用模型中添加 ASR 模型(如 qwen3-asr-flash)",
   "ASR returned no text": "语音识别未返回文本,请重试",
   "Enable voice reply": "开启语音回复",
-  "Disable voice reply": "关闭语音回复"
+  "Disable voice reply": "关闭语音回复",
+  "Describe the image you want to generate": "描述你想生成的画面…",
+  "Describe the video you want to generate": "描述你想生成的视频画面…",
+  "Enter the text to synthesize into speech": "输入要合成语音的文本…",
+  "Current model cannot read images. Switch to a vision model (e.g. qwen-vl-max).": "当前模型不支持看图,发送后无法识别图片内容;建议切换视觉模型(如 qwen-vl-max)",
+  "Current model cannot read audio. Switch to an audio-capable model (e.g. qwen3-omni-flash).": "当前模型不支持听音频,发送后无法识别音频内容;建议切换全模态模型(如 qwen3-omni-flash)",
+  "elapsed {{seconds}}s": "已用时 {{seconds}} 秒"
 }
