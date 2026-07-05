@@ -522,5 +522,14 @@
   "Enter the text to synthesize into speech": "Enter the text to synthesize into speech…",
   "Current model cannot read images. Switch to a vision model (e.g. qwen-vl-max).": "Current model cannot read images. Switch to a vision model (e.g. qwen-vl-max).",
   "Current model cannot read audio. Switch to an audio-capable model (e.g. qwen3-omni-flash).": "Current model cannot read audio. Switch to an audio-capable model (e.g. qwen3-omni-flash).",
-  "elapsed {{seconds}}s": "elapsed {{seconds}}s"
+  "elapsed {{seconds}}s": "elapsed {{seconds}}s",
+  "Volcengine Ark": "Volcengine Ark",
+  "Voice call": "Voice call",
+  "Connecting": "Connecting…",
+  "In call, speak now": "In call, speak now",
+  "Call ended": "Call ended",
+  "End call": "End call",
+  "Voice call failed": "Voice call failed",
+  "Assistant transcript will appear here": "Assistant transcript will appear here",
+  "No realtime model configured": "No realtime model configured. Set AI_REALTIME_MODEL or enable a realtime model."
 }

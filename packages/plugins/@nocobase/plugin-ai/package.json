@@ -65,5 +65,8 @@
   },
   "keywords": [
     "AI"
-  ]
+  ],
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
 }

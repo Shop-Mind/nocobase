@@ -29,6 +29,7 @@ import { DictationButton } from './DictationButton';
 import { FileCardList, useAttachmentFileCards } from './Attachments';
 import { ModelSwitcher } from './ModelSwitcher';
 import { SearchSwitch } from './SearchSwitch';
+import { VoiceCallButton } from './VoiceCallButton';
 import { VoiceReplySwitch } from './VoiceReplySwitch';
 
 type SenderRef = GetRef<typeof AntSender> & {
@@ -343,6 +344,7 @@ const SenderFooter: React.FC<{
         />
         <UploadFiles disabled={disabled} />
         <DictationButton disabled={disabled} />
+        <VoiceCallButton disabled={disabled} />
         <SearchSwitch disabled={disabled} />
         <VoiceReplySwitch disabled={disabled} />
         <AIEmployeeSwitcher disabled={readonly} />

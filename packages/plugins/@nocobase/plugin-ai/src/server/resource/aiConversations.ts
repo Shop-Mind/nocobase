@@ -13,6 +13,7 @@ import { Model, Op } from '@nocobase/database';
 import { ResourceActionError, sendSSEError } from '../utils';
 import { AIEmployee } from '../ai-employees/ai-employee';
 import { extractSpeechText, resolveDefaultASRModel, resolveDefaultTTSModel } from '../ai-employees/speech';
+import { createRealtimeTicket, resolveRealtimeModel } from '../ai-employees/realtime-voice';
 import { AIMessageInput } from '../types';
 import { createAIChatConversation } from '../manager/ai-chat-conversation';
 
@@ -434,6 +435,24 @@ export default {
       } finally {
         await next();
       }
+    },
+
+    // 前端据此决定是否显示"语音通话"入口:配置了 realtime 模型(env AI_REALTIME_MODEL 或启用模型含 realtime)才可用
+    async realtimeAvailable(ctx: Context, next: Next) {
+      const plugin = ctx.app.pm.get('ai') as PluginAIServer;
+      ctx.body = { available: !!(await resolveRealtimeModel(plugin)) };
+      await next();
+    },
+
+    // 换取实时语音一次性票据(60s,单次消费);浏览器凭票连 /ws/ai-realtime,Key 始终留在服务端
+    async realtimeSession(ctx: Context, next: Next) {
+      const plugin = ctx.app.pm.get('ai') as PluginAIServer;
+      const session = await createRealtimeTicket(plugin, ctx.auth?.user.id);
+      if (!session) {
+        ctx.throw(400, ctx.t('No realtime model configured'));
+      }
+      ctx.body = session;
+      await next();
     },
 
     // 前端据此决定是否显示"麦克风听写"按钮:存在能力为 asr 的已启用模型(或 env AI_DEFAULT_ASR_MODEL)才可用

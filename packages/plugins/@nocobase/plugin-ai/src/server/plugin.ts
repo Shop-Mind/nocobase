@@ -31,6 +31,8 @@ import { Model, Transaction } from '@nocobase/database';
 import { anthropicProviderOptions } from './llm-providers/anthropic';
 import aiSettings from './resource/aiSettings';
 import { dashscopeProviderOptions } from './llm-providers/dashscope';
+import { volcengineArkProviderOptions } from './llm-providers/volcengine-ark';
+import { registerRealtimeVoiceGateway } from './ai-employees/realtime-voice';
 import { ollamaProviderOptions } from './llm-providers/ollama';
 import { BuiltInManager } from './manager/built-in-manager';
 import { AIContextDatasourceManager } from './manager/ai-context-datasource-manager';
@@ -156,6 +158,8 @@ export class PluginAIServer extends Plugin {
 
   async load() {
     this.registerLLMProviders();
+    // 实时语音通话:注册 /ws/ai-realtime 网关中继(票据鉴权,Key 不出服务端)
+    registerRealtimeVoiceGateway(this);
     this.registerTools();
     this.defineResources();
     this.registerMcpClientEvents();
@@ -173,6 +177,7 @@ export class PluginAIServer extends Plugin {
     this.aiManager.registerLLMProvider('anthropic', anthropicProviderOptions);
     this.aiManager.registerLLMProvider('deepseek', deepseekProviderOptions);
     this.aiManager.registerLLMProvider('dashscope', dashscopeProviderOptions);
+    this.aiManager.registerLLMProvider('volcengine-ark', volcengineArkProviderOptions);
     this.aiManager.registerLLMProvider('kimi', kimiProviderOptions);
     this.aiManager.registerLLMProvider('mimo', mimoProviderOptions);
     this.aiManager.registerLLMProvider('mistral', mistralProviderOptions);

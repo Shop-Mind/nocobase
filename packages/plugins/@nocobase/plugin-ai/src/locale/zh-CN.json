@@ -528,5 +528,14 @@
   "Enter the text to synthesize into speech": "输入要合成语音的文本…",
   "Current model cannot read images. Switch to a vision model (e.g. qwen-vl-max).": "当前模型不支持看图,发送后无法识别图片内容;建议切换视觉模型(如 qwen-vl-max)",
   "Current model cannot read audio. Switch to an audio-capable model (e.g. qwen3-omni-flash).": "当前模型不支持听音频,发送后无法识别音频内容;建议切换全模态模型(如 qwen3-omni-flash)",
-  "elapsed {{seconds}}s": "已用时 {{seconds}} 秒"
+  "elapsed {{seconds}}s": "已用时 {{seconds}} 秒",
+  "Volcengine Ark": "火山方舟",
+  "Voice call": "语音通话",
+  "Connecting": "连接中…",
+  "In call, speak now": "通话中,请说话",
+  "Call ended": "通话已结束",
+  "End call": "结束通话",
+  "Voice call failed": "语音通话失败",
+  "Assistant transcript will appear here": "助手的语音字幕会显示在这里",
+  "No realtime model configured": "未配置实时语音模型:请设置 AI_REALTIME_MODEL 或在启用模型中添加 realtime 模型"
 }
