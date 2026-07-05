@@ -18,6 +18,7 @@ import { EmbeddingsInterface } from '@langchain/core/embeddings';
 import { Context } from '@nocobase/actions';
 import { AIChatContext } from '../types/ai-chat-conversation.type';
 import { ChatGenerationChunk, LLMResult } from '@langchain/core/outputs';
+import { MediaTaskInvoker, taskSignal } from './common/media-task';
 
 const GOOGLE_GEN_AI_URL = 'https://generativelanguage.googleapis.com';
 
@@ -39,6 +40,49 @@ export class GoogleGenAIProvider extends LLMProvider {
       json: responseFormat === 'json',
       baseUrl: this.getResolvedBaseURL(),
     });
+  }
+
+  // Gemini 生图(gemini-*-image / imagen 系):原生 generateContent,产物为 inlineData base64,
+  // 经统一转存落 File Manager;其余任务回落基类 OpenAI 端点组(对 Google 仅作兜底)
+  protected createMediaTaskInvoker(): MediaTaskInvoker {
+    const fallback = super.createMediaTaskInvoker();
+    const { apiKey } = this.serviceOptions || {};
+    const base = this.getResolvedBaseURL().replace(/\/$/, '');
+    return async (input) => {
+      if (input.task !== 'image_gen') return fallback(input);
+      const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
+      for (const image of input.images) {
+        const match = image.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+        if (match) parts.push({ inline_data: { mime_type: match[1], data: match[2] } });
+      }
+      const resp = await fetch(`${base}/v1beta/models/${encodeURIComponent(input.model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts }] }),
+        signal: taskSignal(180000, input.signal),
+      });
+      const json = (await resp.json()) as {
+        candidates?: Array<{
+          content?: { parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> };
+        }>;
+        error?: { message?: string };
+      };
+      if (!resp.ok) {
+        throw new Error(`图像生成失败(HTTP ${resp.status}):${json?.error?.message || '未知错误'}`);
+      }
+      const outParts = json?.candidates?.[0]?.content?.parts || [];
+      const binaries = outParts
+        .filter((part) => part?.inlineData?.data)
+        .map((part) => ({ base64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' }));
+      const text = outParts
+        .map((part) => part?.text)
+        .filter(Boolean)
+        .join('\n');
+      if (!binaries.length && !text) {
+        throw new Error('模型未返回图像结果');
+      }
+      return { urls: [], binaries, text: text || undefined };
+    };
   }
 
   async listModels(): Promise<{
