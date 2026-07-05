@@ -54,6 +54,7 @@ export interface AIEmployeeOptions {
   systemMessage?: string;
   skillSettings?: Record<string, any>;
   webSearch?: boolean;
+  voiceReply?: boolean;
   model?: ModelRef;
   legacy?: boolean;
   from?: 'main-agent' | 'sub-agent';
@@ -90,6 +91,7 @@ export class AIEmployee {
   private systemMessage?: string;
   private protocol: ChatStreamProtocol;
   private webSearch?: boolean;
+  private voiceReply?: boolean;
   private model?: ModelRef;
   private legacy?: boolean;
   private tools: { name: string }[];
@@ -103,6 +105,7 @@ export class AIEmployee {
     systemMessage,
     skillSettings,
     webSearch,
+    voiceReply,
     model,
     legacy,
     from = 'main-agent',
@@ -125,6 +128,7 @@ export class AIEmployee {
     const builtInManager = this.plugin.builtInManager;
     builtInManager.setupBuiltInInfo(ctx, this.employee as unknown as AIEmployeeType);
     this.webSearch = webSearch;
+    this.voiceReply = voiceReply;
     this.protocol = ChatStreamProtocol.fromContext(ctx, async (chunk) => {
       try {
         await this.streamCached.append(chunk);
@@ -157,6 +161,7 @@ export class AIEmployee {
   async getFormatMessages(userMessages: AIMessageInput[]) {
     const { provider } = await this.plugin.aiManager.getLLMService({
       ...this.model,
+      voiceReply: this.voiceReply,
     });
     const { messages } = await this.aiChatConversation.getChatContext({
       userMessages,
@@ -245,6 +250,7 @@ export class AIEmployee {
   }) {
     const { provider, model, service } = await this.plugin.aiManager.getLLMService({
       ...this.model,
+      voiceReply: this.voiceReply,
     });
     const { historyMessages, tools, resolvedTools, middleware, config, state } = await this.initSession({
       messageId,
@@ -408,7 +414,8 @@ export class AIEmployee {
     tools?: any[];
     middleware?: any[];
   }) {
-    const model = provider.createModel();
+    // getChatModel 统一入口:生成类模型(生图/生视频)自动进入通用媒体生成通道,其余走各提供商 createModel
+    const model = provider.getChatModel();
     const allTools = tools ?? [];
     if (this.from === 'main-agent') {
       const checkpointer = new SequelizeCollectionSaver(() => this.ctx.app.mainDataSource);
@@ -1117,6 +1124,7 @@ If information is missing, clearly state it in the summary.</Important>`;
 
     const { model, service } = await this.plugin.aiManager.getLLMService({
       ...this.model,
+      voiceReply: this.voiceReply,
     });
     const toolCallMap = await this.getToolCallMap(messageId);
     const now = new Date();

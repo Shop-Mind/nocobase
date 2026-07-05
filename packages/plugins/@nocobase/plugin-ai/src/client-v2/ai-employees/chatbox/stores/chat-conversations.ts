@@ -16,6 +16,7 @@ interface ChatConversationsState {
   conversations: Conversation[];
   keyword: string;
   webSearch: boolean;
+  voiceReply: boolean;
   conversationSegmented: string;
   unreadCount: number;
 }
@@ -26,6 +27,7 @@ interface ChatConversationsActions {
   setConversations: (conversations: Conversation[] | ((prev: Conversation[]) => Conversation[])) => void;
   markConversationRead: (sessionId: string) => void;
   setWebSearch: (webSearch: boolean) => void;
+  setVoiceReply: (voiceReply: boolean) => void;
   setConversationSegmented: (conversationSegmented: string) => void;
   setUnreadCount: (unreadCount: number | ((prev: number) => number)) => void;
 }
@@ -36,6 +38,7 @@ export const useChatConversationsStore = getOrCreateGlobalStore('@nocobase/plugi
     conversations: [],
     keyword: '',
     webSearch: false,
+    voiceReply: false,
     conversationSegmented: 'conversations',
     unreadCount: 0,
 
@@ -67,6 +70,7 @@ export const useChatConversationsStore = getOrCreateGlobalStore('@nocobase/plugi
         };
       }),
     setWebSearch: (webSearch) => set({ webSearch }),
+    setVoiceReply: (voiceReply) => set({ voiceReply }),
     setConversationSegmented: (conversationSegmented) => set({ conversationSegmented }),
     setUnreadCount: (unreadCount) =>
       set((state) => ({

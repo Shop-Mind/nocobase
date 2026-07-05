@@ -78,6 +78,7 @@ export const useChatMessageActions = () => {
 
   const currentConversation = useChatConversationsStore.use.currentConversation?.();
   const currentWebSearch = useChatConversationsStore.use.webSearch();
+  const currentVoiceReply = useChatConversationsStore.use.voiceReply();
   const setConversationUnreadCount = useChatConversationsStore.use.setUnreadCount();
   const markConversationRead = useChatConversationsStore.use.markConversationRead();
   const chat = useChat(currentConversation);
@@ -814,6 +815,8 @@ export const useChatMessageActions = () => {
           editingMessageId,
           model,
           webSearch,
+          // 发送时从 store 现取,避免闭包过期
+          voiceReply: useChatConversationsStore.getState().voiceReply,
         },
         responseType: 'stream',
         adapter: 'fetch',
@@ -873,7 +876,7 @@ export const useChatMessageActions = () => {
         url: 'aiConversations:resendMessages',
         method: 'POST',
         headers: { Accept: 'text/event-stream' },
-        data: { sessionId, messageId, model, important, webSearch: currentWebSearch },
+        data: { sessionId, messageId, model, important, webSearch: currentWebSearch, voiceReply: currentVoiceReply },
         responseType: 'stream',
         adapter: 'fetch',
         signal: controller?.signal,
@@ -1000,7 +1003,15 @@ export const useChatMessageActions = () => {
           url: 'aiConversations:resumeToolCall',
           method: 'POST',
           headers: { Accept: 'text/event-stream' },
-          data: { sessionId, messageId, toolCallIds, toolCallResults, model, webSearch: currentWebSearch },
+          data: {
+            sessionId,
+            messageId,
+            toolCallIds,
+            toolCallResults,
+            model,
+            webSearch: currentWebSearch,
+            voiceReply: currentVoiceReply,
+          },
           responseType: 'stream',
           adapter: 'fetch',
           signal: controller?.signal,

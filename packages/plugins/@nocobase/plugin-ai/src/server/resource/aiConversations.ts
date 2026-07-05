@@ -12,6 +12,7 @@ import PluginAIServer from '../plugin';
 import { Model, Op } from '@nocobase/database';
 import { ResourceActionError, sendSSEError } from '../utils';
 import { AIEmployee } from '../ai-employees/ai-employee';
+import { extractSpeechText, resolveDefaultASRModel, resolveDefaultTTSModel } from '../ai-employees/speech';
 import { AIMessageInput } from '../types';
 import { createAIChatConversation } from '../manager/ai-chat-conversation';
 
@@ -312,6 +313,7 @@ export default {
         editingMessageId,
         model,
         webSearch,
+        voiceReply,
         stream = true,
       } = ctx.action.params.values || {};
 
@@ -374,6 +376,7 @@ export default {
           skillSettings: conversation.options?.skillSettings,
           tools: conversation.options?.tools,
           webSearch,
+          voiceReply,
           model: resolvedModel,
           legacy,
         });
@@ -431,6 +434,104 @@ export default {
       } finally {
         await next();
       }
+    },
+
+    // 前端据此决定是否显示"麦克风听写"按钮:存在能力为 asr 的已启用模型(或 env AI_DEFAULT_ASR_MODEL)才可用
+    async asrAvailable(ctx: Context, next: Next) {
+      const plugin = ctx.app.pm.get('ai') as PluginAIServer;
+      ctx.body = { available: !!(await resolveDefaultASRModel(plugin)) };
+      await next();
+    },
+
+    // 听写转写:浏览器录音 base64(data:audio/*;base64)→ 默认 ASR 模型 → 文本回填输入框。
+    // 录音是临时输入,不落库不转存
+    async asrTranscribe(ctx: Context, next: Next) {
+      const plugin = ctx.app.pm.get('ai') as PluginAIServer;
+      const { audio } = ctx.action.params.values || {};
+      if (typeof audio !== 'string' || !audio.startsWith('data:audio/')) {
+        ctx.throw(400, ctx.t('Invalid audio data'));
+      }
+      // 录音上限 60s;base64 超过 15MB 直接拒绝,防滥用
+      if (audio.length > 15 * 1024 * 1024) {
+        ctx.throw(400, ctx.t('Audio too large'));
+      }
+      const target = await resolveDefaultASRModel(plugin);
+      if (!target) {
+        ctx.throw(400, ctx.t('No ASR model configured'));
+      }
+      const { provider } = await plugin.aiManager.getLLMService(target);
+      const output = await provider.invokeMediaTask({
+        task: 'asr',
+        model: target.model,
+        prompt: '',
+        images: [],
+        audios: [audio],
+      });
+      if (!output.text) {
+        ctx.throw(500, ctx.t('ASR returned no text'));
+      }
+      ctx.body = { text: output.text };
+      await next();
+    },
+
+    // 前端据此决定是否显示"朗读"按钮:存在能力为 tts 的已启用模型(或 env AI_DEFAULT_TTS_MODEL)才可用
+    async ttsAvailable(ctx: Context, next: Next) {
+      const plugin = ctx.app.pm.get('ai') as PluginAIServer;
+      ctx.body = { available: !!(await resolveDefaultTTSModel(plugin)) };
+      await next();
+    },
+
+    // 消息级朗读:取消息文本 → 默认 TTS 模型合成 → 产物转存 File Manager → 结果缓存于消息 metadata.tts,
+    // 二次点击直接命中缓存不重复计费
+    async ttsMessage(ctx: Context, next: Next) {
+      const plugin = ctx.app.pm.get('ai') as PluginAIServer;
+      const userId = ctx.auth?.user.id;
+      const { sessionId, messageId } = ctx.action.params.values || {};
+      if (!sessionId || !messageId) {
+        ctx.throw(400, ctx.t('sessionId is required'));
+      }
+      const conversation = await plugin.aiConversationsManager.getConversation({ sessionId, userId });
+      if (!conversation) {
+        ctx.throw(400, ctx.t('conversation not found'));
+      }
+      const messageRepository = ctx.db.getRepository('aiConversations.messages', sessionId);
+      const message = await messageRepository.findOne({ filter: { messageId } });
+      if (!message) {
+        ctx.throw(400, ctx.t('message not found'));
+      }
+      const metadata = message.metadata || {};
+      if (metadata.tts?.url) {
+        ctx.body = { url: metadata.tts.url, cached: true };
+        return next();
+      }
+      const raw = message.content?.content;
+      const text = extractSpeechText(typeof raw === 'string' ? raw : '');
+      if (!text) {
+        ctx.throw(400, ctx.t('No readable text in this message'));
+      }
+      const target = await resolveDefaultTTSModel(plugin);
+      if (!target) {
+        ctx.throw(400, ctx.t('No TTS model configured'));
+      }
+      const { provider } = await plugin.aiManager.getLLMService(target);
+      // 朗读截取前 1000 字符,控制单次合成成本
+      const output = await provider.invokeMediaTask({
+        task: 'tts',
+        model: target.model,
+        prompt: text.slice(0, 1000),
+        images: [],
+        audios: [],
+      });
+      const url = output.urls[0];
+      if (!url) {
+        ctx.throw(500, ctx.t('TTS returned no audio'));
+      }
+      await messageRepository.update({
+        filter: { messageId },
+        values: { metadata: { ...metadata, tts: { url, model: target.model } } },
+      });
+      ctx.body = { url, cached: false };
+      await next();
     },
 
     async abort(ctx: Context, next: Next) {
@@ -532,7 +633,7 @@ export default {
     async resendMessages(ctx: Context, next: Next) {
       const plugin = ctx.app.pm.get('ai') as PluginAIServer;
       const userId = ctx.auth?.user.id;
-      const { sessionId, webSearch, model, stream = true } = ctx.action.params.values || {};
+      const { sessionId, webSearch, voiceReply, model, stream = true } = ctx.action.params.values || {};
       let { messageId } = ctx.action.params.values || {};
 
       const shouldStream = stream !== false;
@@ -606,6 +707,7 @@ export default {
           skillSettings: conversation.options?.skillSettings,
           tools: conversation.options?.tools,
           webSearch,
+          voiceReply,
           model: resolvedModel,
         });
 
@@ -735,7 +837,7 @@ export default {
       setupSSEHeaders(ctx);
 
       const plugin = ctx.app.pm.get('ai') as PluginAIServer;
-      const { sessionId, messageId, model, webSearch } = ctx.action.params.values || {};
+      const { sessionId, messageId, model, webSearch, voiceReply } = ctx.action.params.values || {};
       if (!sessionId) {
         sendErrorResponse(ctx, 'sessionId is required');
         return next();
@@ -789,6 +891,7 @@ export default {
           skillSettings: conversation.options?.skillSettings,
           tools: conversation.options?.tools,
           webSearch,
+          voiceReply,
           model: resolvedModel,
         });
 

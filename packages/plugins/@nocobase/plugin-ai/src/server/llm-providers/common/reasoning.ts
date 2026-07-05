@@ -7,12 +7,16 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
-import { AIMessage, BaseMessage } from '@langchain/core/messages';
+import { AIMessage, AIMessageChunk, BaseMessage } from '@langchain/core/messages';
+import { ChatGenerationChunk } from '@langchain/core/outputs';
 import { ChatOpenAICompletions } from '@langchain/openai';
 import type OpenAI from 'openai';
 
 export const REASONING_MAP_KEY = '__nb_reasoning_map';
 export const MODEL_KWARGS_KEY = '__nb_model_kwargs';
+
+// 语音回复(omni 全模态)流式音频的落库回调:PCM 聚合完成后由提供商转存 File Manager,返回本地 URL
+export type AudioReplySink = (pcm: Buffer) => Promise<string | null>;
 
 export const collectReasoningMap = (messages: BaseMessage[]) => {
   const reasoningMap = new Map<string, string>();
@@ -57,6 +61,9 @@ export const patchRequestModelKwargs = (request: any, modelKwargs?: Record<strin
 };
 
 export class ReasoningChatOpenAI extends ChatOpenAICompletions {
+  // 语音回复:流式 PCM 聚合后的落库回调(由提供商在 createModel 后注入)
+  audioReplySink?: AudioReplySink;
+
   async _generate(messages: BaseMessage[], options: any, runManager?: any) {
     const reasoningMap = collectReasoningMap(messages);
     const nextOptions = {
@@ -75,7 +82,30 @@ export class ReasoningChatOpenAI extends ChatOpenAICompletions {
       ...(options || {}),
       [REASONING_MAP_KEY]: reasoningMap,
     };
-    yield* super._streamResponseChunks(messages, nextOptions, runManager);
+    // 语音回复:沿途剥离音频帧(避免进 SSE/消息 metadata),流结束后拼 WAV 落库,
+    // 以一个追加的文本 chunk 把音频气泡挂到消息末尾——上层流管线无需感知
+    const audioBase64Frames: string[] = [];
+    for await (const chunk of super._streamResponseChunks(messages, nextOptions, runManager)) {
+      const kwargs = chunk?.message?.additional_kwargs as Record<string, unknown> | undefined;
+      if (Array.isArray(kwargs?.__nb_audio_frames)) {
+        audioBase64Frames.push(...(kwargs.__nb_audio_frames as string[]));
+        delete kwargs.__nb_audio_frames;
+      }
+      yield chunk;
+    }
+    if (audioBase64Frames.length && this.audioReplySink) {
+      let url: string | null = null;
+      try {
+        url = await this.audioReplySink(Buffer.concat(audioBase64Frames.map((b64) => Buffer.from(b64, 'base64'))));
+      } catch {
+        url = null;
+      }
+      if (url) {
+        const text = `\n\n<audio src="${url}" controls preload="metadata"></audio>`;
+        yield new ChatGenerationChunk({ text, message: new AIMessageChunk({ content: text }) });
+        await runManager?.handleLLMNewToken(text);
+      }
+    }
   }
 
   _convertCompletionsDeltaToBaseMessageChunk(delta: any, rawResponse: any, defaultRole?: any) {
@@ -85,6 +115,27 @@ export class ReasoningChatOpenAI extends ChatOpenAICompletions {
         ...(messageChunk.additional_kwargs || {}),
         reasoning_content: delta.reasoning_content,
       };
+    }
+    const kwargsAudio = messageChunk.additional_kwargs?.audio as { transcript?: string; data?: string } | undefined;
+    if (delta?.audio || kwargsAudio) {
+      // 语音回复流:文本经 delta.audio.transcript 下发(此时 delta.content 为空),映射为正文以复用文字流;
+      // 音频 PCM 帧暂存 __nb_audio_frames,由 _streamResponseChunks 聚合并剥离。
+      // 必须删除基类塞入的 additional_kwargs.audio:否则帧数据聚合进消息 metadata(几百 KB),
+      // 且历史重放时被序列化成非法请求(实测 400 "content: got an object")
+      const transcript = delta?.audio?.transcript ?? kwargsAudio?.transcript;
+      const data = delta?.audio?.data ?? kwargsAudio?.data;
+      if (typeof transcript === 'string' && transcript && !delta?.content) {
+        messageChunk.content = ((messageChunk.content as string) || '') + transcript;
+      }
+      if (typeof data === 'string' && data) {
+        messageChunk.additional_kwargs = {
+          ...(messageChunk.additional_kwargs || {}),
+          __nb_audio_frames: [data],
+        };
+      }
+      if (messageChunk.additional_kwargs?.audio) {
+        delete messageChunk.additional_kwargs.audio;
+      }
     }
     return messageChunk;
   }

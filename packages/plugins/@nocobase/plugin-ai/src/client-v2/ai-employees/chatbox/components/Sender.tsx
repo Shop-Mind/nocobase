@@ -23,9 +23,11 @@ import { useChatConversationsStore } from '../stores/chat-conversations';
 import { AIEmployeeSwitcher } from './AIEmployeeSwitcher';
 import { AddContextButton } from '../../AddContextButton';
 import { ContextItem } from './ContextItem';
+import { DictationButton } from './DictationButton';
 import { FileCardList, useAttachmentFileCards } from './Attachments';
 import { ModelSwitcher } from './ModelSwitcher';
 import { SearchSwitch } from './SearchSwitch';
+import { VoiceReplySwitch } from './VoiceReplySwitch';
 
 type SenderRef = GetRef<typeof AntSender> & {
   nativeElement?: HTMLElement;
@@ -294,7 +296,9 @@ const SenderFooter: React.FC<{
           ignore={(key) => key === 'flow-model.variable'}
         />
         <UploadFiles disabled={disabled} />
+        <DictationButton disabled={disabled} />
         <SearchSwitch disabled={disabled} />
+        <VoiceReplySwitch disabled={disabled} />
         <AIEmployeeSwitcher disabled={readonly} />
         <ModelSwitcher disabled={disabled} />
       </Flex>

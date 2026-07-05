@@ -19,6 +19,16 @@ import { AIMessage, AIMessageChunk } from '@langchain/core/messages';
 import { Context } from '@nocobase/actions';
 import '@langchain/core/utils/stream';
 import { LLMResult } from '@langchain/core/outputs';
+import { MediaGenChatModel } from './common/image-gen';
+import {
+  audioMimeToFormat,
+  MediaTaskInput,
+  MediaTaskInvoker,
+  MediaTaskOutput,
+  openAIMediaTaskInvoker,
+} from './common/media-task';
+import { withMediaPersistence } from './common/media-persist';
+import { getModelCapability, ModelCapability } from './common/model-capability';
 import { ContentBlock } from '@langchain/core/messages';
 import { CachedDocumentLoader, SUPPORTED_DOCUMENT_EXTNAMES } from '../document-loader';
 import path from 'node:path';
@@ -108,8 +118,47 @@ export abstract class LLMProvider {
     this.serviceOptions = resolveServiceOptions(serviceOptions, app);
     if (modelOptions) {
       this.modelOptions = modelOptions;
-      this.chatModel = this.createModel();
+      this.chatModel = this.getChatModel();
     }
+  }
+
+  // 统一的模型工厂入口(构造器与会话管线共用):生成类模型(生图/生视频)走通用媒体生成通道,
+  // 任何提供商换模型即用;非生成模型走各提供商的 createModel 原有实现
+  getChatModel(): BaseChatModel {
+    return this.maybeCreateMediaGenModel() ?? this.createModel();
+  }
+
+  // 模型能力查询:统一走能力注册中心(env 覆盖 → 内置家族规则 → LiteLLM 目录 → 默认 chat),
+  // 提供商可覆盖以精确声明自家模型
+  getModelCapability(model: string): ModelCapability {
+    return getModelCapability(model);
+  }
+
+  // 媒体任务调用:默认 OpenAI 标准端点组(images/generations、audio/speech、audio/transcriptions,
+  // video 回落 chat/completions 形状);协议不同的提供商(DashScope 原生、Gemini 等)覆盖本方法
+  protected createMediaTaskInvoker(): MediaTaskInvoker {
+    return openAIMediaTaskInvoker({
+      apiKey: this.serviceOptions?.apiKey,
+      baseURL: this.getResolvedBaseURL(),
+    });
+  }
+
+  // 一次性媒体任务(消息朗读、听写等):与对话通道共用适配器与 File Manager 转存
+  async invokeMediaTask(input: MediaTaskInput): Promise<MediaTaskOutput> {
+    return withMediaPersistence(this.app, this.createMediaTaskInvoker())(input);
+  }
+
+  protected maybeCreateMediaGenModel(): BaseChatModel | null {
+    const model = this.modelOptions?.model as string | undefined;
+    if (!model) {
+      return null;
+    }
+    const { task } = this.getModelCapability(model);
+    if (task !== 'image_gen' && task !== 'video_gen' && task !== 'tts') {
+      return null;
+    }
+    // 产物先转存 File Manager(消灭服务商临时链接),再进对话通道渲染
+    return new MediaGenChatModel({ model, task, invoker: (input) => this.invokeMediaTask(input) });
   }
 
   protected getModelRequestBuilder(_model?: string): LLMModelRequestBuilder | null {
@@ -233,6 +282,10 @@ export abstract class LLMProvider {
   }
 
   protected isApiSupportedAttachment(attachment: AttachmentModel): boolean {
+    // 音频附件仅在当前模型具备音频输入能力(omni/audio/asr 系)时才转内容块,否则走友好提示路径
+    if (attachment?.mimetype?.startsWith('audio/')) {
+      return this.getModelCapability(String(this.modelOptions?.model || '')).input.includes('audio');
+    }
     const media = ['image/'];
     const pdf = ['application/pdf'];
     const supportedMedia = media.some((it) => attachment?.mimetype?.startsWith(it));
@@ -256,6 +309,18 @@ export abstract class LLMProvider {
           type: 'image_url',
           image_url: {
             url: `data:image/${attachment.mimetype.split('/')[1]};base64,${data}`,
+          },
+        },
+      } as ParsedAttachmentResult;
+    } else if (attachment.mimetype.startsWith('audio/')) {
+      // OpenAI 标准 input_audio 内容块(qwen-omni/qwen-audio/gpt-4o-audio 兼容形通用)
+      return {
+        placement: 'contentBlocks',
+        content: {
+          type: 'input_audio',
+          input_audio: {
+            data,
+            format: audioMimeToFormat(attachment.mimetype),
           },
         },
       } as ParsedAttachmentResult;

@@ -14,6 +14,7 @@ import {
   Button,
   Card,
   Form as AntdForm,
+  Image,
   Input,
   Modal,
   Space,
@@ -65,6 +66,23 @@ export const Markdown: React.FC<{
     code: (props: CodeProps) => <Code {...props} message={message} />,
     form: (props: FormProps) => <FormRenderer {...props} message={message} />,
     echarts: (props: EchartsProps) => <Echarts {...props} index={getIndex('echarts')} message={message} />,
+    // 会话内图片按聊天气泡规格收敛(ChatGPT 风格):小尺寸圆角预览,点击经 antd Image 弹出大图查看
+    img: ({ node: _node, src, alt }: { node?: unknown; src?: string; alt?: string }) => (
+      <Image
+        src={src}
+        alt={alt || 'image'}
+        style={{ maxWidth: 280, maxHeight: 280, width: '100%', height: 'auto', borderRadius: 12, display: 'block' }}
+        preview={{ maskClassName: 'ai-chat-image-preview-mask' }}
+      />
+    ),
+    // 会话内视频同样收敛尺寸,圆角,不超出气泡宽度
+    video: ({ node: _node, ...props }: React.ComponentProps<'video'> & { node?: unknown }) => (
+      <video {...props} controls style={{ maxWidth: '100%', width: 320, borderRadius: 12, display: 'block' }} />
+    ),
+    // AI 生成的语音:原生播放条,宽度与视频一致
+    audio: ({ node: _node, ...props }: React.ComponentProps<'audio'> & { node?: unknown }) => (
+      <audio {...props} controls style={{ maxWidth: '100%', width: 320, display: 'block' }} />
+    ),
   } as unknown as Components;
 
   return (
@@ -77,10 +95,13 @@ export const Markdown: React.FC<{
             rehypeSanitize,
             {
               ...defaultSchema,
-              tagNames: [...(defaultSchema.tagNames ?? []), 'echarts', 'form', 'collections'],
+              tagNames: [...(defaultSchema.tagNames ?? []), 'echarts', 'form', 'collections', 'video', 'audio'],
               attributes: {
                 ...defaultSchema.attributes,
                 form: ['uid', 'datasource', 'collection'],
+                // 允许 AI 生成的视频/语音在会话内直接播放(src 仍受 sanitize 协议校验;controls 交给用户操作)
+                video: ['src', 'controls', 'width', 'height', 'poster'],
+                audio: ['src', 'controls', 'preload'],
               },
             },
           ],

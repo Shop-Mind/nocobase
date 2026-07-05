@@ -59,7 +59,13 @@ const originalWhitelist = process.env.SERVER_REQUEST_WHITELIST;
 
 describe('LLM provider baseURL guard', () => {
   afterEach(() => {
-    process.env.SERVER_REQUEST_WHITELIST = originalWhitelist;
+    // 注意:originalWhitelist 为 undefined 时不能直接赋值——process.env 会把它串化成 "undefined",
+    // 污染同进程后续测试文件的 URL 白名单
+    if (originalWhitelist === undefined) {
+      delete process.env.SERVER_REQUEST_WHITELIST;
+    } else {
+      process.env.SERVER_REQUEST_WHITELIST = originalWhitelist;
+    }
   });
 
   it('normalizes rendered baseURL and preserves nested paths when building request URLs', () => {

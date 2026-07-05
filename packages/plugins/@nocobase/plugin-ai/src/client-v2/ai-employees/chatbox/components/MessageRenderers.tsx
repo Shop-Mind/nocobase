@@ -9,8 +9,16 @@
 
 import React, { memo, useEffect, useMemo } from 'react';
 import { Bubble } from '@ant-design/x';
-import { Alert, Button, Collapse, Flex, Space, Spin, theme, Tooltip, Typography } from 'antd';
-import { CopyOutlined, EditOutlined, LoadingOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { Alert, App as AntdApp, Button, Collapse, Flex, Space, Spin, theme, Tooltip, Typography } from 'antd';
+import {
+  CopyOutlined,
+  EditOutlined,
+  LoadingOutlined,
+  PauseCircleOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+  SoundOutlined,
+} from '@ant-design/icons';
 import { toToolsMap } from '@nocobase/client-v2';
 import { observer } from '@nocobase/flow-engine';
 import type { Message, Task } from '../../types';
@@ -21,6 +29,7 @@ import { useChatBoxActions } from '../hooks/useChatBoxActions';
 import { useChatMessageActions } from '../hooks/useChatMessageActions';
 import { useChatBoxStore } from '../stores/chat-box';
 import { useChatConversationsStore } from '../stores/chat-conversations';
+import { useMessageTTS, useTTSAvailable } from '../hooks/useTTSSpeech';
 import { FileCardList } from './Attachments';
 import { Actions } from './Actions';
 import { ContextItem } from './ContextItem';
@@ -218,6 +227,18 @@ export const AIMessage: React.FC<{
   const currentEmployee = useChatBoxStore.use.currentEmployee();
   const readonly = useChatBoxStore.use.readonly();
   const { resendMessages } = useChatMessageActions();
+  const { message: antdMessage } = AntdApp.useApp();
+  const ttsAvailable = useTTSAvailable();
+  const { state: ttsState, toggle: toggleTTS } = useMessageTTS();
+  const readAloud = async () => {
+    try {
+      await toggleTTS({ sessionId: currentConversation, messageId: msg.messageId });
+    } catch (error) {
+      const detail = (error as { response?: { data?: { errors?: Array<{ message?: string }> } } })?.response?.data
+        ?.errors?.[0]?.message;
+      antdMessage.error(detail || (error as Error)?.message || t('Text-to-speech failed'));
+    }
+  };
   const footerButtonStyle: React.CSSProperties = {
     color: token.colorTextSecondary,
     fontSize: token.fontSizeSM,
@@ -262,6 +283,25 @@ export const AIMessage: React.FC<{
             size="small"
             style={footerButtonStyle}
             icon={<CopyOutlined style={footerIconStyle} onClick={copy} />}
+          />
+        ) : null}
+        {ttsAvailable && typeof msg.content === 'string' && msg.content && msg.messageId ? (
+          <Button
+            aria-label={t(ttsState === 'idle' ? 'Read aloud' : 'Stop reading')}
+            color="default"
+            variant="text"
+            size="small"
+            style={footerButtonStyle}
+            onClick={readAloud}
+            icon={
+              ttsState === 'loading' ? (
+                <LoadingOutlined style={footerIconStyle} />
+              ) : ttsState === 'playing' ? (
+                <PauseCircleOutlined style={footerIconStyle} />
+              ) : (
+                <SoundOutlined style={footerIconStyle} />
+              )
+            }
           />
         ) : null}
       </Space>
