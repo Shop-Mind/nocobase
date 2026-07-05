@@ -1,6 +1,6 @@
 # AI 员工全模态通用化 · 分阶段实施计划(v1)
 
-> 日期:2026-07-05 · 状态:**待批准执行** · 前置调研已完成(百炼/OpenAI/Gemini/火山协议矩阵 + 能力元数据目录 + 语音 UI 范式,要点内嵌各节)
+> 日期:2026-07-05 · 状态:**Phase 0–8 全部完成**(2026-07-06)· 前置调研已完成(百炼/OpenAI/Gemini/火山协议矩阵 + 能力元数据目录 + 语音 UI 范式,要点内嵌各节)
 > 目标:抽屉支持**文本 / 视觉 / 生图 / 改图 / 视频 / 语音(TTS·ASR·音频理解)/ 全模态 Omni**,**换模型即切能力,不为单个模型写代码**。
 
 ## 调研核心结论(架构依据)
@@ -147,15 +147,38 @@
 
 **验收**:逐一切换 5 类模型,徽标/控件/占位/提示全部按能力变化;视频生成中可取消;文本模型贴图有提示不再瞎猜。
 
-## Phase 7 — 多服务商横向打通
+## Phase 7 — 多服务商横向打通 ✅ 已完成(2026-07-06,真实 Key 验证待用户配置)
+
+> 落地:①OpenAI——零代码,gpt-image-1/dall-e/tts-1/whisper-1 直接走 Phase 1 基类三端点组;
+> ②Gemini——GoogleGenAIProvider 覆盖 image_gen:原生 generateContent(x-goog-api-key,
+> 参考图 inline_data,产物 inlineData base64 经统一转存);③火山方舟——新 provider `volcengine-ark`
+> (chat/视觉/深度思考走 OpenAI 兼容 + reasoning_content;Seedream 生图 = 基类 images/generations;
+> Seedance 视频 = /contents/generations/tasks 任务式提交+轮询,支持取消);④豆包语音(openspeech)
+> **明确不做**:独立鉴权体系(app token 而非 API Key)+ WebSocket 二进制协议,与 LLM 服务的
+> Key 配置模型不兼容,收益不抵复杂度——TTS/ASR 需求由百炼(qwen3-tts/asr)与 OpenAI(tts-1/whisper)覆盖。
+> 验收记录:104 条单测(Gemini 请求形状/inlineData、Ark 生图路由/视频轮询/失败与取消、
+> doubao 家族能力分类);ai:listLLMProviders 含 volcengine-ark。
+> 真实 Key 冒烟待用户在 LLM 服务里配置任一家后按抽屉流程验证(设计即零代码)。
 
 **实施**:OpenAI 服务(gpt-image-1 生图、tts-1、whisper-1)走 Phase 1 的三端点默认实现;Gemini 兼容层 chat/生图 + 原生 generateContent 适配器;火山 Ark(chat 兼容、Seedream 生图 OpenAI 形、Seedance 视频任务式变体);豆包语音(openspeech,独立鉴权+WS)**明确不做**,记录原因。
 
 **验收**:配任一家 Key 后,同一抽屉切该家的 chat/vl/生图模型即用,零代码改动;能力徽标正确。
 
-## Phase 8 — 实时语音(远期,独立立项,本轮不做)
+## Phase 8 — 实时语音通话 ✅ 已完成并验收(2026-07-06)
 
-WebSocket Realtime(qwen-omni-realtime / CosyVoice 流式 TTS / 实时 ASR)= 独立"通话"入口(业界范式:与听写分离的波形图标),协议与会话管线完全不同,待 Phase 0–7 稳定后单独规划。
+> 落地:「票据换连接 + 服务端 WS 中继」架构,Key 绝不出服务端——
+> ①`aiConversations:realtimeSession` 发 60s 一次性票据(crypto.randomUUID,单次消费即删);
+> ②`Gateway.registerWsHandler` 注册 `/ws/ai-realtime`:验票 → 持 Key 直连
+> `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`(OpenAI Realtime 兼容协议)→ 双向原样透传
+> (中继协议无关,未来接其他 Realtime 服务商零改动);③客户端独立"通话"入口(电话图标,
+> 与听写分离):麦克风 ScriptProcessor 采集 → 线性重采样 16k PCM16 上行,response.audio.delta
+> (24k PCM16)排队播放,助手字幕实时上屏,speech_started 打断清空播放队列;
+> ④模型解析:env `AI_REALTIME_MODEL=<llmService>:<model>`(已配 qwen3-omni-flash-realtime)
+> 或启用模型含 realtime;未配置则入口隐藏。注意:.env 变更需整个 dev 进程重启(child 只继承父 env)。
+> 验收记录:单测 4 条(模型解析/票据一次性);真实 E2E 6/6 PASS——node 客户端经中继流入 TTS wav
+> (重采样 16k),复读机指令下模型逐字复述「欢迎使用懂电智能助手,祝您生意兴隆。」,
+> 语音回复 142KB 音频帧,response.done 正常;票据复用与伪造均被 401 拒绝。
+> 浏览器侧(麦克风/播放/打断体验)留用户实测。CosyVoice 流式 TTS / 实时 ASR 独立协议,不在本期。
 
 ---
 
