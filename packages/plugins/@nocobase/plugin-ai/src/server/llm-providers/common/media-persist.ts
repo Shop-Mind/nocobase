@@ -44,13 +44,18 @@ function guessExt(sourceUrl: string, mimetype?: string | null): string {
   return m ? '.' + m[1].toLowerCase() : '';
 }
 
+interface StoredMediaFile {
+  fileId: number | string;
+  url: string;
+}
+
 async function storeBuffer(
   app: Application,
   buf: Buffer,
   ext: string,
   mimetype?: string,
   sourceUrl?: string,
-): Promise<string> {
+): Promise<StoredMediaFile> {
   const fileManager = app.pm.get('file-manager') as PluginFileManagerServer;
   if (!fileManager?.createFileRecord) {
     throw new Error('file-manager plugin unavailable');
@@ -66,13 +71,13 @@ async function storeBuffer(
     // 记录本身不含 url 字段,访问地址由存储引擎按 baseUrl/path/filename 计算
     const url = await fileManager.getFileURL(created as never);
     if (!url) throw new Error('file record created without url');
-    return url;
+    return { fileId: created.get('id') as number | string, url };
   } finally {
     await rm(tmp, { force: true });
   }
 }
 
-async function downloadToStorage(app: Application, sourceUrl: string): Promise<string> {
+async function downloadToStorage(app: Application, sourceUrl: string): Promise<StoredMediaFile> {
   const resp = await fetch(sourceUrl, { signal: AbortSignal.timeout(120000) });
   if (!resp.ok) throw new Error(`下载失败 HTTP ${resp.status}`);
   const mimetype = resp.headers.get('content-type')?.split(';')[0]?.trim() || undefined;
@@ -82,10 +87,13 @@ async function downloadToStorage(app: Application, sourceUrl: string): Promise<s
 
 export async function persistMediaTaskOutput(app: Application, output: MediaTaskOutput): Promise<MediaTaskOutput> {
   const urls: string[] = [];
+  const files: StoredMediaFile[] = [];
   let persisted = true;
   for (const url of output.urls) {
     try {
-      urls.push(await downloadToStorage(app, url));
+      const stored = await downloadToStorage(app, url);
+      urls.push(stored.url);
+      files.push(stored);
     } catch (e) {
       app.logger?.warn?.(`[ai media persist] download failed: ${(e as Error)?.message}`, { sourceUrl: url });
       urls.push(url);
@@ -95,9 +103,14 @@ export async function persistMediaTaskOutput(app: Application, output: MediaTask
   const leftoverBinaries: NonNullable<MediaTaskOutput['binaries']> = [];
   for (const binary of output.binaries || []) {
     try {
-      urls.push(
-        await storeBuffer(app, Buffer.from(binary.base64, 'base64'), guessExt('', binary.mimeType), binary.mimeType),
+      const stored = await storeBuffer(
+        app,
+        Buffer.from(binary.base64, 'base64'),
+        guessExt('', binary.mimeType),
+        binary.mimeType,
       );
+      urls.push(stored.url);
+      files.push(stored);
     } catch (e) {
       app.logger?.warn?.(`[ai media persist] store binary failed: ${(e as Error)?.message}`);
       leftoverBinaries.push(binary);
@@ -109,6 +122,7 @@ export async function persistMediaTaskOutput(app: Application, output: MediaTask
     urls,
     binaries: leftoverBinaries.length ? leftoverBinaries : undefined,
     persisted,
+    files: files.length ? files : undefined,
   };
 }
 

@@ -27,10 +27,12 @@ export interface MediaTaskInput {
   options?: Record<string, unknown>;
 }
 
-// 超时与用户取消组合;signal 缺省时退化为纯超时
+// 超时与用户取消组合;signal 缺省时退化为纯超时。
+// AbortSignal.any 运行时(Node ≥20.3)已支持,但声明构建所用 TS lib 尚未收录,故经类型断言访问。
+type AbortSignalWithAny = typeof AbortSignal & { any(signals: AbortSignal[]): AbortSignal };
 export function taskSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
   const timeout = AbortSignal.timeout(timeoutMs);
-  return signal ? AbortSignal.any([timeout, signal]) : timeout;
+  return signal ? (AbortSignal as AbortSignalWithAny).any([timeout, signal]) : timeout;
 }
 
 // 二进制产物(gpt-image 的 b64_json、OpenAI TTS 的音频流):Phase 2 统一转存 File Manager,当前原样返回
@@ -45,6 +47,9 @@ export interface MediaTaskOutput {
   binaries?: MediaTaskBinary[];
   // 产物已全部转存 File Manager(urls 为本地地址);false/缺省 = 存在临时链接,渲染层保留时效提示
   persisted?: boolean;
+  // 转存成功的产物对应的 File Manager 附件记录(与 urls 中的本地地址一一对应),
+  // 供业务插件(如 ai-listing 候选资产)直接关联文件而无需二次下载
+  files?: Array<{ fileId: number | string; url: string }>;
 }
 
 export type MediaTaskInvoker = (input: MediaTaskInput) => Promise<MediaTaskOutput>;
@@ -174,6 +179,75 @@ export async function openAIImagesGeneration(
   return { urls, binaries };
 }
 
+// 拆解 data:image/*;base64(源图内联):返回 base64 与 mime。非 data URI(已是 http URL)返回 null。
+export function parseImageDataURI(uri: string): { base64: string; mime: string } | null {
+  const m = String(uri || '').match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+  if (!m) return null;
+  return { mime: m[1], base64: m[2] };
+}
+
+// 形状②a-edit:OpenAI images/edits(带源图编辑)。**有源图时必须走它而非 images/generations**——
+// generations 不接收 image,源图会被丢弃、退化成纯文生图(与原图无关)。gpt-image 系支持 image[] 多图输入
+// 与可选 mask(局部重绘)。上游偶发 TLS(bad record MAC)/500 抖动,对这类瞬时错误做少量重试。
+export async function openAIImagesEdit(
+  opts: MediaTaskEndpointOptions,
+  input: MediaTaskInput,
+): Promise<MediaTaskOutput> {
+  const params = (input.options?.parameters as Record<string, unknown>) || {};
+  const maskUrl = input.options?.maskImageUrl as string | undefined; // 硬 mask 预留(前端产二值 mask 时透传)
+  const buildForm = async (): Promise<FormData> => {
+    const form = new FormData();
+    form.append('model', input.model);
+    form.append('prompt', input.prompt);
+    if (params.size) form.append('size', String(params.size));
+    form.append('n', String(Math.max(1, Math.min(Number(params.n) || 1, 4))));
+    const multi = input.images.length > 1;
+    input.images.forEach((uri, i) => {
+      const p = parseImageDataURI(uri);
+      if (!p) return;
+      const blob = new Blob([Buffer.from(p.base64, 'base64')], { type: p.mime });
+      form.append(multi ? 'image[]' : 'image', blob, `image${i}.${p.mime.split('/')[1] || 'png'}`);
+    });
+    if (maskUrl) {
+      const mr = await fetch(maskUrl, { signal: taskSignal(30000, input.signal) });
+      if (mr.ok) {
+        form.append('mask', new Blob([Buffer.from(await mr.arrayBuffer())], { type: 'image/png' }), 'mask.png');
+      }
+    }
+    return form;
+  };
+  let lastErr = '图像编辑失败';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const resp = await fetch(`${opts.baseURL.replace(/\/$/, '')}/images/edits`, {
+      method: 'POST',
+      headers: authHeaders(opts.apiKey),
+      body: await buildForm(),
+      signal: taskSignal(180000, input.signal),
+    });
+    const json = (await resp.json().catch(() => ({}))) as ErrorPayload & {
+      data?: Array<{ url?: string; b64_json?: string }>;
+    };
+    if (resp.ok) {
+      const data = json?.data || [];
+      const urls = data.map((d) => d?.url).filter((u): u is string => typeof u === 'string');
+      const binaries = data
+        .filter((d) => typeof d?.b64_json === 'string')
+        .map((d) => ({ base64: d.b64_json as string, mimeType: 'image/png' }));
+      if (!urls.length && !binaries.length) {
+        throw new Error('模型未返回图像结果');
+      }
+      return { urls, binaries };
+    }
+    lastErr = errorMessage(resp.status, json, '图像编辑失败');
+    // 仅对上游瞬时错误(TLS bad record MAC / 5xx / EOF / 超时)重试;4xx(参数/鉴权/限流)立即抛出
+    const transient = resp.status >= 500 && /tls|bad record mac|internal_server_error|timeout|eof/i.test(lastErr);
+    if (!transient || attempt === 2) {
+      throw new Error(lastErr);
+    }
+  }
+  throw new Error(lastErr);
+}
+
 // 形状②b:OpenAI audio/speech(响应体是音频二进制流)
 export async function openAISpeech(opts: MediaTaskEndpointOptions, input: MediaTaskInput): Promise<MediaTaskOutput> {
   const resp = await fetch(`${opts.baseURL.replace(/\/$/, '')}/audio/speech`, {
@@ -231,7 +305,9 @@ export function openAIMediaTaskInvoker(opts: MediaTaskEndpointOptions): MediaTas
   return async (input: MediaTaskInput): Promise<MediaTaskOutput> => {
     switch (input.task) {
       case 'image_gen':
-        return openAIImagesGeneration(opts, input);
+        // 有源图 = 编辑(走 images/edits 带图);无源图 = 纯文生图(images/generations)。
+        // 关键:generations 不接收 image,若拿它做编辑会丢源图、退化成与原图无关的文生图。
+        return input.images?.length ? openAIImagesEdit(opts, input) : openAIImagesGeneration(opts, input);
       case 'tts':
         return openAISpeech(opts, input);
       case 'asr':

@@ -136,6 +136,22 @@ describe('openAIMediaTaskInvoker routing', () => {
     expect((await invoker(taskInput({ task: 'tts' }))).binaries?.length).toBe(1);
     expect((await invoker(taskInput({ task: 'video_gen' }))).urls).toEqual(['https://x/v.mp4']);
   });
+
+  // 关键:有源图的 image_gen 必须走 images/edits(带图编辑),否则 generations 会丢源图退化成纯文生图
+  it('image_gen with a source image routes to images/edits (multipart)', async () => {
+    const calls: Array<{ url: string; init: { body?: unknown } }> = [];
+    mockFetch((url, init) => {
+      calls.push({ url, init });
+      if (url.endsWith('/images/edits')) return jsonResp({ data: [{ b64_json: 'ZWRpdA==' }] });
+      if (url.endsWith('/images/generations')) return jsonResp({ data: [{ url: 'https://x/gen.png' }] });
+      return jsonResp({});
+    });
+    const invoker = openAIMediaTaskInvoker(OPTS);
+    const out = await invoker(taskInput({ task: 'image_gen', images: ['data:image/png;base64,QUJD'] }));
+    expect(calls[calls.length - 1].url).toBe('https://api.example.com/v1/images/edits');
+    expect(calls[calls.length - 1].init.body).toBeInstanceOf(FormData);
+    expect(out.binaries?.[0]).toEqual({ base64: 'ZWRpdA==', mimeType: 'image/png' });
+  });
 });
 
 describe('audio data helpers', () => {
@@ -248,6 +264,55 @@ describe('shapes 3 & 4: DashScope native sync / async task', () => {
     expect(result.urls).toEqual(['https://x/wan.png']);
     expect(calls[0].url).toBe(`${NATIVE}/services/aigc/text2image/image-synthesis`);
     expect((calls[0].init.headers as Record<string, string>)['X-DashScope-Async']).toBe('enable');
+  });
+
+  it('wanx imageedit: routes to image2image endpoint with function and base image', async () => {
+    mockFetch((url) => {
+      if (url.includes('/tasks/')) {
+        return jsonResp({ output: { task_status: 'SUCCEEDED', results: [{ url: 'https://x/edited.png' }] } });
+      }
+      return jsonResp({ output: { task_id: 't-9' } });
+    });
+    const result = await provider('wanx2.1-imageedit').invoker()(
+      taskInput({
+        task: 'image_gen',
+        model: 'wanx2.1-imageedit',
+        prompt: '去掉图中文字水印',
+        images: ['data:image/png;base64,QUJD'],
+        options: { function: 'remove_watermark', parameters: { upscale_factor: 2 } },
+      }),
+    );
+    expect(result.urls).toEqual(['https://x/edited.png']);
+    expect(calls[0].url).toBe(`${NATIVE}/services/aigc/image2image/image-synthesis`);
+    expect((calls[0].init.headers as Record<string, string>)['X-DashScope-Async']).toBe('enable');
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(body.input).toMatchObject({
+      function: 'remove_watermark',
+      prompt: '去掉图中文字水印',
+      base_image_url: 'data:image/png;base64,QUJD',
+    });
+    expect(body.parameters).toMatchObject({ n: 1, upscale_factor: 2 });
+  });
+
+  it('qwen-image-edit: source images and n parameter pass through multimodal-generation', async () => {
+    mockFetch(() =>
+      jsonResp({
+        output: { choices: [{ message: { content: [{ image: 'https://x/e1.png' }, { image: 'https://x/e2.png' }] } }] },
+      }),
+    );
+    const result = await provider('qwen-image-edit-plus').invoker()(
+      taskInput({
+        task: 'image_gen',
+        model: 'qwen-image-edit-plus',
+        prompt: '把背景换成纯白',
+        images: ['data:image/jpeg;base64,QUJD'],
+        options: { parameters: { n: 2 } },
+      }),
+    );
+    expect(result.urls).toEqual(['https://x/e1.png', 'https://x/e2.png']);
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(body.input.messages[0].content[0]).toEqual({ image: 'data:image/jpeg;base64,QUJD' });
+    expect(body.parameters).toEqual({ n: 2 });
   });
 
   it('wan2.7-image: new-generation wan image models go through multimodal-generation sync-first', async () => {

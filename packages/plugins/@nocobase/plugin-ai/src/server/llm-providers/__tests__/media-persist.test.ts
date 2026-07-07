@@ -42,6 +42,8 @@ describe('persistMediaTaskOutput', () => {
     expect(result.urls).toEqual(['/storage/uploads/ai-media-test.png']);
     expect(result.persisted).toBe(true);
     expect(createFileRecord).toHaveBeenCalledOnce();
+    // 转存成功的产物同时给出附件记录,供业务插件(候选资产)直接关联,无需二次下载
+    expect(result.files).toEqual([{ fileId: 1, url: '/storage/uploads/ai-media-test.png' }]);
   });
 
   it('falls back to the original url when download fails', async () => {
@@ -53,6 +55,7 @@ describe('persistMediaTaskOutput', () => {
     const result = await persistMediaTaskOutput(app, { urls: ['https://oss.example.com/gone.png'] });
     expect(result.urls).toEqual(['https://oss.example.com/gone.png']);
     expect(result.persisted).toBe(false);
+    expect(result.files).toBeUndefined();
     expect(warn).toHaveBeenCalled();
   });
 

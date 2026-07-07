@@ -86,7 +86,10 @@ const BUILTIN_RULES: Array<{ pattern: RegExp; capability: ModelCapability }> = [
     capability: TASK_DEFAULTS.video_gen,
   },
   {
-    pattern: /^(qwen-image|wan[0-9x.]*[-.]?t2i|wanx|gpt-image|dall-e|z-image)|seedream|flux|imagen|(^|-)image(-|$)/,
+    // 生成与编辑同族(image_gen 的 input 已含 image):qwen-image-edit*、wanx2.1-imageedit、doubao-seededit*
+    // 由 imageedit/seededit 词根兜住,端点差异在各 provider 的 invoker 内路由
+    pattern:
+      /^(qwen-image|wan[0-9x.]*[-.]?t2i|wanx|gpt-image|dall-e|z-image)|seedream|seededit|imageedit|flux|imagen|(^|-)image(-|$)/,
     capability: TASK_DEFAULTS.image_gen,
   },
   {

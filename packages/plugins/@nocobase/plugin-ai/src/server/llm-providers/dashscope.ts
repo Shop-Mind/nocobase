@@ -290,6 +290,31 @@ export class DashscopeProvider extends LLMProvider {
       return { urls: [], text: texts.join('\n') };
     };
 
+    // function 式图像编辑(wanx2.1-imageedit 系:超分/扩图/去文字水印/mask 局部重绘等专项):仅异步,
+    // 专用 image2image 端点;base_image_url / mask_image_url 支持公网 URL 或 base64 data URI
+    const invokeImageEdit = async (input: MediaTaskInput): Promise<MediaTaskOutput> => {
+      if (!input.images.length) throw new Error('图像编辑需要源图输入');
+      const options = input.options || {};
+      const taskId = await submitAsyncTask(
+        `${nativeBase}/services/aigc/image2image/image-synthesis`,
+        {
+          model: input.model,
+          input: {
+            function: (options.function as string) || 'description_edit',
+            prompt: input.prompt,
+            base_image_url: input.images[0],
+            ...(options.maskImageUrl ? { mask_image_url: options.maskImageUrl } : {}),
+          },
+          parameters: { n: 1, ...((options.parameters as Record<string, unknown>) || {}) },
+        },
+        input.signal,
+      );
+      const output = await pollTask(taskId, 40, '2 分钟', input.signal);
+      const urls = extractUrls(output);
+      if (!urls.length) throw new Error('任务成功但未返回媒体 URL');
+      return { urls };
+    };
+
     // 万相文生图:仅异步,专用 image-synthesis 端点
     const invokeWanT2I = async (input: MediaTaskInput): Promise<MediaTaskOutput> => {
       const taskId = await submitAsyncTask(
@@ -323,6 +348,8 @@ export class DashscopeProvider extends LLMProvider {
                 { role: 'user', content: [...input.images.map((image) => ({ image })), { text: input.prompt }] },
               ],
             },
+            // 生成参数透传(n/size/negative_prompt/watermark 等):qwen-image-edit 系支持 n=1~6 多候选
+            ...(input.options?.parameters ? { parameters: input.options.parameters } : {}),
           };
       // 1) 同步优先
       let r = await submit(submitUrl, payload, false, input.signal);
@@ -356,8 +383,11 @@ export class DashscopeProvider extends LLMProvider {
           if (input.audios[0]?.startsWith('data:')) return invokeASRBase64(input);
           return /paraformer|fun-asr|sensevoice/i.test(input.model) ? invokeASRFile(input) : invokeASRSync(input);
         case 'image_gen':
+          // function 式编辑(wanx2.1-imageedit)先于 ^wanx 老一代规则判断,走 image2image 异步端点;
           // 仅老一代万相文生图(wan2.x-t2i-*/wanx*)走专用 image-synthesis 异步端点;
-          // 新一代 wan*-image(如 wan2.7-image)与 qwen-image 同挂 multimodal-generation(实测)
+          // 新一代 wan*-image(如 wan2.7-image)与 qwen-image(-edit)同挂 multimodal-generation(实测),
+          // 输入图经 messages content 透传——指令式改图与文生图同一条路
+          if (/imageedit/i.test(input.model)) return invokeImageEdit(input);
           return /^wan[0-9x.]*[-.]?t2i|^wanx/i.test(input.model) ? invokeWanT2I(input) : invokeGeneration(input);
         default:
           return invokeGeneration(input);
