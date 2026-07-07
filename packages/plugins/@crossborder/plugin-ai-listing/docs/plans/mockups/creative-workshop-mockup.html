@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>创意工坊 · 对标阿里国际站 · 功能 UI 设计原型</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-bg:#e6f4ff; --primary-2:#0958d9;
+    --purple:#722ed1; --purple-bg:#f9f0ff; --pink:#eb2f96;
+    --border:#e5e7eb; --border-2:#f0f0f0;
+    --text:#1f2328; --text-2:#6b7280; --text-3:#9ca3af;
+    --gold:#faad14; --gold-bg:#fffbe6; --green:#52c41a; --red:#ff4d4f;
+    --bg:#eef1f4; --card:#fff; --radius:8px; --shadow:0 6px 24px rgba(0,0,0,.12);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;}
+  a{color:inherit;}
+  .note{max-width:1280px;margin:16px auto 0;padding:12px 16px;background:var(--gold-bg);border:1px solid #ffe58f;border-radius:var(--radius);font-size:13px;color:#8a6d3b;line-height:1.7;}
+  .note b{color:#664d03;}
+  .note code{background:#fff7d6;padding:0 4px;border-radius:3px;font-size:12px;}
+
+  .app{max-width:1280px;margin:14px auto 40px;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);}
+  /* 顶部栏 */
+  .top{height:52px;background:linear-gradient(90deg,#0f1f3d,#15264a);color:#fff;display:flex;align-items:center;gap:14px;padding:0 16px;}
+  .top .brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;}
+  .top .brand .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#a06bff,#1677ff);display:grid;place-items:center;font-size:15px;}
+  .top .tabs{display:flex;gap:4px;background:rgba(255,255,255,.08);padding:3px;border-radius:9px;}
+  .top .tab{font-size:13px;padding:5px 16px;border-radius:7px;cursor:pointer;color:#c7d2e5;}
+  .top .tab.on{background:#fff;color:#15264a;font-weight:600;}
+  .top .ctx{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px;color:#c7d2e5;}
+  .top .chip{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);padding:4px 10px;border-radius:16px;}
+  .top .chip .dot{width:18px;height:18px;border-radius:4px;background:#3a557f;}
+  .top .back{border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:5px 12px;cursor:pointer;color:#fff;background:transparent;font-size:12px;}
+
+  /* 三栏主体 */
+  .body{display:flex;min-height:640px;}
+  /* 左:功能栏 */
+  .rail{width:96px;border-right:1px solid var(--border-2);background:#fafbfc;padding:8px 0;overflow-y:auto;flex-shrink:0;}
+  .rail .ritem{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 4px;cursor:pointer;color:var(--text-2);position:relative;}
+  .rail .ritem .ic{width:38px;height:38px;border-radius:10px;background:#fff;border:1px solid var(--border);display:grid;place-items:center;font-size:19px;transition:.15s;}
+  .rail .ritem .lb{font-size:11px;white-space:nowrap;}
+  .rail .ritem .new{position:absolute;top:5px;right:14px;font-size:9px;background:var(--red);color:#fff;border-radius:6px;padding:0 4px;line-height:14px;}
+  .rail .ritem:hover .ic{border-color:var(--primary);color:var(--primary);}
+  .rail .ritem.on{color:var(--primary);font-weight:600;}
+  .rail .ritem.on .ic{background:var(--primary-bg);border-color:var(--primary);color:var(--primary);box-shadow:0 0 0 3px rgba(22,119,255,.08);}
+  .rail .sep{height:1px;background:var(--border-2);margin:6px 14px;}
+
+  /* 中:专属表单 */
+  .form{flex:1;min-width:0;padding:18px 22px;overflow-y:auto;border-right:1px solid var(--border-2);}
+  .form-h{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
+  .form-h .ttl{font-size:18px;font-weight:600;}
+  .form-h .badge{font-size:11px;padding:1px 8px;border-radius:10px;background:var(--purple-bg);color:var(--purple);}
+  .form-h .badge.new{background:#fff1f0;color:var(--red);}
+  .form-sub{color:var(--text-2);font-size:12.5px;margin-bottom:16px;}
+
+  .fld{margin-bottom:18px;}
+  .fld > label{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;margin-bottom:8px;}
+  .fld .req{color:var(--red);}
+  .fld .opt{font-size:11px;font-weight:400;color:var(--text-3);}
+  .hint{font-size:11.5px;color:var(--text-3);margin-top:6px;line-height:1.5;}
+
+  /* 上传九宫 */
+  .up{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
+  .up .cell{position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;border:1px solid var(--border);background:#f4f5f7;}
+  .up .cell svg{width:100%;height:100%;display:block;}
+  .up .cell .ov{position:absolute;inset:0;background:rgba(0,0,0,.42);opacity:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;transition:.15s;}
+  .up .cell:hover .ov{opacity:1;}
+  .up .cell .ov button{font-size:11px;color:#fff;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.4);border-radius:5px;padding:2px 8px;cursor:pointer;}
+  .up .cell .tagm{position:absolute;left:4px;top:4px;font-size:9px;background:var(--gold);color:#fff;border-radius:3px;padding:0 4px;line-height:15px;}
+  .up .add{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border:1.5px dashed var(--border);color:var(--text-3);cursor:pointer;background:#fafbfc;}
+  .up .add .plus{font-size:22px;line-height:1;}
+  .up .add .cnt{font-size:11px;}
+  .up .cell.carried{border-color:#b7eb8f;box-shadow:0 0 0 2px rgba(82,196,26,.12);}
+  .up .cell .tagd{position:absolute;left:4px;top:4px;font-size:9px;background:#40a9ff;color:#fff;border-radius:3px;padding:0 4px;line-height:15px;}
+  .up .cell .selck{position:absolute;right:4px;top:4px;width:17px;height:17px;border-radius:5px;border:1.5px solid #fff;background:rgba(0,0,0,.28);z-index:2;}
+  .up .cell .selck.on{background:var(--green);border-color:var(--green);}
+  .up .cell .selck.on::after{content:"✓";color:#fff;font-size:11px;position:absolute;left:2px;top:-2px;font-weight:700;}
+  .carry-banner{display:flex;align-items:center;gap:9px;background:#f6ffed;border:1px solid #b7eb8f;border-radius:9px;padding:9px 12px;margin-bottom:10px;font-size:12.5px;color:#389e0d;}
+  .carry-banner b{color:#237804;}
+  .carry-banner .pill{margin-left:auto;font-size:11px;background:#fff;border:1px solid #b7eb8f;border-radius:12px;padding:2px 9px;color:#389e0d;}
+
+  /* 分段控件 / segmented */
+  .seg{display:inline-flex;background:#f0f2f5;border-radius:8px;padding:3px;gap:2px;}
+  .seg button{border:none;background:transparent;font-size:12.5px;padding:5px 14px;border-radius:6px;cursor:pointer;color:var(--text-2);}
+  .seg button.on{background:#fff;color:var(--primary);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.08);}
+  .seg.tier button.on{color:var(--purple);}
+
+  /* 文本域 */
+  .ta{width:100%;min-height:78px;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;resize:vertical;font-family:inherit;color:var(--text);}
+  .ta:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-bg);}
+  .ta-wrap{position:relative;}
+  .ta-wrap .cnt{position:absolute;right:10px;bottom:8px;font-size:11px;color:var(--text-3);}
+
+  /* 推荐提示词 */
+  .recos{background:var(--purple-bg);border:1px solid #efdbff;border-radius:10px;padding:12px;}
+  .recos-h{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--purple);margin-bottom:9px;}
+  .recos-h .ai{background:var(--purple);color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;}
+  .recos-h .swap{margin-left:auto;font-size:11.5px;color:var(--purple);cursor:pointer;font-weight:400;}
+  .reco{display:flex;align-items:flex-start;gap:8px;background:#fff;border:1px solid #efdbff;border-radius:8px;padding:9px 10px;margin-bottom:7px;cursor:pointer;transition:.12s;}
+  .reco:last-child{margin-bottom:0;}
+  .reco:hover{border-color:var(--purple);box-shadow:0 2px 8px rgba(114,46,209,.12);}
+  .reco .tx{flex:1;font-size:12.5px;color:var(--text);}
+  .reco .fill{font-size:11px;color:var(--purple);border:1px solid #d3adf7;border-radius:6px;padding:2px 9px;white-space:nowrap;background:#fff;}
+
+  /* chips 通用(模版/工艺/卖点/语言) */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip2{font-size:12.5px;padding:6px 13px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;color:var(--text-2);}
+  .chip2.on{border-color:var(--primary);color:var(--primary);background:var(--primary-bg);font-weight:600;}
+  .chip2 .ck{margin-right:5px;color:var(--primary);}
+
+  /* 网格选择(模特/模版缩略) */
+  .grid-pick{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;}
+  .gp{position:relative;aspect-ratio:3/4;border-radius:9px;overflow:hidden;border:2px solid transparent;cursor:pointer;background:#f0f0f0;}
+  .gp.on{border-color:var(--primary);}
+  .gp svg{width:100%;height:100%;display:block;}
+  .gp .cap{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);color:#fff;font-size:10px;padding:2px 6px;}
+  .gp .on-mk{position:absolute;right:4px;top:4px;width:18px;height:18px;border-radius:50%;background:var(--primary);color:#fff;display:none;place-items:center;font-size:11px;}
+  .gp.on .on-mk{display:grid;}
+
+  /* 颜色选择 */
+  .colors{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .sw{width:30px;height:30px;border-radius:8px;cursor:pointer;border:2px solid #fff;box-shadow:0 0 0 1px var(--border);}
+  .sw.on{box-shadow:0 0 0 2px var(--primary);}
+  .color-input{display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:12.5px;color:var(--text-2);}
+
+  /* 设置选区行 */
+  .mask-row{display:flex;align-items:center;gap:12px;background:#fff7e6;border:1px dashed #ffd591;border-radius:9px;padding:11px 13px;}
+  .mask-row .mi{font-size:22px;}
+  .mask-row .mt{flex:1;font-size:12.5px;}
+  .mask-row .mt b{color:#d46b08;}
+  .mask-row button{border:1px solid var(--gold);color:#d46b08;background:#fff;border-radius:7px;padding:6px 14px;font-size:12.5px;cursor:pointer;font-weight:600;}
+
+  /* select 下拉 */
+  .sel{border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;min-width:180px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239ca3af' fill='none' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 12px center;-webkit-appearance:none;appearance:none;color:var(--text);}
+
+  /* stepper */
+  .stepper{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  .stepper button{width:32px;height:34px;border:none;background:#fff;font-size:16px;cursor:pointer;color:var(--text-2);}
+  .stepper .v{width:40px;text-align:center;border-left:1px solid var(--border);border-right:1px solid var(--border);line-height:34px;font-size:13px;}
+
+  /* 底部生成栏 */
+  .genbar{position:sticky;bottom:-18px;margin:22px -22px -18px;padding:14px 22px;background:#fff;border-top:1px solid var(--border-2);display:flex;align-items:center;gap:22px;flex-wrap:wrap;box-shadow:0 -4px 16px rgba(0,0,0,.04);}
+  .genbar .grp{display:flex;flex-direction:column;gap:5px;}
+  .genbar .grp .k{font-size:11px;color:var(--text-3);}
+  .genbar .cost{margin-left:auto;text-align:right;}
+  .genbar .cost .k{font-size:11px;color:var(--text-3);}
+  .genbar .cost .v{font-size:14px;font-weight:600;color:var(--gold);}
+  .genbar .cost .v .bean{font-size:12px;}
+  .gen-btn{background:linear-gradient(135deg,#1677ff,#0958d9);color:#fff;border:none;border-radius:9px;padding:11px 30px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(22,119,255,.28);}
+  .gen-btn:hover{filter:brightness(1.05);}
+
+  /* 右:示例 / 结果 */
+  .preview{width:326px;flex-shrink:0;padding:18px 16px;background:#fafbfc;overflow-y:auto;}
+  .pv-h{font-size:12.5px;font-weight:600;color:var(--text-2);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
+  .compare{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff;}
+  .compare .imgs{display:flex;}
+  .compare .half{flex:1;position:relative;}
+  .compare .half svg{width:100%;display:block;aspect-ratio:1;}
+  .compare .half .lb{position:absolute;left:6px;top:6px;font-size:10px;background:rgba(0,0,0,.55);color:#fff;padding:1px 7px;border-radius:9px;}
+  .compare .half:first-child{border-right:2px solid #fff;}
+  .compare .cap{padding:8px 10px;font-size:11.5px;color:var(--text-2);border-top:1px solid var(--border-2);}
+
+  .results{margin-top:18px;}
+  .results-h{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;margin-bottom:10px;}
+  .results-h .n{color:var(--primary);}
+  .res-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .res{border:1px solid var(--border);border-radius:9px;overflow:hidden;background:#fff;}
+  .res .im{position:relative;aspect-ratio:1;background:#f0f0f0;}
+  .res .im svg{width:100%;height:100%;display:block;}
+  .res .im .bd{position:absolute;left:5px;top:5px;font-size:9px;background:var(--purple);color:#fff;border-radius:4px;padding:0 5px;line-height:15px;}
+  .res .acts{display:flex;border-top:1px solid var(--border-2);}
+  .res .acts button{flex:1;border:none;background:#fff;font-size:11.5px;padding:7px 0;cursor:pointer;color:var(--text-2);}
+  .res .acts button + button{border-left:1px solid var(--border-2);}
+  .res .acts button.adopt{color:var(--green);font-weight:600;}
+  .res .acts button.cmp{color:var(--primary);}
+
+  .empty{border:1.5px dashed var(--border);border-radius:10px;padding:26px 14px;text-align:center;color:var(--text-3);font-size:12px;line-height:1.7;}
+  .empty .ei{font-size:28px;opacity:.5;}
+
+  .flow{max-width:1280px;margin:12px auto 0;font-size:12px;color:var(--text-2);text-align:center;background:#fff;border:1px solid var(--border);border-radius:10px;padding:11px;}
+  .flow b{color:var(--primary);}
+  .flow .ar{color:var(--text-3);margin:0 8px;}
+
+  /* 智能视频面板 */
+  .video-pane{display:none;padding:24px;}
+  .video-pane.on{display:block;}
+  .vcat{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+  .vc{border:1px solid var(--border);border-radius:12px;padding:16px;background:#fff;position:relative;overflow:hidden;}
+  .vc .vh{display:flex;align-items:center;gap:9px;margin-bottom:8px;}
+  .vc .vh .vi{width:40px;height:40px;border-radius:10px;background:var(--purple-bg);display:grid;place-items:center;font-size:20px;}
+  .vc .vh .vt{font-size:15px;font-weight:600;}
+  .vc .vh .p0{margin-left:auto;font-size:10px;background:var(--primary-bg);color:var(--primary);padding:1px 7px;border-radius:8px;}
+  .vc .vd{font-size:12.5px;color:var(--text-2);line-height:1.6;}
+  .vc .ve{margin-top:9px;font-size:11px;color:var(--text-3);}
+  .vc .ve code{background:#f5f5f5;padding:0 4px;border-radius:3px;}
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+
+<div class="note">
+  🎨 <b>创意工坊 · 功能 UI 设计原型（对标阿里巴巴国际站官方）</b>。这是<b>可点击的高保真原型</b>，非最终实现——点左侧 14 个功能会切换「该功能的专属表单」，演示官方核心交互：
+  <b>商品图自动带入（无需重传）</b>、<b>多图上传(1/9)</b>、<b>专属表单</b>、<b>点图自动出推荐提示词</b>、<b>设置选区/换色/上传第二图/选模特/选工艺/卖点勾选</b>、<b>图片比例 + 张数 + 基础/进阶模型档 + i豆消耗</b>、顶部 <b>智能图片 / 智能视频</b> 双 tab。
+  确认设计方向后我再按 <code>P1→P6</code> 落地。测试出图统一走 <code>gpt-image-2</code>（不走阿里云）。
+</div>
+
+<div class="app">
+  <!-- 顶部 -->
+  <div class="top">
+    <div class="brand"><span class="logo">🎨</span> 创意工坊</div>
+    <div class="tabs">
+      <div class="tab on" data-mode="image" onclick="switchMode('image')">🖼️ 智能图片</div>
+      <div class="tab" data-mode="video" onclick="switchMode('video')">🎬 智能视频</div>
+    </div>
+    <div class="ctx">
+      <div class="chip"><span class="dot"></span> 当前商品：无线蓝牙耳机 Pro</div>
+      <button class="back">← 返回候选区</button>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- 左：功能栏 -->
+    <div class="rail" id="rail"></div>
+
+    <!-- 中：专属表单（智能图片） -->
+    <div class="form" id="form"></div>
+
+    <!-- 中+右合并：智能视频面板 -->
+    <div class="video-pane" id="videoPane" style="flex:1;border-right:1px solid var(--border-2);">
+      <div class="form-h"><span class="ttl">🎬 智能视频</span><span class="badge new">规划 P6</span></div>
+      <div class="form-sub">官方聚合 4 类视频能力。建议优先「图生视频」（最通用），主图视频走 VIAPI 模板剪辑另论。</div>
+      <div class="vcat">
+        <div class="vc">
+          <div class="vh"><span class="vi">🎞️</span><span class="vt">图生视频</span><span class="p0">优先落地</span></div>
+          <div class="vd">单张商品图 → 一段动态展示视频（环绕/推拉/漂浮）。最通用，先做。</div>
+          <div class="ve">端点 <code>wan2.2-i2v</code> / <code>wan2.6-i2v-flash</code>（便宜）/ <code>wan2.7-i2v</code>（高质）· 720P/1080P · 2–15s · 异步轮询</div>
+        </div>
+        <div class="vc">
+          <div class="vh"><span class="vi">🔀</span><span class="vt">首尾帧生视频</span></div>
+          <div class="vd">给首帧 + 尾帧两张图，AI 补全中间过渡动画。</div>
+          <div class="ve">端点 <code>wan2.2</code> 首尾帧系列</div>
+        </div>
+        <div class="vc">
+          <div class="vh"><span class="vi">✍️</span><span class="vt">文生视频</span></div>
+          <div class="vd">纯文字描述 → 视频。用于概念/氛围片。</div>
+          <div class="ve">端点 <code>wan / wanx</code> t2v</div>
+        </div>
+        <div class="vc">
+          <div class="vh"><span class="vi">🗣️</span><span class="vt">数字人口播</span></div>
+          <div class="vd">单图 + 音频 → 口播视频（虚拟主播讲解卖点）。</div>
+          <div class="ve">端点 <code>wan2.2-s2v</code> · EMO/LivePortrait/VideoRetalk</div>
+        </div>
+      </div>
+      <div class="empty" style="margin-top:18px;">🎬 视频面板为 P6 规划占位，落地后与图片一致：产候选 → 候选区 → 采纳 → 发布</div>
+    </div>
+
+    <!-- 右：示例 / 结果 -->
+    <div class="preview" id="preview"></div>
+  </div>
+</div>
+
+<div class="flow">
+  闭环复用（不推倒既有能力）：<b>创意工坊产候选</b> <span class="ar">→</span> 商品「AI 候选区」<span class="ar">→</span> 人工<b>对比 / 采纳</b>（audit actorType=user）<span class="ar">→</span> <b>发布（采纳集优先）</b>
+</div>
+
+<script>
+/* ---------- SVG 占位图 ---------- */
+function ph(kind, seed){
+  const pal = {
+    orig:['#dfe6ee','#c3d0e0'], white:['#ffffff','#f2f4f7'], scene:['#ffe7ba','#ffd591'],
+    erase:['#e6fffb','#b5f5ec'], color:['#efdbff','#d3adf7'], hd:['#e6f4ff','#bae0ff'],
+    model:['#fff0f6','#ffadd2'], logo:['#f6ffed','#d9f7be'], mixed:['#f0f5ff','#adc6ff']
+  };
+  const c = pal[kind] || pal.orig;
+  const s = seed||0;
+  return `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" fill="${c[0]}"/>
+    <ellipse cx="${50+ (s%3-1)*8}" cy="46" rx="24" ry="26" fill="${c[1]}"/>
+    <rect x="34" y="60" width="32" height="20" rx="4" fill="${c[1]}" opacity=".8"/>
+    <circle cx="42" cy="40" r="4" fill="#ffffff" opacity=".7"/>
+  </svg>`;
+}
+
+/* ---------- 14 功能定义 ---------- */
+const FUNCS = [
+  {key:'white_bg', icon:'⬜', label:'白底图', tier:'基础', cost:7, kind:'white',
+    sub:'一键抠图换纯白电商主图，主体不变、无 logo 无水印。', ratio:false,
+    fields:[{t:'upload'}],
+    example:['原图（杂乱背景）','纯白底成品']},
+  {key:'scene_gen', icon:'🏞️', label:'场景图', tier:'进阶', cost:51, kind:'scene',
+    sub:'把商品放进理想使用场景（桌面/户外/生活方式）。', ratio:true,
+    fields:[{t:'upload',single:true},{t:'templateTabs'},{t:'reco'},{t:'prompt',ph:'描述你想要的场景，如：北欧风木桌 + 晨光 + 咖啡杯…'}],
+    example:['原图（白底）','场景合成图']},
+  {key:'erase', icon:'🧽', label:'图片擦除', tier:'基础', cost:7, kind:'erase',
+    sub:'擦掉 logo / 水印 / 多余元素，可选涂抹指定区域。', ratio:false,
+    fields:[{t:'upload'},{t:'mask',opt:true,tip:'不涂抹=智能擦水印；涂抹=只擦你圈的区域'}],
+    example:['原图（带水印）','擦除后']},
+  {key:'recolor', icon:'🎨', label:'商品换色', tier:'进阶', cost:17, kind:'color',
+    sub:'圈出商品主体，换成指定颜色，保持材质与光影。', ratio:false,
+    fields:[{t:'upload',single:true},{t:'mask',tip:'涂抹要换色的区域（换色必需）'},{t:'color'},{t:'prompt',ph:'补充说明（可选），如：保留金属高光'}],
+    example:['原图（黑色）','换色后（蓝色）']},
+  {key:'logo', icon:'🏷️', label:'Logo定制', tier:'进阶', cost:17, kind:'logo', isNew:true,
+    sub:'把你的品牌 Logo 以真实工艺贴合到商品上。', ratio:false,
+    fields:[{t:'upload',single:true,cap:'商品图'},{t:'secondImage',cap:'上传 Logo 图',tip:'透明底 PNG 最佳'},{t:'position'},{t:'craft'}],
+    example:['商品图 + Logo','Logo 合成（丝网印）']},
+  {key:'model_shot', icon:'👤', label:'模特图', tier:'进阶', cost:17, kind:'model', isNew:true,
+    sub:'为服饰/配饰生成 AI 模特上身图，或选真人模板试穿。', ratio:true,
+    fields:[{t:'upload',single:true,cap:'商品/服饰图'},{t:'modelGrid'},{t:'prompt',ph:'补充：姿态 / 背景 / 风格（可选）'}],
+    example:['商品平铺图','AI 模特上身']},
+  {key:'hd', icon:'🔍', label:'高清图', tier:'基础', cost:3, kind:'hd',
+    sub:'无损放大分辨率、增强清晰度（纯放大，不改构图）。', ratio:false,
+    fields:[{t:'upload'},{t:'scaleSeg'}],
+    example:['原图（模糊 800px）','高清（2× 1600px）']},
+  {key:'detail', icon:'🔬', label:'细节图', tier:'进阶', cost:10, kind:'hd', isNew:true,
+    sub:'圈出商品局部（做工/材质/接口），裁剪并高清放大成细节特写。', ratio:false,
+    fields:[{t:'upload',single:true},{t:'mask',tip:'框选要突出的局部'}],
+    example:['整机图','接口细节特写']},
+  {key:'custom', icon:'💬', label:'指令生图', tier:'—', cost:0, kind:'mixed',
+    sub:'最自由：上传 1–3 张图 + 一句话指令，让 AI 按你说的改。', ratio:true,
+    fields:[{t:'upload'},{t:'prompt',ph:'例：把背景换成海边黄昏，商品加一点暖色反光',min:90}],
+    example:['原图','自由改图结果']},
+  {key:'translate', icon:'🌐', label:'图片翻译', tier:'基础', cost:3, kind:'mixed', isNew:true,
+    sub:'把详情图里的中文文字翻成目标语言，版式与背景保持不变。', ratio:false,
+    fields:[{t:'upload'},{t:'lang'}],
+    example:['中文详情图','英文详情图']},
+  {key:'material', icon:'🧵', label:'换材质', tier:'进阶', cost:0, kind:'color', isNew:true,
+    sub:'换商品材质表现（木纹/金属/皮革/磨砂），可传材质参考图。', ratio:false,
+    fields:[{t:'upload',single:true,cap:'商品图'},{t:'secondImage',cap:'材质参考图（可选）',tip:'不传则用文字描述'},{t:'mask',opt:true,tip:'涂抹只换局部材质（可选）'},{t:'prompt',ph:'例：把外壳换成拉丝铝金属质感'}],
+    example:['原图（塑料）','换材质（金属）']},
+  {key:'process', icon:'🏭', label:'生产流程图', tier:'进阶', cost:17, kind:'mixed', isNew:true,
+    sub:'把生产步骤生成成图文并茂的信息图（工厂实力展示）。', ratio:true,
+    fields:[{t:'upload',cap:'参考图（可选）'},{t:'prompt',ph:'按步骤描述生产流程：①选料 ②注塑 ③组装 ④质检 ⑤包装',min:110},{t:'styleSeg'}],
+    example:['步骤文字','流程信息图']},
+  {key:'selling_point', icon:'⭐', label:'营销卖点图', tier:'进阶', cost:17, kind:'mixed', isNew:true,
+    sub:'AI 看图提炼卖点，勾选后生成带文案的营销主图。', ratio:true,
+    fields:[{t:'upload',single:true},{t:'sellingPoints'},{t:'templateTabs',variant:'sp'}],
+    example:['商品图','卖点营销图']},
+  {key:'expand', icon:'📐', label:'图片改尺寸', tier:'—', cost:0, kind:'mixed', isNew:true,
+    sub:'扩图外补画布到目标平台比例（≠高清放大），主体不裁切。', ratio:false,
+    fields:[{t:'upload'},{t:'targetSize'}],
+    example:['原图（3:4）','改尺寸（1:1 外补）']},
+];
+
+const RATIOS = ['1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9','21:9'];
+const LANGS = ['英语','西班牙语','法语','德语','阿拉伯语','葡萄牙语','俄语','日语','韩语'];
+const CRAFTS = ['热转印','丝网印','烫金','刺绣','压印','激光雕刻','数码直喷','UV 打印','贴纸','喷墨','立体浮雕','彩色印刷'];
+const RECO_PROMPTS = [
+  '北欧原木桌面，清晨自然光从左侧洒入，旁边一杯手冲咖啡，营造温暖居家办公氛围',
+  '现代简约白色大理石台面，柔和顶光，背景虚化的绿植，突出商品高级质感',
+  '户外木质露营桌，暖调黄昏光线，远处虚化的山景，传达便携与生活方式',
+];
+const SELLING = ['主动降噪 40dB','40 小时长续航','蓝牙 5.4 秒连','IPX5 防水','低延迟游戏模式','入耳式贴合','Type-C 快充','双设备切换'];
+
+/* ---------- 状态 ---------- */
+let active = 'scene_gen';
+let generated = false;
+
+/* ---------- 渲染功能栏 ---------- */
+function renderRail(){
+  const el = document.getElementById('rail');
+  el.innerHTML = FUNCS.map(f =>
+    `<div class="ritem ${f.key===active?'on':''}" onclick="selectFunc('${f.key}')">
+       <div class="ic">${f.icon}</div><div class="lb">${f.label}</div>
+       ${f.isNew?'<span class="new">新</span>':''}
+     </div>`
+  ).join('');
+}
+
+/* ---------- 字段渲染器 ---------- */
+/* 商品图已带入：主图 + 详情图，随功能单/多图切换 */
+function fUpload(fld){
+  const single = !!fld.single;
+  const max = single ? 1 : 9;
+  const cap = fld.cap || '商品图片';
+  // 带入的商品图集：主图 + 4 张详情图
+  const carried = [{t:'主图',cls:'tagm'},{t:'详情',cls:'tagd'},{t:'详情',cls:'tagd'},{t:'详情',cls:'tagd'},{t:'详情',cls:'tagd'}];
+  const shown = single ? carried.slice(0,1).concat(carried.slice(1,4)) : carried; // 单图功能也列出详情图供切换
+  const selCount = single ? 1 : 3;
+  let cells = '';
+  shown.forEach((c,i)=>{
+    const on = single ? i===0 : i<selCount;
+    cells += `<div class="cell carried">${ph('orig',i)}
+      <span class="${c.cls}">${c.t}</span>
+      <span class="selck ${on?'on':''}"></span>
+      <div class="ov"><button>查看大图</button><button>移除</button></div></div>`;
+  });
+  const add = `<div class="cell add"><span class="plus">+</span><span class="cnt">上传新图</span></div>`;
+  const pick = single
+    ? '当前选中主图，点缩略图可切换要处理的图'
+    : `已勾选 ${selCount} 张（可多选，逐张生成候选）`;
+  return `<div class="fld"><label>🖼️ ${cap} <span class="opt">最多 ${max} 张</span></label>
+    <div class="carry-banner">✅ 已自动带入当前商品 <b>「无线蓝牙耳机 Pro」</b> 的主图 + 详情图，无需重新上传。<span class="pill">${pick}</span></div>
+    <div class="up">${cells}${shown.length<max?add:''}</div></div>`;
+}
+function fTemplateTabs(fld){
+  const tabs = fld.variant==='sp' ? ['按类目','营销主题','自传参考'] : ['推荐提示词','推荐风格模版','自定义模版'];
+  const chips = fld.variant==='sp'
+    ? ['3C 数码','促销大促','新品首发','节日主题']
+    : ['ins 风','极简白','户外生活','轻奢质感','赛博科技','暖色居家'];
+  return `<div class="fld"><label>🎭 模版风格</label>
+    <div class="seg" style="margin-bottom:10px;">${tabs.map((t,i)=>`<button class="${i===0?'on':''}">${t}</button>`).join('')}</div>
+    <div class="chips">${chips.map((c,i)=>`<span class="chip2 ${i===1?'on':''}">${c}</span>`).join('')}</div></div>`;
+}
+function fReco(){
+  return `<div class="fld"><div class="recos">
+    <div class="recos-h"><span class="ai">AI</span> 推荐提示词 · 点图已自动分析该商品 <span class="swap">🔄 换一换</span></div>
+    ${RECO_PROMPTS.map(p=>`<div class="reco"><span class="tx">${p}</span><span class="fill">填入</span></div>`).join('')}
+  </div><div class="hint">交互还原官方「点击/上传图片 → 自动生成 3 条基于该商品的推荐提示词」，可填入 / 换一换。底层是 qwen-vl 图生文。</div></div>`;
+}
+function fPrompt(fld){
+  const min = fld.min || 78;
+  return `<div class="fld"><label>✏️ 提示词描述 <span class="opt">${fld.opt?'选填':'0/500'}</span></label>
+    <div class="ta-wrap"><textarea class="ta" style="min-height:${min}px" placeholder="${fld.ph||''}"></textarea><span class="cnt">0/500</span></div></div>`;
+}
+function fMask(fld){
+  return `<div class="fld"><label>🖌️ 设置选区 ${fld.opt?'<span class="opt">选填</span>':'<span class="req">*</span>'}</label>
+    <div class="mask-row"><span class="mi">🖌️</span>
+      <span class="mt"><b>涂抹 / 框选</b> 出要处理的区域，生成与原图等分辨率的二值 mask（白=改、黑=留）。<br/>${fld.tip||''}</span>
+      <button>打开涂抹工具</button></div>
+    <div class="hint">P3 阶段落地：canvas 手动涂抹（先做）→ VIAPI SegmentCommodity 自动点选主体（后补）。</div></div>`;
+}
+function fColor(){
+  const cs = ['#1677ff','#eb2f96','#52c41a','#faad14','#722ed1','#f5222d','#13c2c2','#000000'];
+  return `<div class="fld"><label>🎯 选择颜色 <span class="req">*</span></label>
+    <div class="colors">${cs.map((c,i)=>`<span class="sw ${i===0?'on':''}" style="background:${c}"></span>`).join('')}
+      <span class="color-input">🎨 色值 #1677FF</span><span class="color-input">💧 吸取</span></div></div>`;
+}
+function fSecondImage(fld){
+  return `<div class="fld"><label>➕ ${fld.cap||'上传第二张图'}</label>
+    <div class="up" style="grid-template-columns:repeat(5,1fr)">
+      <div class="cell add"><span class="plus">+</span><span class="cnt">0/1</span></div></div>
+    <div class="hint">${fld.tip||''}</div></div>`;
+}
+function fPosition(){
+  return `<div class="fld"><label>📍 Logo 位置</label>
+    <div class="mask-row" style="background:#f0f5ff;border-color:#adc6ff"><span class="mi">🎯</span>
+      <span class="mt">在商品图上拖拽 / 缩放 Logo 到目标位置（如左胸、瓶身正面）。</span>
+      <button style="border-color:var(--primary);color:var(--primary)">编辑位置</button></div></div>`;
+}
+function fCraft(){
+  return `<div class="fld"><label>🛠️ 定制工艺</label>
+    <div class="chips">${CRAFTS.map((c,i)=>`<span class="chip2 ${i===1?'on':''}">${c}</span>`).join('')}</div></div>`;
+}
+function fModelGrid(){
+  const names=['清新女模','商务男模','运动女模','日系少女'];
+  return `<div class="fld"><label>👤 模特选择 <span class="opt">推荐模特库 / 自传模特图</span></label>
+    <div class="grid-pick">${names.map((n,i)=>`<div class="gp ${i===0?'on':''}">${ph('model',i)}<span class="on-mk">✓</span><span class="cap">${n}</span></div>`).join('')}
+      <div class="gp" style="display:grid;place-items:center;border:1.5px dashed var(--border);background:#fafbfc;color:var(--text-3);font-size:12px">+ 自传</div></div></div>`;
+}
+function fSellingPoints(){
+  return `<div class="fld"><label>⭐ 卖点选择 <span class="opt">AI 已提取，勾选要展示的卖点</span> <span class="swap" style="color:var(--purple);cursor:pointer;font-size:11px">🔄 换一换</span></label>
+    <div class="chips">${SELLING.map((s,i)=>`<span class="chip2 ${i<3?'on':''}">${i<3?'<span class="ck">✓</span>':''}${s}</span>`).join('')}</div>
+    <div class="hint">卖点由 qwen-vl 看图提取，可勾选 / 换一换。</div></div>`;
+}
+function fLang(){
+  return `<div class="fld"><label>🌐 目标语种</label>
+    <select class="sel">${LANGS.map((l,i)=>`<option ${i===0?'selected':''}>${l}</option>`).join('')}</select>
+    <div class="hint">保持原版式/背景，仅替换文字。底层 qwen-mt-image（需商品图公网 URL）。</div></div>`;
+}
+function fScaleSeg(){
+  return `<div class="fld"><label>🔍 放大倍数</label>
+    <div class="seg">${['2×','3×','4×'].map((s,i)=>`<button class="${i===0?'on':''}">${s}</button>`).join('')}</div>
+    <div class="hint">纯放大清晰度（super_resolution），不改变构图与比例。</div></div>`;
+}
+function fStyleSeg(){
+  return `<div class="fld"><label>🎨 流程图风格</label>
+    <div class="seg">${['实物写实','简约卡通','商务信息图'].map((s,i)=>`<button class="${i===0?'on':''}">${s}</button>`).join('')}</div></div>`;
+}
+function fTargetSize(){
+  return `<div class="fld"><label>📐 目标尺寸 / 比例</label>
+    <div class="chips">${['1:1 主图','4:3','16:9 横幅','3:4 竖版','自定义'].map((s,i)=>`<span class="chip2 ${i===0?'on':''}">${s}</span>`).join('')}</div>
+    <div class="hint">外补画布到目标比例（outpainting），主体不裁切。<b>与「高清」不同</b>：高清是放大清晰度，改尺寸是补画布。</div></div>`;
+}
+
+const RENDERERS = {
+  upload:fUpload, templateTabs:fTemplateTabs, reco:fReco, prompt:fPrompt, mask:fMask,
+  color:fColor, secondImage:fSecondImage, position:fPosition, craft:fCraft, modelGrid:fModelGrid,
+  sellingPoints:fSellingPoints, lang:fLang, scaleSeg:fScaleSeg, styleSeg:fStyleSeg, targetSize:fTargetSize,
+};
+
+/* ---------- 渲染表单 ---------- */
+function renderForm(){
+  const f = FUNCS.find(x=>x.key===active);
+  const badge = f.tier==='—' ? '' : (f.isNew
+    ? `<span class="badge new">新增功能</span>`
+    : `<span class="badge">对标官方</span>`);
+  const fields = f.fields.map(fld => (RENDERERS[fld.t]||(()=>'')) (fld)).join('');
+  const ratioFld = f.ratio ? `
+    <div class="fld"><label>📐 图片比例 <span class="opt">按渠道常用分组</span></label>
+      <div class="chips">${RATIOS.map((r,i)=>`<span class="chip2 ${i===0?'on':''}">${r}</span>`).join('')}</div></div>` : '';
+  const tierName = f.tier==='—' ? '标准' : f.tier+'版';
+  const genbar = `
+    <div class="genbar">
+      <div class="grp"><span class="k">每原图生成张数</span>
+        <div class="stepper"><button>−</button><span class="v">2</span><button>+</button></div></div>
+      <div class="grp"><span class="k">使用模型</span>
+        <div class="seg tier"><button class="${f.tier!=='进阶'?'on':''}">基础版</button><button class="${f.tier==='进阶'?'on':''}">进阶版</button></div></div>
+      <div class="grp"><span class="k">测试通道</span>
+        <select class="sel" style="min-width:150px"><option>gpt-image-2（现网测试）</option><option>Auto（自动选图像模型）</option><option>通义万相（生产）</option></select></div>
+      <div class="cost"><div class="k">预计消耗</div><div class="v">${f.cost*2||'—'} <span class="bean">i豆</span></div></div>
+      <button class="gen-btn" onclick="doGenerate()">✨ 开始生成</button>
+    </div>`;
+  document.getElementById('form').innerHTML =
+    `<div class="form-h"><span class="ttl">${f.icon} ${f.label}</span>${badge}</div>
+     <div class="form-sub">${f.sub}</div>
+     ${fields}${ratioFld}${genbar}`;
+}
+
+/* ---------- 渲染右侧预览/结果 ---------- */
+function renderPreview(){
+  const f = FUNCS.find(x=>x.key===active);
+  const results = generated ? `
+    <div class="results"><div class="results-h">🎉 生成候选 <span class="n">（2 张）</span> · 已回流商品候选区</div>
+      <div class="res-grid">
+        ${[0,1].map(i=>`<div class="res"><div class="im">${ph(f.kind,i+2)}<span class="bd">候选 ${i+1}</span></div>
+          <div class="acts"><button class="cmp">对比</button><button class="adopt">采纳</button><button>弃用</button></div></div>`).join('')}
+      </div>
+      <div class="hint" style="margin-top:8px">采纳后写入商品最终图（audit actorType=user），发布时「采纳集优先」。</div></div>`
+    : `<div class="results"><div class="results-h">生成结果</div>
+        <div class="empty"><div class="ei">🖼️</div>点「开始生成」后<br/>候选出现在这里 → 可对比 / 采纳 / 弃用</div></div>`;
+  document.getElementById('preview').innerHTML = `
+    <div class="pv-h">📎 效果示例（前 · 后）</div>
+    <div class="compare"><div class="imgs">
+      <div class="half">${ph('orig',1)}<span class="lb">原图</span></div>
+      <div class="half">${ph(f.kind,9)}<span class="lb">效果</span></div>
+    </div><div class="cap">${f.example ? f.example.join(' → ') : ''}</div></div>
+    ${results}`;
+}
+
+/* ---------- 交互 ---------- */
+function selectFunc(k){ active=k; generated=false; renderRail(); renderForm(); renderPreview();
+  document.getElementById('form').scrollTop=0; document.getElementById('preview').scrollTop=0; }
+function doGenerate(){ generated=true; renderPreview();
+  document.getElementById('preview').scrollTop = document.getElementById('preview').scrollHeight; }
+function switchMode(m){
+  document.querySelectorAll('.top .tab').forEach(t=>t.classList.toggle('on', t.dataset.mode===m));
+  const isVideo = m==='video';
+  document.getElementById('rail').classList.toggle('hidden', isVideo);
+  document.getElementById('form').classList.toggle('hidden', isVideo);
+  document.getElementById('preview').classList.toggle('hidden', isVideo);
+  document.getElementById('videoPane').classList.toggle('on', isVideo);
+}
+
+/* init */
+renderRail(); renderForm(); renderPreview();
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@ import { fail } from '../capture/shared';
 import { writeAudit, type AuditEntry } from '../processing/audit';
 import { callModel, parseJsonObject } from '../assistant/llm';
 import { ALIBABA_TITLE_CN_LENGTH_HINT, ALIBABA_TITLE_RULES } from '../shared/title-rules';
+import { EDITABLE_STATUS } from '../shared/product-status';
 
 // Phase 7 预览编辑与人工审核。核心约束：
 // - 人工只编辑「最终字段」(titleFinal/descriptionFinal/priceTarget/listPriceTarget/stock/attributesProcessed/SKU)，写库 actorType=user。
@@ -28,8 +29,8 @@ import { ALIBABA_TITLE_CN_LENGTH_HINT, ALIBABA_TITLE_RULES } from '../shared/tit
 const REVIEWABLE_STATUS = ['processed', 'reviewing', 'reviewed', 'publishing', 'published', 'publish_failed'];
 // 编辑/AI 建议锁定的状态：已审核（防审后篡改）、发布中/已发布（需先显式退回）。发布失败不锁定——改完即可重走审核发布。
 const LOCKED_STATUS = ['reviewed', 'publishing', 'published'];
-// saveFinal 允许直接写入的状态（publish_failed 编辑后自动回 reviewing）。
-const EDITABLE_STATUS = ['processed', 'reviewing', 'publish_failed'];
+// saveFinal 允许直接写入的状态（publish_failed 编辑后自动回 reviewing）:EDITABLE_STATUS,媒体采纳
+// (media/service.ts adoptAsset)与最终字段同守此锁,定义收敛在 shared/product-status.ts(顶部导入)。
 
 // decimal 列从数据库读回是字符串（Sequelize DECIMAL），前端提交的是数字：直接 JSON.stringify 比较会把
 // 「"0.3" vs 0.3」误判成变更，产出一堆 0.3 → 0.3 的无效审计与无效更新。比较前按字段语义归一化。

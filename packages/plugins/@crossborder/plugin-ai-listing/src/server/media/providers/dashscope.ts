@@ -83,9 +83,11 @@ export function createDashScopeProvider(options: DashScopeProviderOptions): Medi
 
     async submitVideo(input: MediaGenInput): Promise<MediaSubmitResult> {
       const model = input.sourceImageUrl ? MODELS.imageToVideo : MODELS.textToVideo;
+      const hasParams = input.parameters && Object.keys(input.parameters).length > 0;
       const { taskId } = await submit(`${baseURL}/services/aigc/video-generation/video-synthesis`, {
         model,
         input: { prompt: input.prompt, ...(input.sourceImageUrl ? { img_url: input.sourceImageUrl } : {}) },
+        ...(hasParams ? { parameters: input.parameters } : {}),
       });
       return { providerTaskId: taskId, model };
     },

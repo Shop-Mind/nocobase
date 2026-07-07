@@ -86,6 +86,15 @@
 - 单测:字段落库、adopt/discard 状态机、状态锁拒绝、审计内容(不含 Key)、通用层参数透传(mock 5 形状)。
 - 真实 Key E2E(脚本固化 docs/plans/scripts/):对一张已抓取详情图执行「去掉图中的品牌 logo」→ 候选资产 `origin:'ai_candidate'`、URL 为本地 `/storage/uploads/...`;`adopt` 后 `finalSelected:true`、审计出现 `media.adopt` 记录;`discard` 后不再出现在 candidates。
 
+**验收记录(2026-07-06)** ✅
+- 单测全绿:plugin-ai `model-capability` 47、`media-task` 23、`media-persist` 9;ai-listing `edit-adopt` 14(状态机/状态锁/审计/replace 快照/幂等);回归 12+12+6+5 无新增失败;eslint 通过。
+- 构建链:plugin-ai 与 ai-listing `yarn build`(含 declaration)通过;`yarn nocobase upgrade` 同步新字段;dev 重启后 API 正常。
+- 真实 Key E2E 两轮通过(脚本 `docs/plans/scripts/verify-phase0-image-edit-adopt.js`,输出 `E2E-PHASE0-OK`):
+  - 轮 1(gpt-image-2,OpenAI 服务):resolver 兜底命中唯一 image_gen 模型,闭环 10/10 PASS——验证「换模型即可用」的通用性。
+  - 轮 2(wanx2.1-imageedit,Dashscope image2image 异步端点):12/12 PASS——`n:2` 生效返回 2 候选、18s 轮询完成、两张均转存本地 `/storage/uploads/`、`parentAssetId` 溯源、adopt 后 sort=17/状态收敛 reviewing/审计 `media.adopt actorType=user` 且不含凭证、discard + 负例(`MEDIA_CANDIDATE_DISCARDED`/`MEDIA_NOT_CANDIDATE`)全部命中。
+  - 肉眼对比(商品 73 帆布包详情海报):候选与源图构图/商品完全一致,确认是源图条件编辑;品牌字已模糊但密集正文退化为乱码——wanx 默认 `description_edit` 在海报密集文字上的已知局限,Phase 1 场景库将「去水印/去logo」映射到专用 `remove_watermark` function 解决,不阻塞本 phase。
+- 环境注记:Dashscope 服务(v_92am3enh5z0)补启用了 `wanx2.1-imageedit` 与 `qwen-image-edit-max` 两个模型(custom 清单追加);E2E 脚本修正了 koa 双层 `data` 包裹解包与「跳过无本地图片商品」的选品逻辑。
+
 ### Phase 1 — 场景库(对标创意工坊)+ 会话工具
 
 **实施**
@@ -96,6 +105,14 @@
 **验收**
 - 场景矩阵真实 Key 冒烟:`white_bg`/`erase`/`recolor`/`hd`/`expand` 各出 1 张,肉眼验证语义正确;`hd` 产物分辨率 ≥ 2× 源图。
 - 抽屉里对员工说「把这张图换成白底」+ 贴图 → 工具被调用、气泡出现候选图 markdown。
+
+**验收记录(2026-07-06)** ✅
+- 单测全绿:`scenes.test.ts` 6 条(9 场景完整性/env 合并覆盖/模板注入)、`edit-adopt.test.ts` 扩到 21 条(场景模板/hd size 计算/expand function 路由/未知场景/必填指令/upscaleSize 边界);相关回归 5+8+15+8 全绿;eslint 0 警告;构建(含 declaration)通过。
+- 场景冒烟 15/15 PASS(脚本 `verify-phase1-scenes.js`,输出 `E2E-PHASE1-OK`):`aiListingMedia:scenes` 返回 9 场景;5 场景各出 1 张且全部转存本地 `/storage`;指令场景路由 `qwen-image-edit-max`、expand 路由 `wanx2.1-imageedit`;`genParams` 记录 scene/compareMode;负例(未知场景 400 `MEDIA_SCENE_UNKNOWN`、缺必填指令 400 `MEDIA_EDIT_NO_INSTRUCTION`)命中。肉眼核对:白底干净构图不变、erase 精准去掉 XINRONG logo 保留正文、recolor 只换包色版式不动、expand 四周扩展衔接自然、hd 内容零漂移。
+- **hd 场景关键调整(实测驱动)**:wanx2.1 `super_resolution` 的 `upscale_factor` 实际不放大——直连 API 对照实验证实无论输入 520px 还是 816px、factor=2,输出恒为 ~1MP 原生分辨率(输入还限制 512~4096px)。改为 hd 走 qwen-image-edit 指令通道 + `sizeStrategy:'upscale'`:editImage 解析源图尺寸(PNG/JPEG 头),按 factor(默认 2)等比夹进服务商 [512,2048] 边界生成 `parameters.size`(实测 `qwen-image-edit-max` 严格按 size 输出)。1000×1000 源图 → 2000×2000,真 2.00×;源图超过 1024px 时按 2048 上限 clamp(冒烟断言按 clamp 期望校验)。
+- 会话工具 E2E 7/7 PASS(脚本 `verify-phase1-drawer-tool.js`,输出 `E2E-PHASE1-DRAWER-OK`):对员工说「把这张图换成白底:URL」→ LLM 正确选 `aiListingEditImage` 且入参 `scene:'white_bg'` + 源图 URL → ASK 中断(`aiToolMessages.invokeStatus='interrupted'`,注意中断态不在 getMessages 行上)→ `updateUserDecision {type:'approve'}` + `resumeToolCall` → 工具 success 产出 2 张候选 → 最终气泡含 markdown 候选图与「采纳后才会用于发布」提示;全程无凭证泄漏。
+- 浏览器目视验证(playwright 登录真实抽屉):Mira 会话中消息 → 思考(「需要使用 aiListingEditImage 工具」)→ 工具确认卡片「编辑商品图(候选)」展示入参 JSON + 「允许使用」按钮 → 批准后卡片转绿 ✓ → 气泡内直接渲染两张白底候选图。截图存 `.playwright-mcp/page-2026-07-06T14-43-01-793Z.jpeg`。
+- 已知残留:抽屉「允许使用」按钮的 playwright 自动化点击未触发前端事件(人工点击正常,本轮经等价 API 批准),不影响功能;candidates 无 productId 时(纯 URL 源)候选不挂商品,Phase 2 页面内流程恒带 assetId 不受影响。
 
 ### Phase 2 — 预览编辑页:候选区 + 对比 + 采纳(UI 闭环)
 
@@ -110,6 +127,14 @@
 - 选中一张详情图 → 场景「图片擦除」+ 指令「去掉左下角 logo」→ 候选网格出现 2 张 → 并排对比 → 采纳(追加)→ 详情图列表末尾出现新图 → 发布草稿 payload 中包含新图 URL。
 - 「替换第 1 张」走确认弹窗后生效,原图不再进发布但资产仍在;审计可见替换快照;弃用的候选不进发布。
 - `hd` 场景对比为拉帘滑块。
+
+**验收记录(2026-07-06)** ✅
+- **发布取图「采纳集优先」**:抽出纯函数 `selectPublishableMedia`(publish/index.ts),`loadProductContext` 与候选区 `candidates` action 的 `gallery` 复用同一过滤——弃用资产(含被替换原图)与未采纳 AI 候选不进发布,已采纳候选按 sort 入列。**JS 侧过滤而非 SQL `$ne`**:历史行 `discarded` 可能为 NULL,三值逻辑会误滤。单测 `publishable-media.test.ts` 3 例(排除未采纳候选/排除弃用含 NULL 不误滤/空集全候选集)全绿;`precheck` 8 例回归无损。
+- **MediaStudio 候选区组件**(`src/client-v2/components/MediaStudio/`):`MediaStudio.tsx`(左图集选源+中 AI 改图控制台+右候选网格)、`CompareModal.tsx`(结构性并排/像素级拉帘滑块,按候选 `genParams.compareMode` 分流)、`AdoptModal.tsx`(追加/替换二选一,替换主图弹白底合规提示)、`media-kit.ts`(`window.__aiListingMediaKit.mount`,独立 React root + 自带 antd `<App>`,与宿主 React 隔离)。i18n 40 条 zh/en 补齐;eslint 0 警告;构建(含 declaration)通过。
+- **jsBlock 挂载**(配置操作,非 src):预览编辑 flowModel `um6v8ddxrz8` 的 jsBlock 代码加 `AiCandidateZone` 组件(容器 ref + useEffect 调 kit.mount,采纳后 `onChange` 回刷详情图集),插在 图集/SKU 行 与 商品属性 之间。原代码已备份 scratchpad;JSX 经 esbuild 校验后回写。
+- **服务端闭环 E2E 12/12 PASS**(脚本 `verify-phase2-candidate-zone.js`,输出 `E2E-PHASE2-OK`,商品 73):candidates 返回 gallery/candidates/adopted 三段;擦除场景生 2 候选、`compareMode=side_by_side`、未进 gallery;采纳(追加)后 **gallery(=发布图集)18→19 且含候选本地 `/storage` URL**、发布 `precheck` 图集有效性不变;弃用候选不进 gallery/candidates;hd 候选 `compareMode=slider`;替换采纳后**被替换原图 1547 移出 gallery、候选 2782 继承其 role=detail sort=6**。验证「采纳后进入发布图集」:gallery 与发布 `loadProductContext` 同用 `selectPublishableMedia`,故 gallery 即发布图集。
+- **浏览器目视闭环**(playwright 真实登录预览编辑页):AI 候选区正常挂载于「Linen Wine Bottle Cover」商品(左图集主图选中态、右 AI 改图控制台场景下拉+指令+生成按钮+源图号)→ 点「生成候选图」(white_bg)→ 20 余秒后候选网格出现 **2 张 white_bg 候选**(蓝标)→ hover 露出 采纳/对比/以此再生成/弃用 四按钮 → 「对比」弹**并排 Modal**(左原图带雪景装饰、右候选**干净白底**,白底效果极佳)→ 「采纳」弹**采纳候选图 Modal**(追加为新图/替换指定图 两模式 + 取消/采纳)。截图存 `.playwright-mcp/`(15-45~15-49)。
+- 注记:`candidates` action 扩为返回 `gallery`(源图+已采纳,发布集)/`candidates`(未采纳未弃用)/`adopted` 三段,一次拉全供面板渲染。
 
 ### Phase 3 — 对话式改图闭环 + 美工员工
 

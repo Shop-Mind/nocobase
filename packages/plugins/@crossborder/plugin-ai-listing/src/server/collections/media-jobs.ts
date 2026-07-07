@@ -40,6 +40,10 @@ export default defineCollection({
       { value: 'crop', label: 'Crop', color: 'blue' },
       { value: 'scene', label: 'Scene', color: 'purple' },
       { value: 'video', label: 'Video', color: 'magenta' },
+      // 会话/候选区的 AI 生成任务(media/service.ts 运行时使用的三种 jobType)
+      { value: 'ai_image', label: 'AI image', color: 'geekblue' },
+      { value: 'ai_image_edit', label: 'AI image edit', color: 'volcano' },
+      { value: 'ai_video', label: 'AI video', color: 'orange' },
     ]),
     selectField(
       'status',
@@ -55,6 +59,11 @@ export default defineCollection({
     { type: 'bigInt', name: 'inputFileId', interface: 'integer', title: 'Input file' },
     { type: 'bigInt', name: 'outputFileId', interface: 'integer', title: 'Output file' },
     { type: 'integer', name: 'durationMs', interface: 'integer', title: 'Duration (ms)' },
+    // —— 图片编辑闭环 Phase 0:任务可追溯(不含任何凭证)——
+    { type: 'string', name: 'provider', interface: 'input', title: 'LLM service' },
+    { type: 'string', name: 'model', interface: 'input', title: 'Model' },
+    { type: 'text', name: 'prompt', interface: 'textarea', title: 'Prompt' },
+    { type: 'string', name: 'batchId', interface: 'input', title: 'Batch' },
     ...tracingFields,
   ],
 });

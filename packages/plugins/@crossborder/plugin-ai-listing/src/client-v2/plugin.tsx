@@ -11,6 +11,7 @@ import type { Application } from '@nocobase/client-v2';
 import { Plugin } from '@nocobase/client-v2';
 import { setupAssistantBridge } from './components/assistant-bridge';
 import { setupJsBlockAI } from './ai/jsblock-ai';
+import { setupMediaKit } from './components/MediaStudio';
 
 // 业务页面采用 NocoBase 原生页面（在 admin 框架内，通过 flow-surfaces 菜单+页面创建），不再注册脱离框架的自定义路由。
 // 本插件客户端只保留：设置页注册，以及 components 下的 requestWithFriendlyError / ListingPageErrorBoundary 等工具，供后续自定义区块复用。
@@ -21,6 +22,8 @@ export class PluginAiListingClientV2 extends Plugin<any, Application> {
       setupAssistantBridge(this.app);
       // jsBlock 通用能力：注册 jsBlockApplyPatch 前端工具 + 安装 window.__aiListingBlockKit。
       setupJsBlockAI(this.app);
+      // 预览编辑「AI 候选区」：安装 window.__aiListingMediaKit。
+      setupMediaKit(this.app);
     } catch {
       // 桥接失败不影响主应用（jsBlock 可回退）。
     }

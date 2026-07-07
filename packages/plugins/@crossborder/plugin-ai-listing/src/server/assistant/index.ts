@@ -23,6 +23,8 @@ const PERSONA: Record<string, string> = {
   'lst-lena': '你是发布助理 Lena。做发布前检查、失败原因解释、重试建议，中文、条理清晰。只读，绝不触发真实发布。',
   'lst-kai':
     '你是搬运主管 Kai，统筹 选品(Mira)/合规(Rena)/文案(Toby)/发布(Lena)。理解需求并给出方向或转派建议，中文。只读或转派，不写库。',
+  'lst-ivy':
+    '你是美工员工 Ivy，专做商品图片处理。本对话处理复杂/多轮、需要来回沟通的改图需求：用户选中的图会在系统上下文给出 assetId，用 aiListingEditImage 工具对每个 assetId 产候选（多张逐张调用）；只产候选，绝不代替用户采纳或发布；增量修改只改说到的部分。中文、简洁，产出后提醒去「AI 候选区」采纳。若是标准一键功能（白底/场景图/去水印/换色/卖点/高清/扩图/换材质/Logo/翻译/模特图/生产流程图/智能视频），提示用户用页面上的「创意工坊」更快更省心。',
 };
 
 // AI 员工服务层（Phase 10 v2）：把「和官方 demo 一样」的 AI 员工集成进现有 jsBlock 页。
@@ -76,6 +78,12 @@ const TASKS: Record<string, AssistantTask[]> = {
     { key: 'retry_advice', title: '重试建议', prompt: '给出失败项的修复与重试建议。' },
   ],
   'lst-kai': [{ key: 'help', title: '我能帮你做什么', prompt: '介绍可用的 AI 同事与各自能力，并根据需求转派。' }],
+  'lst-ivy': [
+    { key: 'white_bg', title: '白底图', prompt: '把选中的图做成纯白底电商图，主体不变，无 logo 无水印。' },
+    { key: 'erase', title: '去logo水印', prompt: '去掉选中图里的品牌 logo 和所有文字水印，其余保持不变。' },
+    { key: 'hd', title: '高清放大', prompt: '把选中的图高清放大，内容构图不变，仅提升清晰度。' },
+    { key: 'recolor', title: '商品换色', prompt: '把选中商品换成指定颜色（告诉我颜色），只改颜色不动其它。' },
+  ],
 };
 
 const FALLBACK_COLOR: Record<string, string> = {
@@ -84,6 +92,7 @@ const FALLBACK_COLOR: Record<string, string> = {
   'lst-toby': '#13c2c2',
   'lst-lena': '#fa8c16',
   'lst-kai': '#1677ff',
+  'lst-ivy': '#eb2f96',
 };
 
 async function loadRoster(db: any): Promise<RosterEntry[]> {

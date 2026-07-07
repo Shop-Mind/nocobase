@@ -21,6 +21,7 @@ import { setupHistory } from './history';
 import { seedPlatformAccounts, setupSettings } from './settings';
 import { setupAssistant } from './assistant';
 import { setupOpenApi } from './openapi';
+import { setupMedia } from './media/actions';
 
 export class PluginAiListingServer extends Plugin {
   async afterAdd() {}
@@ -52,6 +53,8 @@ export class PluginAiListingServer extends Plugin {
     setupAssistant(this);
     // 真接入 OpenAPI（Phase C）：OAuth 授权闭环。oauthStart/oauthCallback 浏览器直达端点 + status/disconnect 受控 action。
     setupOpenApi(this);
+    // 图片编辑闭环（Phase 0）：aiListingMedia candidates/generate/jobStatus/adopt/discard——AI 只产候选、用户显式采纳。
+    setupMedia(this);
   }
 
   async install() {

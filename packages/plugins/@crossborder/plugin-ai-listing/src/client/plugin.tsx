@@ -13,6 +13,8 @@ import models from './models';
 // 故 jsBlock 通用 AI 能力（桥接 + kit + 前端工具）需在此 v1 client 安装，才能进入正在运行的 app.aiManager.toolsManager。
 import { setupAssistantBridge } from '../client-v2/components/assistant-bridge';
 import { setupJsBlockAI } from '../client-v2/ai/jsblock-ai';
+import { setupMediaKit } from '../client-v2/components/MediaStudio';
+import { setupWorkshopKit } from '../client-v2/components/CreativeWorkshop';
 
 export class PluginAiListingClient extends Plugin {
   async load() {
@@ -22,6 +24,10 @@ export class PluginAiListingClient extends Plugin {
     try {
       setupAssistantBridge(this.app);
       setupJsBlockAI(this.app);
+      // 预览编辑「AI 候选区」：window.__aiListingMediaKit(jsBlock 挂载 MediaStudio 面板)。
+      setupMediaKit(this.app);
+      // 独立「创意工坊」页：window.__aiListingWorkshopKit(admin 页面 jsBlock 挂载 CreativeWorkshop)。
+      setupWorkshopKit(this.app);
     } catch {
       // 安装失败静默（不阻断插件加载）。
     }

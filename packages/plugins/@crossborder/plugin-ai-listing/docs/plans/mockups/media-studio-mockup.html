@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>图片编辑 · 候选区 + 原生抽屉 · 功能设计页面</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-bg:#e6f4ff; --purple:#722ed1; --border:#e5e7eb; --border-2:#f0f0f0;
+    --text:#1f2328; --text-2:#6b7280; --text-3:#9ca3af; --gold:#faad14; --green:#52c41a; --red:#ff4d4f;
+    --bg:#eef1f4; --card:#fff; --radius:8px; --shadow:0 6px 24px rgba(0,0,0,.12);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);}
+  .note{max-width:1200px;margin:16px auto 0;padding:12px 16px;background:#fffbe6;border:1px solid #ffe58f;border-radius:var(--radius);font-size:13px;color:#8a6d3b;line-height:1.6;}
+  .note b{color:#664d03;}
+  .stage{max-width:1200px;margin:14px auto;display:flex;gap:14px;align-items:flex-start;}
+  .btn{font-size:13px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:#fff;cursor:pointer;color:var(--text);white-space:nowrap;}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;}
+  .btn.sm{font-size:12px;padding:3px 10px;}
+  .btn.danger{color:var(--red);border-color:#ffccc7;}
+  .tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:4px;background:var(--primary-bg);color:var(--primary);line-height:18px;}
+
+  /* 左:预览编辑页 + 内嵌候选区(聚焦) */
+  .page{flex:1;min-width:0;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);}
+  .page .top{height:44px;background:#0f1f3d;color:#fff;display:flex;align-items:center;gap:10px;padding:0 14px;font-weight:600;font-size:14px;}
+  .page .top .logo{width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,#4f9dff,#1677ff);}
+  .ctx{padding:10px 14px;color:var(--text-3);font-size:12px;border-bottom:1px solid var(--border-2);}
+  .ctx .row{height:9px;background:#eef0f3;border-radius:5px;margin:6px 0;}
+  .ctx .row.s{width:55%} .ctx .row.m{width:80%}
+
+  .zone{margin:12px 14px 16px;border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+  .zone-h{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-2);flex-wrap:wrap;}
+  .zone-h .t{font-weight:600;font-size:14px;}
+  .zone-h .sub{color:var(--text-2);font-size:12px;}
+  .quick{display:flex;gap:6px;margin-left:6px;}
+  .qbtn{font-size:12px;padding:3px 9px;border-radius:14px;border:1px solid var(--border);background:#fafafa;cursor:pointer;}
+  .qbtn .ic{margin-right:3px;}
+  .sel-pill{margin-left:auto;font-size:12px;color:var(--primary);background:var(--primary-bg);border-radius:12px;padding:2px 10px;}
+  .zone-b{display:flex;min-height:330px;}
+  /* 左栏 图片多选 */
+  .nav{width:206px;border-right:1px solid var(--border-2);padding:10px;overflow-y:auto;}
+  .tabs{display:flex;gap:4px;margin-bottom:8px;}
+  .tab{font-size:12px;padding:2px 9px;border-radius:6px;cursor:pointer;color:var(--text-2);}
+  .tab.on{background:var(--primary-bg);color:var(--primary);font-weight:600;}
+  .g-h{font-size:12px;color:var(--text-2);margin:8px 0 6px;}
+  .g-h .c{color:var(--text-3);}
+  .thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+  .th{position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;border:2px solid transparent;cursor:pointer;background:#f0f0f0;}
+  .th.sel{border-color:var(--primary);}
+  .th svg{width:100%;height:100%;display:block;}
+  .bd{position:absolute;left:3px;top:3px;font-size:9px;padding:0 4px;border-radius:3px;color:#fff;line-height:15px;}
+  .bd.main{background:var(--gold);} .bd.adp{background:var(--green);} .bd.cd{background:var(--primary);}
+  .ck{position:absolute;right:3px;top:3px;width:15px;height:15px;border-radius:4px;border:1.5px solid #fff;background:rgba(0,0,0,.28);}
+  .ck.on{background:var(--primary);border-color:var(--primary);}
+  .ck.on::after{content:"✓";color:#fff;font-size:10px;position:absolute;left:2px;top:-3px;font-weight:700;}
+  /* 右栏 对比/候选 */
+  .cmp{flex:1;min-width:0;padding:12px 14px;}
+  .cmp-h{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:12px;margin-left:auto;}
+  .seg span{padding:3px 11px;cursor:pointer;color:var(--text-2);}
+  .seg span.on{background:var(--primary);color:#fff;}
+  .pair{display:flex;gap:12px;}
+  .pane{flex:1;min-width:0;text-align:center;}
+  .frame{border-radius:9px;overflow:hidden;border:1px solid var(--border-2);}
+  .frame svg{display:block;width:100%;}
+  .cap{font-size:12px;margin-top:5px;color:var(--text-2);}
+  .cap.hl{color:var(--text);font-weight:600;}
+  .cstrip{display:flex;gap:8px;margin:12px 0 10px;align-items:center;}
+  .cstrip .l{font-size:12px;color:var(--text-2);}
+  .cc{width:50px;height:50px;border-radius:6px;overflow:hidden;border:2px solid transparent;cursor:pointer;}
+  .cc.on{border-color:var(--primary);}
+  .cc svg{width:100%;height:100%;}
+  .acts{display:flex;gap:8px;flex-wrap:wrap;}
+
+  /* 右:原生 plugin-ai 抽屉 */
+  .drawer{width:410px;flex-shrink:0;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);display:flex;flex-direction:column;height:632px;}
+  .dh{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid var(--border-2);}
+  .av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#9254de,#722ed1);color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;}
+  .dh .nm{font-weight:600;font-size:13px;} .dh .rl{font-size:11px;color:var(--text-2);}
+  .dh .x{margin-left:auto;color:var(--text-3);cursor:pointer;font-size:16px;}
+  .inj{margin:10px 12px;padding:6px 10px;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;font-size:12px;color:#389e0d;}
+  .qtasks{display:flex;gap:6px;flex-wrap:wrap;padding:0 12px 4px;}
+  .qt{font-size:12px;padding:3px 10px;border:1px solid #d3adf7;background:#f9f0ff;color:var(--purple);border-radius:14px;cursor:pointer;}
+  .chat{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px;}
+  .msg{max-width:88%;font-size:13px;line-height:1.5;padding:8px 11px;border-radius:10px;}
+  .msg.u{align-self:flex-end;background:var(--primary-bg);}
+  .msg.a{align-self:flex-start;background:#f5f5f5;}
+  .think{align-self:flex-start;font-size:12px;color:var(--text-3);}
+  .toolcard{align-self:flex-start;max-width:88%;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;background:#fff;}
+  .toolcard .th2{color:var(--green);font-weight:600;margin-bottom:4px;}
+  .cand-imgs{display:flex;gap:8px;align-self:flex-start;}
+  .cand-imgs .ci{width:74px;height:74px;border-radius:6px;overflow:hidden;border:1px solid var(--border-2);}
+  .cand-imgs .ci svg{width:100%;height:100%;}
+  .dfoot{border-top:1px solid var(--border-2);padding:8px 12px;}
+  .dinput{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--text-3);display:flex;align-items:center;justify-content:space-between;}
+  .send{width:26px;height:26px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;}
+
+  .legend{max-width:1200px;margin:12px auto 40px;font-size:13px;color:var(--text-2);line-height:1.9;}
+  .legend b{color:var(--text);}
+  .arrow{max-width:1200px;margin:2px auto;text-align:center;color:var(--text-3);font-size:12px;}
+</style>
+</head>
+<body>
+
+<div class="note">
+  <b>功能设计页面(静态原型,示意)</b> — 最终版:<b>内嵌候选区(左,页面上)</b> + <b>原生 AI 抽屉(右,点「找美工改图」滑出)</b>。
+  候选区只做「图集多选 / 原图↔候选对比 / 采纳」+ 2–3 个快捷直连;复杂 / 批量 / 多轮去右侧抽屉找美工员工聊,产的候选自动回流到左边候选区。图片为示意占位。
+</div>
+
+<div class="stage">
+
+  <!-- 左:预览编辑页 + 内嵌候选区 -->
+  <div class="page">
+    <div class="top"><span class="logo"></span>懂店 ShopMind · 预览编辑</div>
+    <div class="ctx">
+      标题 / SKU / 属性 / 描述(其它编辑区,保持不变)…
+      <div class="row m"></div><div class="row s"></div>
+    </div>
+
+    <div class="zone">
+      <div class="zone-h">
+        <span class="t">AI 候选区</span>
+        <span class="sub">· CM 红外测温仪</span>
+        <button class="btn primary sm">🎨 找美工改图</button>
+        <div class="quick">
+          <span class="qbtn"><span class="ic">⬜</span>白底图</span>
+          <span class="qbtn"><span class="ic">🧽</span>去logo水印</span>
+          <span class="qbtn"><span class="ic">🔍</span>高清</span>
+        </div>
+        <span class="sel-pill">已选 3 张</span>
+      </div>
+      <div class="zone-b">
+        <!-- 左栏 图片多选 -->
+        <div class="nav">
+          <div class="tabs"><span class="tab on">全部</span><span class="tab">主图</span><span class="tab">详情图</span></div>
+          <div class="g-h">主图 <span class="c">6</span></div>
+          <div class="thumbs">
+            <div class="th"><span class="bd main">主图</span><span class="ck"></span><svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#eef2f7"/><rect x="20" y="14" width="20" height="34" rx="3" fill="#c9d3e0"/></svg></div>
+            <div class="th"><span class="ck"></span><svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#e9edf3"/><rect x="18" y="16" width="24" height="30" rx="3" fill="#b9c4d4"/></svg></div>
+            <div class="th"><span class="ck"></span><svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#eef2f7"/><rect x="22" y="12" width="16" height="36" rx="3" fill="#c9d3e0"/></svg></div>
+          </div>
+          <div class="g-h" style="margin-top:12px">详情图 <span class="c">20</span></div>
+          <div class="thumbs">
+            <div class="th sel"><span class="bd cd">候选2</span><span class="ck on"></span>
+              <svg viewBox="0 0 60 60"><defs><pattern id="t1" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#d7c9a8"/><circle cx="2" cy="2" r="1" fill="#c2b48f"/></pattern></defs><rect width="60" height="60" fill="url(#t1)"/><rect x="20" y="16" width="20" height="30" rx="4" fill="#a63a3a"/><path d="M20 24 h20" stroke="#fff" stroke-width="2"/></svg>
+            </div>
+            <div class="th"><span class="ck on"></span><svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#efe9dd"/><rect x="22" y="14" width="16" height="34" rx="3" fill="#8a6b4a"/></svg></div>
+            <div class="th"><span class="bd adp">采纳</span><span class="ck"></span><svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#fff"/><rect x="20" y="14" width="20" height="32" rx="3" fill="#a63a3a"/></svg></div>
+            <div class="th"><span class="ck on"></span><svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#efe9dd"/><rect x="18" y="18" width="24" height="26" rx="3" fill="#7d9b6b"/></svg></div>
+            <div class="th"><span class="ck"></span><svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#e7ded0"/><rect x="20" y="16" width="20" height="30" rx="3" fill="#3a5aa6"/></svg></div>
+            <div class="th"><span class="ck"></span><svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#efe9dd"/><rect x="22" y="14" width="16" height="32" rx="3" fill="#a63a3a"/></svg></div>
+          </div>
+        </div>
+        <!-- 右栏 对比/候选 -->
+        <div class="cmp">
+          <div class="cmp-h">
+            <strong style="font-size:13px">对比</strong>
+            <span class="tag">图片擦除</span>
+            <div class="seg"><span class="on">并排</span><span>拉帘</span></div>
+          </div>
+          <div class="pair">
+            <div class="pane">
+              <div class="frame">
+                <svg viewBox="0 0 300 210"><defs><pattern id="bg1" width="14" height="14" patternUnits="userSpaceOnUse"><rect width="14" height="14" fill="#e9dcc0"/><circle cx="4" cy="4" r="1.4" fill="#d8c6a0"/></pattern></defs>
+                  <rect width="300" height="210" fill="url(#bg1)"/><ellipse cx="150" cy="184" rx="105" ry="15" fill="#d3c19a"/>
+                  <rect x="112" y="62" width="76" height="106" rx="9" fill="#9b3b3b"/><path d="M112 90 h76" stroke="#fff" stroke-width="5"/>
+                  <circle cx="150" cy="120" r="14" fill="#f2e8cf"/><circle cx="145" cy="118" r="1.8" fill="#333"/><circle cx="155" cy="118" r="1.8" fill="#333"/>
+                  <text x="220" y="34" font-size="12" fill="#8a7a55" font-weight="700">LOGO</text><text x="26" y="196" font-size="11" fill="#8a7a55">30cm/12in 水印</text>
+                </svg>
+              </div>
+              <div class="cap">原图 · #1547 · 详情图</div>
+            </div>
+            <div class="pane">
+              <div class="frame">
+                <svg viewBox="0 0 300 210"><rect width="300" height="210" fill="#fff"/><ellipse cx="150" cy="184" rx="96" ry="12" fill="#f3f3f3"/>
+                  <rect x="112" y="62" width="76" height="106" rx="9" fill="#9b3b3b"/><path d="M112 90 h76" stroke="#fff" stroke-width="5"/>
+                  <circle cx="150" cy="120" r="14" fill="#f2e8cf"/><circle cx="145" cy="118" r="1.8" fill="#333"/><circle cx="155" cy="118" r="1.8" fill="#333"/>
+                </svg>
+              </div>
+              <div class="cap hl">候选 · 白底(logo/水印已去)</div>
+            </div>
+          </div>
+          <div class="cstrip">
+            <span class="l">候选(2):</span>
+            <div class="cc"><svg viewBox="0 0 50 50"><rect width="50" height="50" fill="#fff"/><rect x="18" y="12" width="14" height="26" rx="3" fill="#9b3b3b"/></svg></div>
+            <div class="cc on"><svg viewBox="0 0 50 50"><rect width="50" height="50" fill="#fff"/><rect x="16" y="10" width="18" height="30" rx="3" fill="#9b3b3b"/></svg></div>
+          </div>
+          <div class="acts">
+            <button class="btn primary sm">✓ 采纳这张 ▾</button>
+            <button class="btn sm">以此再改</button>
+            <button class="btn sm danger">弃用</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右:原生 plugin-ai 抽屉 -->
+  <div class="drawer">
+    <div class="dh">
+      <div class="av">🧑‍🎨</div>
+      <div><div class="nm">美工员工 Ivy</div><div class="rl">电商图片处理 · 只产候选</div></div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center;font-size:11px;color:var(--text-2)">
+        <span class="btn sm" style="padding:2px 8px">切换 ▾</span><span class="x">✕</span>
+      </div>
+    </div>
+    <div class="inj">已带入 3 张图:详情图 #1547、#1552、#1560 · 模型 qwen-image-edit-max</div>
+    <div class="qtasks">
+      <span class="qt">⬜ 白底图</span><span class="qt">🧽 擦除</span><span class="qt">🎨 换色</span><span class="qt">🔍 高清</span><span class="qt">🏞️ 场景图</span>
+    </div>
+    <div class="chat">
+      <div class="msg u">这 3 张详情图都去掉 logo 和水印,主图再换白底</div>
+      <div class="think">已完成思考 · 逐张调用「编辑商品图」工具产候选…</div>
+      <div class="toolcard"><div class="th2">✓ 编辑商品图(候选)</div>scene: erase · 已选 3 张 · instruction: 品牌 logo 和文字水印</div>
+      <div class="msg a">3 张详情图已各出候选,主图白底也好了 👇 候选已进左侧「AI 候选区」,你去采纳:</div>
+      <div class="cand-imgs">
+        <div class="ci"><svg viewBox="0 0 74 74"><rect width="74" height="74" fill="#fff"/><rect x="26" y="16" width="22" height="40" rx="4" fill="#9b3b3b"/></svg></div>
+        <div class="ci"><svg viewBox="0 0 74 74"><rect width="74" height="74" fill="#fff"/><rect x="26" y="18" width="22" height="38" rx="4" fill="#8a6b4a"/></svg></div>
+        <div class="ci"><svg viewBox="0 0 74 74"><rect width="74" height="74" fill="#fff"/><rect x="26" y="16" width="22" height="40" rx="4" fill="#7d9b6b"/></svg></div>
+      </div>
+    </div>
+    <div class="dfoot">
+      <div class="dinput"><span>第 2 张再亮一点…</span><span class="send">↑</span></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="arrow">↑ 左边候选区点「🎨 找美工改图」→ 右边原生抽屉滑出(真员工/模型/会话/快捷能力)→ 员工产候选自动回流左边候选区 → 你在左边采纳 ↑</div>
+
+<div class="legend">
+  <b>三点反馈 + 你两点追加,如何被解决:</b><br/>
+  ① <b>布局</b>:候选区从「竖排拉长」改为 <b>横向两栏 Card</b>(图集多选 | 对比/候选),矮而宽,一屏看全;AI 改图搬去原生抽屉,页面不再挤。<br/>
+  ② <b>中文场景</b>:快捷按钮 / 候选标签 / 抽屉快捷能力 <b>全中文 + 图标</b>(⬜白底 🧽擦除 🎨换色 …)。<br/>
+  ③ <b>原图/候选同框</b>:候选区右栏 <b>原图 ↔ 候选常驻并排</b>(可切拉帘),左栏 <b>主图/详情图分组</b> 带角标,改完立刻对照。<br/>
+  ④ <b>图片多选</b>:左栏 <b>勾选框</b> 多选,头部「已选 N 张」,快捷 / 抽屉都对整批生效。<br/>
+  ⑤ <b>直接用原生抽屉</b>:AI 改图 = <b>plugin-ai 原生抽屉</b>(真员工 Ivy / 真模型 / 会话 / 流式,零复刻),选中图注入、场景做快捷按钮;<b>候选自动回流</b>到左边候选区。<br/>
+  <br/>
+  <b>分工(已定)</b>:候选区放 2–3 快捷直连(白底/去logo/高清,秒级);复杂 / 批量 / 多轮 / 其它场景去抽屉找员工聊。<br/>
+  <b>不改服务端</b>:generate / adopt / discard / candidates / 发布采纳集优先 沿用已验证能力。
+</div>
+
+</body>
+</html>

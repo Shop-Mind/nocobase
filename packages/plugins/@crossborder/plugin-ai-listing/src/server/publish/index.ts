@@ -64,12 +64,28 @@ async function resolveStoreName(db: any, storeId: unknown): Promise<string | nul
   return account ? account.get('storeName') || `店铺 #${id}` : null;
 }
 
+// 发布图集「采纳集优先」过滤:弃用资产（含被替换原图）与未采纳的 AI 候选不进发布;
+// 已采纳候选（origin=ai_adopted）的 sourceUrl 即本地候选图地址，随 sort 顺序自然入列。
+// JS 侧过滤而非 SQL $ne：历史行 discarded 可能为 NULL，SQL 三值逻辑会把它们误滤掉。
+// 入参需已按 sort,id 排序;导出供单测。
+export function selectPublishableMedia<T extends { get: (k: string) => unknown }>(all: T[]): T[] {
+  return all.filter((m) => !m.get('discarded') && m.get('origin') !== 'ai_candidate');
+}
+
+// 发布视频位取图:采纳视频(finalSelected)优先;否则回退到非 AI 候选的历史视频(兼容会话工具旧产物);
+// 未采纳的 AI 视频候选(origin=ai_candidate)绝不进发布(与图片同一铁律:AI 只产候选,采纳才写最终)。
+export function selectPublishableVideo<T extends { get: (k: string) => unknown }>(videos: T[]): T | undefined {
+  const alive = videos.filter((v) => !v.get('discarded'));
+  return alive.find((v) => v.get('finalSelected')) || alive.find((v) => v.get('origin') !== 'ai_candidate');
+}
+
 // 读取单个商品的校验上下文（商品 + SKU + 媒体）。
 async function loadProductContext(repos: PublishRepos, productId: number) {
   const product = await repos.Products.findOne({ filterByTk: productId });
   if (!product) return null;
   const skus = await repos.Skus.find({ filter: { productId }, sort: ['id'] });
-  const media = await repos.Media.find({ filter: { productId, assetType: 'image' }, sort: ['sort', 'id'] });
+  const all = await repos.Media.find({ filter: { productId, assetType: 'image' }, sort: ['sort', 'id'] });
+  const media = selectPublishableMedia(all);
   return { product, skus, media };
 }
 
@@ -465,8 +481,10 @@ export function setupPublish(plugin: Plugin): void {
             pre.images,
             config,
           );
-          const videoAsset = await repos.Media.findOne({ filter: { productId: pid, assetType: 'video' } });
-          if (videoAsset) payload.videoUrl = videoAsset.get('sourceUrl');
+          const videoAsset = selectPublishableVideo(
+            await repos.Media.find({ filter: { productId: pid, assetType: 'video' } }),
+          );
+          if (videoAsset) payload.videoUrl = videoAsset.get('sourceUrl') as string;
           try {
             const res = await publishFn(payload);
             success++;
@@ -688,8 +706,10 @@ export function setupPublish(plugin: Plugin): void {
             pre.images,
             config,
           );
-          const videoAsset = await repos.Media.findOne({ filter: { productId: pid, assetType: 'video' } });
-          if (videoAsset) payload.videoUrl = videoAsset.get('sourceUrl');
+          const videoAsset = selectPublishableVideo(
+            await repos.Media.find({ filter: { productId: pid, assetType: 'video' } }),
+          );
+          if (videoAsset) payload.videoUrl = videoAsset.get('sourceUrl') as string;
           try {
             const res = await publishFn(payload);
             success++;

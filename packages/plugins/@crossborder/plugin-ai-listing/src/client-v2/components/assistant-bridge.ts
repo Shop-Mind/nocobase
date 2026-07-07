@@ -29,7 +29,46 @@ const SYSTEM: Record<string, string> = {
   'lst-toby': '你是商品信息整理员 Toby。只给优化建议（标题/描述/参数），不直接写库；是否保存由用户决定。中文。',
   'lst-lena': '你是发布助理 Lena。只读协助：发布前检查、失败解释、重试建议；绝不触发真实发布。中文。',
   'lst-kai': '你是搬运主管 Kai，统筹选品(Mira)/合规(Rena)/文案(Toby)/发布(Lena)。只读或转派，不写库。中文。',
+  'lst-ivy':
+    '你是美工员工 Ivy,专做商品图片处理。本对话处理复杂/多轮/需要来回沟通的改图需求:用 aiListingEditImage 工具对系统上下文给出的 assetId 逐张产候选;只产候选、绝不代替用户采纳或发布;增量修改只改说到的部分。中文、简洁,产出后提醒去「AI 候选区」采纳。若用户要的是标准功能(白底/场景图/去水印/换色/卖点/高清/扩图/换材质/Logo/翻译/模特图/生产流程图/智能视频),提示他用页面上的「🎨 创意工坊」更快更省心(有专属表单与比例/档位)。',
 };
+
+// 打开原生抽屉找美工员工改图:注入选中图(assetId)+商品 id,员工用 aiListingEditImage 逐张产候选。
+// 候选进「AI 候选区」(页面)与气泡(抽屉)双端;采纳权始终在用户。
+export async function openMediaEditor(
+  app: HostApp,
+  opts: {
+    productId: number;
+    assetIds: number[];
+    images?: Array<{ id: number; role?: string }>;
+    scene?: string;
+    sceneLabel?: string;
+  },
+): Promise<boolean> {
+  const username = (typeof process !== 'undefined' && process.env?.AI_LISTING_DESIGN_EMPLOYEE) || 'lst-ivy';
+  const imgs: Array<{ id: number; role?: string }> =
+    opts.images && opts.images.length ? opts.images : opts.assetIds.map((id) => ({ id }));
+  const list = imgs.map((m) => `- assetId=${m.id}${m.role ? `(${m.role})` : ''}`);
+  const systemMessage = [
+    SYSTEM['lst-ivy'],
+    '',
+    `【当前商品】productId=${opts.productId}`,
+    opts.assetIds.length
+      ? `【用户已选中的待处理图】\n${list.join('\n')}`
+      : '【用户未指定具体图,请让用户先在候选区选图】',
+    '',
+    '调用方式:对每个 assetId 调 aiListingEditImage({ productId, assetId, scene?, instruction })。',
+    '可用场景 key:white_bg(白底) / scene_gen(场景图) / erase(去logo水印,instruction 填要去除的对象) / recolor(换色,填颜色) / selling_point(卖点图) / hd(高清) / expand(扩图) / material(换材质) / custom(自由改,填完整指令)。',
+    '产出后用 markdown ![候选](url) 展示,并提醒用户去页面「AI 候选区」采纳。',
+    '本对话用于复杂/多轮沟通的改图;标准一键功能引导用户去页面上的「🎨 创意工坊」(有专属表单、比例、档位,更快)。',
+  ].join('\n');
+  const userPrompt = opts.scene
+    ? `把选中的${opts.assetIds.length > 1 ? ` ${opts.assetIds.length} 张` : ''}图做${opts.sceneLabel || opts.scene}`
+    : '';
+  // P9 抽屉收窄:移除原生 task 快捷按钮(plugin-ai 原生 task 点击后重置会话/按钮消失——「场景图点了按钮就没了」的根因)。
+  // 抽屉回归「自由对话找 Ivy」(复杂/多轮),标准功能一律走独立创意工坊页(头部「🎨 创意工坊」)。仅注入选中图上下文。
+  return openNativeAssistant(app, { username, systemMessage, userPrompt, autoSend: false });
+}
 
 const employeeCache: Record<string, unknown> = {};
 
@@ -84,9 +123,13 @@ function autoSendWhenReady(getChatBoxState: () => Record<string, unknown> | unde
 
 // 复用的原生抽屉打开器：绑定员工 + 预置 system/user 消息，打开 plugin-ai 原生右侧抽屉。
 // 供 aiListingOpenAssistant（旧「问 Toby」入口）与 jsBlock kit（新紫色头像入口）共用。
+// 抽屉快捷任务按钮(plugin-ai 原生 role:'task' 机制):每个 = { title, message:{user,system}, autoSend }。
+// 点击后由 TaskMessage → triggerTask 应用该任务的 user/system 到输入框与系统消息。
+export type QuickTask = { title: string; message?: { user?: string; system?: string }; autoSend?: boolean };
+
 export async function openNativeAssistant(
   app: HostApp,
-  opts: { username: string; systemMessage?: string; userPrompt?: string; autoSend?: boolean },
+  opts: { username: string; systemMessage?: string; userPrompt?: string; autoSend?: boolean; tasks?: QuickTask[] },
 ): Promise<boolean> {
   try {
     const emp = await fetchEmployee(app, opts.username);
@@ -115,9 +158,14 @@ export async function openNativeAssistant(
     cm.setSessionResponseLoading?.(KEY, false);
     cc?.setCurrentConversation?.(undefined);
     cb.setCurrentEmployee?.(emp);
-    cm.setSessionMessages?.(KEY, [
+    const messages: Array<Record<string, unknown>> = [
       { key: randomKey(), role: emp.username, content: { type: 'greeting', content: greeting } },
-    ]);
+    ];
+    // 快捷任务按钮:渲染成一排按钮,点一下预填该场景指令(带图片上下文的 system 每个任务自带,防止 triggerTask 重置丢失)
+    if (opts.tasks?.length) {
+      messages.push({ key: randomKey(), role: 'task', content: { content: opts.tasks } });
+    }
+    cm.setSessionMessages?.(KEY, messages);
     cb.setModel?.(null);
     if (opts.systemMessage) cm.setSessionSystemMessage?.(KEY, opts.systemMessage);
     if (opts.userPrompt) cb.setSenderValue?.(opts.userPrompt);

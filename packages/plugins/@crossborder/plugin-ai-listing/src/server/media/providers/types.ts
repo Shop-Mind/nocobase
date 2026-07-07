@@ -15,6 +15,8 @@ export interface MediaGenInput {
   prompt: string;
   // 提供源图 URL 时为"改图/图生视频",否则为"文生图/文生视频"
   sourceImageUrl?: string;
+  // 生成参数(如视频 resolution/duration,透传给服务商 parameters);为空则用服务商默认
+  parameters?: Record<string, unknown>;
 }
 
 export interface MediaSubmitResult {
