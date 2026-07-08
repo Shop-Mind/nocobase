@@ -1966,10 +1966,11 @@ function ReviewApp() {
       <div className="aic-scope" style={{ marginTop: 12 }}>
         <div className="card" style={{ margin: 0 }}>
           <div className="shead">
+            <span className="eyebrow">ATTRIBUTES</span>
             <span className="zh">商品属性（规格参数）</span>
             <Tooltip title="发布到平台后展示在商品页「规格参数 / 产品属性」区（如 材质/产地/用途）；多数平台按类目必填，填得全有利搜索曝光。左边属性名、右边属性值，可增删改；来源为抓取的关键属性 + AI 补全建议（紫色=AI 整理/补全）。">
               <span className="i" style={{ cursor: 'help' }}>
-                ⓘ
+                ⓘ 有什么用？
               </span>
             </Tooltip>
             {isDirty('attributes') ? <PendingTag /> : null}
@@ -2078,6 +2079,7 @@ function ReviewApp() {
       <div className="aic-scope" style={{ marginTop: 12 }}>
         <div className="card" style={{ margin: 0 }}>
           <div className="shead">
+            <span className="eyebrow">DESC</span>
             <span className="zh">商品描述</span>
             <Tooltip title={SELLING_RULES_TEXT} overlayStyle={{ maxWidth: 420 }}>
               <span className="i" style={{ cursor: 'help' }}>
@@ -2517,10 +2519,10 @@ function ReviewApp() {
   // 既修掉「左栏被中栏撑高、下面一大片空白」的问题，也让操作/记录始终在手边。
   return (
     <Row gutter={12}>
-      <Col xs={24} sm={7} md={6} lg={5}>
+      <Col xs={24} sm={7} md={5} lg={4}>
         <div style={{ position: 'sticky', top: 8 }}>{LeftPanel}</div>
       </Col>
-      <Col xs={24} sm={17} md={12} lg={13}>
+      <Col xs={24} sm={17} md={13} lg={14}>
         {RightPanel}
       </Col>
       <Col xs={24} sm={24} md={6} lg={6}>
