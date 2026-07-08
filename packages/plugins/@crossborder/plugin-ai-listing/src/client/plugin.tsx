@@ -15,10 +15,19 @@ import { setupAssistantBridge } from '../client-v2/components/assistant-bridge';
 import { setupJsBlockAI } from '../client-v2/ai/jsblock-ai';
 import { setupMediaKit } from '../client-v2/components/MediaStudio';
 import { setupWorkshopKit } from '../client-v2/components/CreativeWorkshop';
+import { injectCreativeConsole } from '../client-v2/components/shared/inject-styles';
 
 export class PluginAiListingClient extends Plugin {
   async load() {
     this.flowEngine.registerModels(models);
+    // Creative Console 设计系统（预览编辑页视觉重设计的唯一样式真源）：幂等注入全局 <style>。
+    // 运行中的 /admin 应用加载的是本插件 v1 入口，故此处注入才会作用于真实页面（与 kit 安装同理）。
+    // 规则绝大多数作用域在 .aic-scope 下，容器未挂 aic-scope 前对页面零影响；独立 try/catch，不阻断后续。
+    try {
+      injectCreativeConsole();
+    } catch {
+      // 样式注入失败不影响主应用（页面回退到无 Creative Console 皮肤）。
+    }
     // jsBlock 通用能力：window.aiListingOpenAssistant + window.__aiListingBlockKit + 注册 jsBlockApplyPatch 前端工具。
     // 全程 try/catch，失败不影响主应用（jsBlock 会回退）。
     try {
