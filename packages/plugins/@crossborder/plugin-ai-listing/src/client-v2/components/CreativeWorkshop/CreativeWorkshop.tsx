@@ -19,6 +19,7 @@ import {
   Empty,
   Input,
   InputNumber,
+  Progress,
   Segmented,
   Select,
   Space,
@@ -102,7 +103,9 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
   const [uploaded, setUploaded] = useState<CarryImage[]>([]); // 用户新上传的图(sourceImageUrl)
   const [models, setModels] = useState<Array<{ llmService: string; model: string; label: string }>>([]);
   const [modelKey, setModelKey] = useState<string>(''); // '' = 自动
-  const [count, setCount] = useState<number>(2);
+  // 默认每图 1 张:gpt-image-2 网关每次 /images/edits 只回 1 张,多张靠前端按 n=1 循环出图(带进度);
+  // 用户想要更多变体时上调(2-4),逐张生成、逐张回流、部分成功也保留。
+  const [count, setCount] = useState<number>(1);
   const [activeKey, setActiveKey] = useState<string>('white_bg');
   const [picked, setPicked] = useState<Set<string>>(new Set()); // 带入区勾选(CarryImage.key)
   const [instruction, setInstruction] = useState<string>('');
@@ -327,44 +330,54 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
     const style = activeFunc.key === 'process' ? procStyle : undefined;
     const refImageUrl = refImage?.url || undefined;
     const [llmService, model] = modelKey ? modelKey.split(/:(.+)/) : [undefined, undefined];
-    setBusy({ done: 0, total: targets.length });
+    // 每张源图出 count 张候选;gpt-image-2 网关每次只回 1 张,故按 n=1 逐张循环,进度 = 已出/总数。
+    const perImage = Math.min(Math.max(count, 1), 4);
+    const total = targets.length * perImage;
+    setBusy({ done: 0, total });
+    // 带图编辑经 codex 上游偏慢(单张 ~2–3 分钟),放宽候选回流轮询窗口以兜住 apiClient 可能的提前超时
+    setWatchUntil(Date.now() + 240000);
     let firstAssetId: number | undefined;
-    let failed = 0;
-    for (let i = 0; i < targets.length; i++) {
-      const src = targets[i];
-      const res = await callMediaApi<{ assets: Array<{ assetId: number; url: string }> }>(
-        app,
-        'aiListingMedia:generate',
-        {
-          productId,
-          assetId: src.assetId,
-          sourceImageUrl: src.assetId ? undefined : src.url || undefined,
-          scene: activeFunc.key,
-          instruction: effInstr,
-          n: count,
-          llmService,
-          model,
-          aspect: aspect || undefined,
-          tier,
-          refImageUrl,
-          targetLanguage,
-          style,
-        },
-      );
-      if (res.ok) {
-        if (!firstAssetId) firstAssetId = res.data?.assets?.[0]?.assetId;
-      } else {
-        failed++;
-        message.error(res.message || t('Generation failed'));
+    let done = 0;
+    let ok = 0;
+    let lastError = '';
+    for (const src of targets) {
+      for (let k = 0; k < perImage; k++) {
+        const res = await callMediaApi<{ assets: Array<{ assetId: number; url: string }> }>(
+          app,
+          'aiListingMedia:generate',
+          {
+            productId,
+            assetId: src.assetId,
+            sourceImageUrl: src.assetId ? undefined : src.url || undefined,
+            scene: activeFunc.key,
+            instruction: effInstr,
+            n: 1,
+            llmService,
+            model,
+            aspect: aspect || undefined,
+            tier,
+            refImageUrl,
+            targetLanguage,
+            style,
+          },
+        );
+        done += 1;
+        setBusy({ done, total });
+        if (res.ok) {
+          ok += 1;
+          if (!firstAssetId) firstAssetId = res.data?.assets?.[0]?.assetId;
+          // 逐张回流:每出一张就刷新候选区,让候选一张张出现(部分成功也已入库)
+          await refresh(firstAssetId ? { focusCandidateId: firstAssetId } : undefined);
+        } else {
+          lastError = res.message || t('Generation failed');
+        }
       }
-      setBusy({ done: i + 1, total: targets.length });
     }
     setBusy(null);
-    if (failed < targets.length) {
-      message.success(t('Candidates generated'));
-      // 带图编辑经 codex 上游偏慢(单张 ~2–3 分钟),放宽候选回流轮询窗口以兜住 apiClient 可能的提前超时
-      setWatchUntil(Date.now() + 240000);
-      await refresh(firstAssetId ? { focusCandidateId: firstAssetId } : undefined);
+    if (ok > 0) {
+      message.success(`${t('Candidates generated')}${total > 1 ? ` (${ok}/${total})` : ''}`);
+    } else {
+      message.error(lastError || t('Generation failed'));
     }
   }, [
     app,
@@ -1141,6 +1154,20 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
                 ✨ {busy ? `${t('Generating')} ${busy.done}/${busy.total}` : t('Start generating')}
               </Button>
             </div>
+
+            {/* 出图进度条:多张时逐张生成,进度 = 已出/总数;候选逐张在右侧回流 */}
+            {busy ? (
+              <div style={{ marginTop: 12 }}>
+                <Progress
+                  percent={busy.total ? Math.round((busy.done / busy.total) * 100) : 0}
+                  status="active"
+                  format={() => `${busy.done}/${busy.total}`}
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
+                  ⏳ {t('Generating one by one — candidates appear on the right as each finishes (upstream is slow).')}
+                </Typography.Text>
+              </div>
+            ) : null}
           </div>
 
           {/* 右:示例 / 结果 */}

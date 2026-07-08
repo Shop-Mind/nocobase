@@ -26,6 +26,7 @@ import {
   type MediaStudioApp,
 } from './types';
 
+// 图集缩略图栅格:3 列(角标已瘦身不再挡图,左栏加宽后 3 列缩略图 ~74px,比原来大且能一屏看更多)
 const NAV_GRID: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 };
 
 function assetUrl(a: MediaAsset | undefined | null): string | null {
@@ -40,6 +41,7 @@ function Thumb({
   onSelect,
   onToggle,
   badges,
+  adopted,
   t,
 }: {
   asset: MediaAsset;
@@ -48,6 +50,8 @@ function Thumb({
   onSelect: () => void;
   onToggle: () => void;
   badges?: React.ReactNode;
+  // 已采纳:右下角绿 ✓ 角标(与左上角色标、右上勾选框分处不同角,不再叠一起挡图)
+  adopted?: boolean;
   t: (k: string) => string;
 }) {
   return (
@@ -113,6 +117,30 @@ function Thumb({
       >
         {checked ? '✓' : ''}
       </span>
+      {adopted ? (
+        <span
+          title={t('Adopted')}
+          aria-label={t('Adopted')}
+          style={{
+            position: 'absolute',
+            right: 3,
+            bottom: 3,
+            minWidth: 16,
+            height: 16,
+            borderRadius: 8,
+            padding: '0 5px',
+            background: '#52c41a',
+            border: '1.5px solid #fff',
+            color: '#fff',
+            fontSize: 10,
+            lineHeight: '14px',
+            textAlign: 'center',
+            fontWeight: 600,
+          }}
+        >
+          ✓
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -337,19 +365,29 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
               onSelect={() => setCurrentId(g.id)}
               onToggle={() => togglePick(g.id)}
               t={t}
+              adopted={g.finalSelected}
               badges={
-                <>
-                  {g.role === 'main' ? (
-                    <Tag color="gold" style={{ margin: 0, fontSize: 10, lineHeight: '15px', padding: '0 4px' }}>
-                      {t('Main')}
-                    </Tag>
-                  ) : null}
-                  {g.finalSelected ? (
-                    <Tag color="green" style={{ margin: 0, fontSize: 10, lineHeight: '15px', padding: '0 4px' }}>
-                      {t('Adopted')}
-                    </Tag>
-                  ) : null}
-                </>
+                // 角色标瘦身:去掉冗余「主图/详情」文字标(分组标题已表明),仅主图留一个小金星,不挡图
+                g.role === 'main' ? (
+                  <span
+                    title={t('Main')}
+                    aria-label={t('Main')}
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: 8,
+                      background: '#faad14',
+                      border: '1.5px solid #fff',
+                      color: '#fff',
+                      fontSize: 10,
+                      lineHeight: '14px',
+                      textAlign: 'center',
+                      display: 'inline-block',
+                    }}
+                  >
+                    ★
+                  </span>
+                ) : null
               }
             />
           ))}
@@ -425,7 +463,7 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
           {/* 左:图集(分组 + 多选) */}
           <div
             style={{
-              width: 210,
+              width: 248,
               flexShrink: 0,
               borderRight: '1px solid #f0f0f0',
               paddingRight: 12,

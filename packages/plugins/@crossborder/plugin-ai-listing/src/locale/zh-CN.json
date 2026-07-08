@@ -400,5 +400,6 @@
   "Product video (adopted)": "商品视频(已采纳)",
   "Video candidates": "视频候选",
   "Video candidates will appear here → play / adopt / discard": "视频候选会出现在这里 → 播放 / 采纳 / 弃用",
-  "Adopting sets the product video (audit as user); publish carries the adopted video.": "采纳后设为商品视频(审计 actorType=user),发布时带出采纳的视频。"
+  "Adopting sets the product video (audit as user); publish carries the adopted video.": "采纳后设为商品视频(审计 actorType=user),发布时带出采纳的视频。",
+  "Generating one by one — candidates appear on the right as each finishes (upstream is slow).": "逐张生成中,每出一张就显示在右侧(上游较慢)。"
 }

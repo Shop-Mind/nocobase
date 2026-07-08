@@ -11,7 +11,7 @@
 // 替换主图额外提示平台白底合规规则。安全铁律:采纳是用户显式动作,服务端置 finalSelected + 审计 actorType=user。
 
 import React, { useState } from 'react';
-import { Alert, Modal, Radio, Select, Space, Typography } from 'antd';
+import { Alert, Modal, Radio, Space, Typography } from 'antd';
 import type { MediaAsset } from './types';
 
 export interface AdoptChoice {
@@ -77,16 +77,90 @@ export function AdoptModal({
           </Space>
         </Radio.Group>
         {mode === 'replace' ? (
-          <Select
-            style={{ width: '100%' }}
-            placeholder={t('Select the image to replace')}
-            value={replaceAssetId}
-            onChange={setReplaceAssetId}
-            options={gallery.map((g) => ({
-              value: g.id,
-              label: `${g.role === 'main' ? '★ ' : ''}#${g.id}${g.role ? ` (${g.role})` : ''}`,
-            }))}
-          />
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+              {t('Select the image to replace')}
+            </Typography.Text>
+            {/* 缩略图网格:一眼看清替换的是哪张(替代原来只显示 #ID 的下拉);点选高亮 */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 8,
+                maxHeight: 264,
+                overflowY: 'auto',
+                paddingRight: 2,
+              }}
+            >
+              {gallery.map((g) => {
+                const on = replaceAssetId === g.id;
+                return (
+                  <div
+                    key={g.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={on}
+                    onClick={() => setReplaceAssetId(g.id)}
+                    onKeyDown={(e) => (e.key === 'Enter' ? setReplaceAssetId(g.id) : undefined)}
+                    title={`#${g.id}${g.role ? ` · ${g.role}` : ''}`}
+                    style={{
+                      position: 'relative',
+                      aspectRatio: '1 / 1',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      cursor: 'pointer',
+                      border: on ? '2px solid #1677ff' : '1px solid #e5e7eb',
+                      boxShadow: on ? '0 0 0 2px rgba(22,119,255,.15)' : 'none',
+                      background: '#f4f5f7',
+                    }}
+                  >
+                    {g.url ? (
+                      <img
+                        src={g.url}
+                        alt={String(g.role || g.id)}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    ) : null}
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: 4,
+                        top: 4,
+                        fontSize: 9,
+                        color: '#fff',
+                        borderRadius: 3,
+                        padding: '0 4px',
+                        lineHeight: '15px',
+                        background: g.role === 'main' ? '#faad14' : '#40a9ff',
+                      }}
+                    >
+                      {g.role === 'main' ? t('Main') : t('Detail')}
+                    </span>
+                    {on ? (
+                      <span
+                        aria-hidden
+                        style={{
+                          position: 'absolute',
+                          right: 4,
+                          top: 4,
+                          width: 16,
+                          height: 16,
+                          borderRadius: 4,
+                          background: '#1677ff',
+                          color: '#fff',
+                          fontSize: 11,
+                          lineHeight: '16px',
+                          textAlign: 'center',
+                        }}
+                      >
+                        ✓
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         ) : null}
         {replacingMain ? (
           <Alert

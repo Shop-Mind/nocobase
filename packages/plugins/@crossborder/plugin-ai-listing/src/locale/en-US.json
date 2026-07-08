@@ -400,5 +400,6 @@
   "Product video (adopted)": "Product video (adopted)",
   "Video candidates": "Video candidates",
   "Video candidates will appear here → play / adopt / discard": "Video candidates will appear here → play / adopt / discard",
-  "Adopting sets the product video (audit as user); publish carries the adopted video.": "Adopting sets the product video (audit as user); publish carries the adopted video."
+  "Adopting sets the product video (audit as user); publish carries the adopted video.": "Adopting sets the product video (audit as user); publish carries the adopted video.",
+  "Generating one by one — candidates appear on the right as each finishes (upstream is slow).": "Generating one by one — candidates appear on the right as each finishes (upstream is slow)."
 }
