@@ -2288,181 +2288,165 @@ function ReviewApp() {
           ]
         : null;
     LifecyclePanel = (
-      <Card
-        size="small"
-        styles={{ body: { padding: 10 } }}
-        title={
-          <Space size={6}>
-            <span>商品生命周期</span>
-            <Tooltip title="阶段按流程顺序列出：✓ 已完成、蓝色为当前阶段；蓝色主按钮是当前该做的下一步。">
-              <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
+      <div className="aic-scope">
+        <div className="sidecard">
+          <div className="sc-head">
+            <span className="t">商品生命周期</span>
+            <Tooltip title="阶段按流程顺序列出：✓ 已完成、当前阶段高亮；主按钮是当前该做的下一步。">
+              <span className="i" style={{ cursor: 'help' }}>
                 ⓘ
-              </Typography.Text>
+              </span>
             </Tooltip>
-          </Space>
-        }
-        extra={<Tag color={(STATUS_META[st] || {}).color || 'default'}>{(STATUS_META[st] || {}).label || st}</Tag>}
-      >
-        {nextAction ? (
-          <Button type="primary" block loading={busy} onClick={nextAction.run} style={{ marginBottom: 8 }}>
-            {nextAction.text}
-          </Button>
-        ) : (
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 8, textAlign: 'center' }}>发布中，等待批次完成…</div>
-        )}
-        {readiness ? (
-          <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: '6px 10px', marginBottom: 8 }}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              发布就绪检查
-            </Typography.Text>
-            {readiness.map((r) => (
-              <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                <span style={{ fontSize: 13, lineHeight: 1 }}>{r.ok ? '✅' : r.soft ? '⚠️' : '❌'}</span>
-                <Typography.Text style={{ fontSize: 12, width: 32 }}>{r.label}</Typography.Text>
-                <Typography.Text
-                  type={r.ok ? 'secondary' : r.soft ? 'warning' : 'danger'}
-                  style={{ fontSize: 12, flex: 1 }}
-                >
-                  {r.note}
-                </Typography.Text>
-                {r.fix ? (
-                  <Button size="small" type="link" style={{ padding: 0, height: 18, fontSize: 12 }} onClick={r.fix}>
-                    一键填 1000
-                  </Button>
-                ) : null}
-              </div>
-            ))}
+            <span className="sp" />
+            <Tag color={(STATUS_META[st] || {}).color || 'default'} style={{ marginInlineEnd: 0 }}>
+              {(STATUS_META[st] || {}).label || st}
+            </Tag>
           </div>
-        ) : null}
-        <Space direction="vertical" size={4} style={{ width: '100%' }}>
-          {steps.map((s, i) => {
-            const current = i === stepIdx;
-            const done = i < stepIdx;
-            return (
+          <div className="sc-body">
+            {nextAction ? (
+              <button type="button" className="viewbtn" disabled={busy} onClick={nextAction.run}>
+                {nextAction.text}
+              </button>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 13, textAlign: 'center' }}>
+                发布中，等待批次完成…
+              </div>
+            )}
+            {readiness ? (
               <div
-                key={s.label}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  border: current ? (s.danger ? '1px solid #ff4d4f' : '1px solid #1677ff') : '1px solid #f0f0f0',
-                  background: current ? (s.danger ? '#fff2f0' : '#e6f4ff') : '#fff',
-                  borderRadius: 6,
-                  padding: '3px 10px',
-                }}
+                style={{ border: '1px solid var(--line-2)', borderRadius: 10, padding: '8px 11px', marginBottom: 13 }}
               >
-                <Typography.Text
-                  style={{
-                    fontSize: 12,
-                    fontWeight: current ? 600 : 400,
-                    color: current && s.danger ? '#cf1322' : done ? '#8c8c8c' : undefined,
-                  }}
-                >
-                  {s.label}
-                  {done ? ' ✓' : ''}
+                <Typography.Text type="secondary" style={{ fontSize: 11, fontWeight: 700 }}>
+                  发布就绪检查
                 </Typography.Text>
-                {s.action ? (
-                  <Button
-                    size="small"
-                    type="link"
-                    style={{ padding: 0, height: 18, fontSize: 12 }}
-                    loading={busy}
-                    onClick={s.action.run}
-                  >
-                    {s.action.text}
-                  </Button>
-                ) : null}
+                {readiness.map((r) => (
+                  <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <span style={{ fontSize: 13, lineHeight: 1 }}>{r.ok ? '✅' : r.soft ? '⚠️' : '❌'}</span>
+                    <Typography.Text style={{ fontSize: 12, width: 32 }}>{r.label}</Typography.Text>
+                    <Typography.Text
+                      type={r.ok ? 'secondary' : r.soft ? 'warning' : 'danger'}
+                      style={{ fontSize: 12, flex: 1 }}
+                    >
+                      {r.note}
+                    </Typography.Text>
+                    {r.fix ? (
+                      <Button size="small" type="link" style={{ padding: 0, height: 18, fontSize: 12 }} onClick={r.fix}>
+                        一键填 1000
+                      </Button>
+                    ) : null}
+                  </div>
+                ))}
               </div>
-            );
-          })}
-        </Space>
-        {detail.status === 'publish_failed' && detail.lastPublishFailure ? (
-          <div style={{ fontSize: 12, color: '#cf1322', marginTop: 8 }}>
-            上次失败：{(detail.lastPublishFailure.reason || '').slice(0, 60)}
+            ) : null}
+            <div className="steps">
+              {steps.map((s, i) => {
+                const current = i === stepIdx;
+                const done = i < stepIdx;
+                return (
+                  <div key={s.label} className={`step${current ? ' curl' : ''}${!done && !current ? ' waitl' : ''}`}>
+                    <span className={`dot ${done ? 'done' : current ? 'cur' : 'wait'}`}>{done ? '✓' : i + 1}</span>
+                    <span
+                      className="sl"
+                      style={current && s.danger ? { color: 'var(--coral)', fontWeight: 700 } : undefined}
+                    >
+                      {s.label.replace(/^\d+\.\s*/, '')}
+                    </span>
+                    {s.action ? (
+                      <button type="button" className="rb" disabled={busy} onClick={s.action.run}>
+                        {s.action.text}
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            {detail.status === 'publish_failed' && detail.lastPublishFailure ? (
+              <div style={{ fontSize: 12, color: 'var(--coral)', marginTop: 10 }}>
+                上次失败：{(detail.lastPublishFailure.reason || '').slice(0, 60)}
+              </div>
+            ) : null}
+            {detail.publishUrl && st !== 'published' ? (
+              <div style={{ marginTop: 10 }}>
+                <a
+                  href={detail.publishUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 12, color: 'var(--violet)' }}
+                >
+                  查看平台上的商品/草稿 →
+                </a>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-        {detail.publishUrl && st !== 'published' ? (
-          <div style={{ marginTop: 8 }}>
-            <a href={detail.publishUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
-              查看平台上的商品/草稿 →
-            </a>
-          </div>
-        ) : null}
-      </Card>
+        </div>
+      </div>
     );
   }
 
   // ---------- 变更记录（人话版：中文字段名 + 值摘要；原始字段名进悬停提示留给排查用）----------
   const shownLogs = logs.filter((l) => !isNoopAudit(l)).filter((l) => !logFilter || l.actorType === logFilter);
   const ChangeLog = (
-    <Card
-      size="small"
-      title="变更记录"
-      styles={{ body: { padding: 8, maxHeight: 'calc(100vh - 480px)', overflowY: 'auto' } }}
-      extra={
-        <Segmented
-          size="small"
-          value={logFilter}
-          onChange={setLogFilter}
-          options={[
-            { label: '全部', value: '' },
-            { label: '人工', value: 'user' },
-            { label: 'AI', value: 'ai_employee' },
-            { label: '系统', value: 'system' },
-          ]}
-        />
-      }
-    >
-      {shownLogs.length === 0 ? (
-        <Empty description={logs.length ? '该来源暂无变更' : '暂无变更'} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {shownLogs.map((l) => {
-            const am = ACTOR_META[l.actorType] || { color: 'default', label: l.actorType };
-            const f = l.fieldName;
-            const hasOld = l.oldValue != null && l.oldValue !== '';
-            return (
-              <div
-                key={l.id}
-                style={{
-                  borderLeft: `3px solid ${
-                    am.color === 'blue' ? '#1677ff' : am.color === 'purple' ? '#722ed1' : '#d9d9d9'
-                  }`,
-                  paddingLeft: 8,
-                }}
+    <div className="aic-scope">
+      <div className="sidecard">
+        <div className="sc-head">
+          <span className="t">变更记录</span>
+          <span className="sp" />
+          <div className="afilter">
+            {[
+              { label: '全部', value: '' },
+              { label: '人工', value: 'user' },
+              { label: 'AI', value: 'ai_employee' },
+              { label: '系统', value: 'system' },
+            ].map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                className={logFilter === o.value ? 'on' : undefined}
+                onClick={() => setLogFilter(o.value)}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Tag color={am.color} style={{ marginInlineEnd: 0 }}>
-                    {am.label}
-                  </Tag>
-                  <Tooltip title={`字段：${f || l.action}`}>
-                    <Typography.Text strong style={{ fontSize: 12 }}>
-                      {fieldLabel(f) || l.action}
-                    </Typography.Text>
-                  </Tooltip>
-                  <span style={{ flex: 1 }} />
-                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    {l.createdAt ? dayjs(l.createdAt).format('MM-DD HH:mm') : ''}
-                  </Typography.Text>
-                </div>
-                <div style={{ fontSize: 12, color: '#555', wordBreak: 'break-all', marginTop: 2 }}>
-                  {hasOld ? (
-                    <>
-                      <Typography.Text delete type="secondary" style={{ fontSize: 12 }}>
-                        {fmtAuditVal(f, l.oldValue)}
-                      </Typography.Text>{' '}
-                      →{' '}
-                    </>
-                  ) : null}
-                  {fmtAuditVal(f, l.newValue)}
-                </div>
-                {l.reason ? <div style={{ fontSize: 11, color: '#999', marginTop: 1 }}>{l.reason}</div> : null}
-              </div>
-            );
-          })}
+                {o.label}
+              </button>
+            ))}
+          </div>
         </div>
-      )}
-    </Card>
+        <div className="sc-body" style={{ maxHeight: 'calc(100vh - 480px)', overflowY: 'auto' }}>
+          {shownLogs.length === 0 ? (
+            <Empty description={logs.length ? '该来源暂无变更' : '暂无变更'} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ) : (
+            <div className="log">
+              {shownLogs.map((l) => {
+                const am = ACTOR_META[l.actorType] || { color: 'default', label: l.actorType };
+                const actorCls = { user: 'user', ai_employee: 'ai', system: 'sys' }[l.actorType] || 'sys';
+                const f = l.fieldName;
+                const hasOld = l.oldValue != null && l.oldValue !== '';
+                return (
+                  <div key={l.id} className="logrow">
+                    <span className={`actor ${actorCls}`}>{am.label}</span>
+                    <div className="lc">
+                      <div className="lf">
+                        <Tooltip title={`字段：${f || l.action}`}>
+                          <span>{fieldLabel(f) || l.action}</span>
+                        </Tooltip>
+                        <span className="tm">{l.createdAt ? dayjs(l.createdAt).format('MM-DD HH:mm') : ''}</span>
+                      </div>
+                      <div className="lv" style={{ wordBreak: 'break-all' }}>
+                        {hasOld ? (
+                          <>
+                            <span className="old">{fmtAuditVal(f, l.oldValue)}</span> →{' '}
+                          </>
+                        ) : null}
+                        <span className="new">{fmtAuditVal(f, l.newValue)}</span>
+                      </div>
+                      {l.reason ? <div className="ln">{l.reason}</div> : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 
   if (listError) {
