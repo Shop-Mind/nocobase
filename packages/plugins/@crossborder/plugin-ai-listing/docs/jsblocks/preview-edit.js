@@ -854,70 +854,75 @@ function ReviewApp() {
 
   // ---------- 左侧列表 ----------
   const LeftPanel = (
-    <Card size="small" styles={{ body: { padding: 8 } }}>
-      <Space direction="vertical" size={8} style={{ width: '100%' }}>
-        <Input.Search
-          placeholder="搜索商品标题"
-          allowClear
-          value={kw}
-          onChange={(e) => setKw(e.target.value)}
-          onSearch={() => reloadList({ page: 1 })}
-        />
-        <Space size={6} style={{ width: '100%' }}>
-          <Select
-            size="small"
-            style={{ flex: 1, minWidth: 96 }}
-            value={statusFilter}
-            onChange={(v) => {
-              setStatusFilter(v);
-              reloadList({ status: v, page: 1 });
-            }}
-            options={[
-              { value: '', label: '全部状态' },
-              { value: 'processed', label: '已处理' },
-              { value: 'reviewing', label: '审核中' },
-              { value: 'reviewed', label: '已审核' },
-              { value: 'publish_failed', label: '发布失败' },
-              { value: 'publishing', label: '发布中' },
-              { value: 'published', label: '已发布' },
-            ]}
-          />
-          <Select
-            size="small"
-            style={{ flex: 1, minWidth: 96 }}
-            value={platformFilter}
-            onChange={(v) => {
-              setPlatformFilter(v);
-              reloadList({ platform: v, page: 1 });
-            }}
-            options={[{ value: '', label: '全部平台' }, ...platforms.map((p) => ({ value: p, label: p }))]}
-          />
-        </Space>
-        {checkedIds.length ? (
-          <Space size={6}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              已选 {checkedIds.length}
-            </Typography.Text>
-            <Button size="small" type="primary" loading={busy} onClick={batchApprove}>
-              批量审核通过
-            </Button>
-            <Button size="small" onClick={() => setCheckedIds([])}>
-              清空
-            </Button>
-          </Space>
-        ) : null}
-        <div
-          style={{
-            maxHeight: 'calc(100vh - 330px)',
-            minHeight: 200,
-            overflowY: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-          }}
-        >
+    <div className="aic-scope">
+      <div
+        style={{
+          borderRadius: 14,
+          overflow: 'hidden',
+          border: '1px solid var(--line)',
+          background: 'var(--paper-2)',
+          boxShadow: 'var(--shadow-sm)',
+        }}
+      >
+        <div className="lp" style={{ position: 'static' }}>
+          <div className="search">
+            <Input.Search
+              placeholder="搜索商品标题"
+              allowClear
+              value={kw}
+              onChange={(e) => setKw(e.target.value)}
+              onSearch={() => reloadList({ page: 1 })}
+              variant="borderless"
+              style={{ padding: 0 }}
+            />
+          </div>
+          <div className="filters">
+            <Select
+              size="small"
+              style={{ flex: 1, minWidth: 96 }}
+              value={statusFilter}
+              onChange={(v) => {
+                setStatusFilter(v);
+                reloadList({ status: v, page: 1 });
+              }}
+              options={[
+                { value: '', label: '全部状态' },
+                { value: 'processed', label: '已处理' },
+                { value: 'reviewing', label: '审核中' },
+                { value: 'reviewed', label: '已审核' },
+                { value: 'publish_failed', label: '发布失败' },
+                { value: 'publishing', label: '发布中' },
+                { value: 'published', label: '已发布' },
+              ]}
+            />
+            <Select
+              size="small"
+              style={{ flex: 1, minWidth: 96 }}
+              value={platformFilter}
+              onChange={(v) => {
+                setPlatformFilter(v);
+                reloadList({ platform: v, page: 1 });
+              }}
+              options={[{ value: '', label: '全部平台' }, ...platforms.map((p) => ({ value: p, label: p }))]}
+            />
+          </div>
+          {checkedIds.length ? (
+            <Space size={6} style={{ marginTop: 9 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                已选 {checkedIds.length}
+              </Typography.Text>
+              <Button size="small" type="primary" loading={busy} onClick={batchApprove}>
+                批量审核通过
+              </Button>
+              <Button size="small" onClick={() => setCheckedIds([])}>
+                清空
+              </Button>
+            </Space>
+          ) : null}
+        </div>
+        <div className="plist" style={{ maxHeight: 'calc(100vh - 330px)', minHeight: 200, overflowY: 'auto' }}>
           {products.length === 0 ? (
-            <Empty description="无商品" image={Empty.PRESENTED_IMAGE_SIMPLE}>
+            <Empty description="无商品" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: 16 }}>
               <Button size="small" type="primary" onClick={() => ctx.router?.navigate?.('/admin/bhgkujnjpe7')}>
                 去信息处理
               </Button>
@@ -926,45 +931,35 @@ function ReviewApp() {
             products.map((p) => {
               const active = p.id === selectedId;
               const sm = STATUS_META[p.status] || { color: 'default', label: p.status };
+              const badgeCls =
+                { published: 'pub', reviewed: 'pub', reviewing: 'rev', publish_failed: 'rev', publishing: 'rev' }[
+                  p.status
+                ] || 'done';
               return (
-                <div
-                  key={p.id}
-                  onClick={() => setSelectedId(p.id)}
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    padding: 8,
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                    border: active ? '1px solid #1677ff' : '1px solid #f0f0f0',
-                    background: active ? '#e6f4ff' : '#fff',
-                  }}
-                >
+                <div key={p.id} className={`pcard${active ? ' on' : ''}`} onClick={() => setSelectedId(p.id)}>
                   <Checkbox
                     checked={checkedIds.includes(p.id)}
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) =>
                       setCheckedIds((ids) => (e.target.checked ? [...ids, p.id] : ids.filter((x) => x !== p.id)))
                     }
+                    style={{ alignSelf: 'center' }}
                   />
-                  <Image
-                    width={44}
-                    height={44}
-                    src={thumb(p.mainImage, 120) || IMG_FALLBACK}
-                    fallback={IMG_FALLBACK}
-                    preview={false}
-                    style={{ borderRadius: 4, objectFit: 'cover' }}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <Typography.Text ellipsis style={{ display: 'block', fontSize: 13 }}>
-                      {p.title || '（无标题）'}
-                    </Typography.Text>
-                    <Space size={4} style={{ marginTop: 2 }}>
-                      <Tag color={sm.color} style={{ marginInlineEnd: 0 }}>
-                        {sm.label}
-                      </Tag>
-                      {p.targetPlatform ? <Tag style={{ marginInlineEnd: 0 }}>{p.targetPlatform}</Tag> : null}
-                    </Space>
+                  <div className="pt">
+                    <img
+                      src={thumb(p.mainImage, 120) || IMG_FALLBACK}
+                      alt=""
+                      onError={(e) => {
+                        e.target.src = IMG_FALLBACK;
+                      }}
+                    />
+                  </div>
+                  <div className="pb">
+                    <div className="pn">{p.title || '（无标题）'}</div>
+                    <div className="pm">
+                      <span className={`badge ${badgeCls}`}>{sm.label}</span>
+                      {p.targetPlatform ? <span className="plat">{p.targetPlatform}</span> : null}
+                    </div>
                   </div>
                 </div>
               );
@@ -972,24 +967,26 @@ function ReviewApp() {
           )}
         </div>
         {listTotal > listPageSize || listPage > 1 ? (
-          <Pagination
-            size="small"
-            current={listPage}
-            pageSize={listPageSize}
-            total={listTotal}
-            showSizeChanger
-            pageSizeOptions={['20', '50', '100']}
-            showTotal={(t) => `共 ${t} 件`}
-            onChange={(p, ps) => {
-              const np = ps !== listPageSize ? 1 : p;
-              setListPage(np);
-              setListPageSize(ps);
-              reloadList({ page: np, pageSize: ps });
-            }}
-          />
+          <div className="lpage">
+            <Pagination
+              size="small"
+              current={listPage}
+              pageSize={listPageSize}
+              total={listTotal}
+              showSizeChanger
+              pageSizeOptions={['20', '50', '100']}
+              showTotal={(t) => `共 ${t} 件`}
+              onChange={(pg, ps) => {
+                const np = ps !== listPageSize ? 1 : pg;
+                setListPage(np);
+                setListPageSize(ps);
+                reloadList({ page: np, pageSize: ps });
+              }}
+            />
+          </div>
         ) : null}
-      </Space>
-    </Card>
+      </div>
+    </div>
   );
 
   // ---------- 右侧详情 ----------
