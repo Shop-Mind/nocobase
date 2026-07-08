@@ -239,8 +239,16 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
   ⚠️ 未做真实页面整体渲染验证——jsBlock 需写入共享库才能在线上看到,按既定策略推迟。
 - **上线策略(与用户确认)**:P3-P7 全在镜像 `preview-edit.js` 攒齐 + 本地验证;jsBlock 依赖客户端注入的 `.aic-scope` CSS,
   须**先部署 phase 0-2 新客户端到生产,再把本镜像回写共享库**(否则生产旧客户端下店铺条裸奔无样式)。
-- 说明:计划里「标题头 .statusline 98/128 合规」等细节本次以「状态 chip 行 + 🔒锁定 chip」落地(更贴近现有 antd Header 结构);
-  右栏原「来源·供应商」卡的去重 + 底部旧供应商信息合并留到 Phase 6(右栏)一并处理。
+- 说明:计划里「标题头 .statusline 98/128 合规」等细节本次以「状态 chip 行 + 🔒锁定 chip」落地(更贴近现有 antd Header 结构)。
+
+**验收记录续(2026-07-08 · Phase 3 收尾,收 Phase 1 遗留)**
+- ④ **深墨 studio-head**(Phase 1 承诺挪到此):`AiCandidateZone` 的 antd Card 换成 `.aic-scope > .card > .studio-head`(深墨渐变 + 🎨紫宝石)+ 挂载点;
+  MediaStudio 挂进下方只渲染工具栏 + 主体 → 整卡 = 深墨头 + 工具栏 + 图集/舞台/候选,单一标题不重复。
+- ⑤ **删底部独立「视频 已下载」卡**(已并入 AI 改图区图集列 vslot,去重);⑥ **删图库下方冗余「供应商卡」**(已置顶为店铺条);
+  图集/视频/供应商上移后中栏该行只余 SKU 定价、占满整行。
+- 本地验证:esbuild 转译整块通过、无悬挂引用(SupplierCard/`{Gallery}` 均 0);店铺条 + 深墨头组合 harness 截图与 mockup 一致。
+  遗留死 const(detailMedia/mainSrc/videoMedia/dlTag,无害)留 Phase 8 清。
+- commit:`d1e09fefaf`(店铺条+去横幅+去 chip)、`13e7f2f6b9`(深墨头+去视频/供应商卡)。**均只在镜像,未回写共享库。**
 
 ---
 
