@@ -1921,6 +1921,16 @@ function ReviewApp() {
     ]
       .filter(Boolean)
       .join('　·　');
+    // 店铺四指标：源站 OpenAPI 未提供 trade 数据时,退化为一枚紧凑「店铺评分 待抓取」小牌,
+    // 把整行宽度让给公司名(真实内容优先于占位)；trade 数据接入后自动恢复四指标布局。
+    const shopTrade = detail.tradeInfo && typeof detail.tradeInfo === 'object' ? detail.tradeInfo : {};
+    const shopStats = [
+      { k: '回头率', v: shopTrade.repeatBuyerRate },
+      { k: '服务分', v: shopTrade.serviceScore },
+      { k: '准时发货', v: shopTrade.onTimeDeliveryRate },
+      { k: '好评率', v: shopTrade.positiveFeedbackRate },
+    ];
+    const hasShopStats = shopStats.some((s) => s.v != null && s.v !== '');
     const ShopBar = (
       <div className="aic-scope">
         <div className="shopbar">
@@ -1930,22 +1940,41 @@ function ReviewApp() {
               <span className="sb-nm" title={supplierName}>
                 {supplierName}
               </span>
-              {detail.sourcePlatform ? <span className="sb-plat">{detail.sourcePlatform} · 供应商</span> : null}
             </div>
-            {shopSub ? <div className="sb-sub">{shopSub}</div> : null}
+            {detail.sourcePlatform || shopSub ? (
+              <div className="sb-sub" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                {detail.sourcePlatform ? (
+                  <span className="sb-plat" style={{ flexShrink: 0 }}>
+                    {detail.sourcePlatform} · 供应商
+                  </span>
+                ) : null}
+                {shopSub ? (
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                    {shopSub}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className="sb-stats">
-            {['回头率', '服务分', '准时发货', '好评率'].map((k) => (
-              <div className="st" key={k}>
+            {hasShopStats ? (
+              shopStats.map((s) => (
+                <div className="st" key={s.k}>
+                  <div className="sv">{s.v}</div>
+                  <div className="sk">{s.k}</div>
+                </div>
+              ))
+            ) : (
+              <div className="st">
                 <div
                   className="sv"
                   style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: 'var(--text-3)' }}
                 >
                   待抓取
                 </div>
-                <div className="sk">{k}</div>
+                <div className="sk">店铺评分</div>
               </div>
-            ))}
+            )}
           </div>
           {detail.sourceUrl ? (
             <a className="sb-act" href={detail.sourceUrl} target="_blank" rel="noreferrer">
@@ -2235,8 +2264,26 @@ function ReviewApp() {
             {SkuSection}
             {AttributesSection}
             {DescriptionSection}
-            {/* 更多来源信息（默认收起）：商品信息 / 关键属性原始 / 证书 / 贸易信息 / 评价 */}
-            <Collapse size="small" style={{ marginTop: 12 }} items={infoItems} />
+            {/* 抓取原始信息（默认收起）：商品信息 / 关键属性原始 / 证书 / 贸易信息 / 评价。
+                纳入 Creative Console 卡片皮肤（与上方各区一致），不再是页脚下方一截裸 Collapse。 */}
+            <div className="aic-scope" style={{ marginTop: 12 }}>
+              <div className="card" style={{ margin: 0 }}>
+                <div className="shead">
+                  <span className="eyebrow">SOURCE</span>
+                  <span className="zh">抓取原始信息</span>
+                  <Tooltip title="从源站抓取的完整原文：来源 / 供应商 / MOQ、关键属性原文、证书、贸易信息、买家评价等，供核对与追溯。默认收起，点开即看。">
+                    <span className="i" style={{ cursor: 'help' }}>
+                      ⓘ
+                    </span>
+                  </Tooltip>
+                  <span className="sp" />
+                  <span className="meta">默认收起 · {infoItems.filter(Boolean).length} 组</span>
+                </div>
+                <div className="cbody">
+                  <Collapse size="small" items={infoItems.filter(Boolean)} />
+                </div>
+              </div>
+            </div>
           </div>
         </Spin>
       </Card>
