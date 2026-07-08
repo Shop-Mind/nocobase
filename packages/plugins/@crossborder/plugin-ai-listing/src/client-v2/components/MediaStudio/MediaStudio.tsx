@@ -14,7 +14,7 @@
 // 候选区(Phase 2):横滑 + 每张 场景/相对时间/新出 NEW 角标;以此再改=以选中候选为源续改;批量逐张=多选后舞台头 ‹ › 逐张预览。
 // 安全铁律:生成只产候选(不进发布);采纳/弃用是用户显式动作,走受控 action + 审计。AI 改图重活交给原生抽屉。
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { App as AntdApp, Empty, InputNumber, Modal, Select, Spin, Typography } from 'antd';
 import { CompareView } from './CompareModal';
 import { AdoptModal, type AdoptChoice } from './AdoptModal';
@@ -142,6 +142,9 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   const [viewCandidateId, setViewCandidateId] = useState<number | null>(null); // 对比展示的候选
   const [compareMode, setCompareMode] = useState<'side' | 'slider' | null>(null); // null=跟随候选场景
   const [stageMode, setStageMode] = useState<StageMode>('preview'); // 舞台:预览 / 对比
+  const [curtainPct, setCurtainPct] = useState(50); // 对比拉帘:候选层从左侧裁切的百分比
+  const stageRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
   const [busy, setBusy] = useState<{ done: number; total: number } | null>(null);
   const [adoptTarget, setAdoptTarget] = useState<MediaAsset | null>(null);
   const [adopting, setAdopting] = useState(false);
@@ -372,11 +375,12 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     setStageMode('preview');
   }, []);
 
-  // 点候选:进入原图↔候选对比
+  // 点候选:进入原图↔候选对比(拉帘复位居中)
   const selectCandidate = useCallback((id: number) => {
     setViewCandidateId(id);
     setPreviewVideoId(null);
     setStageMode('compare');
+    setCurtainPct(50);
   }, []);
 
   // 以此再改:以当前选中候选为源,开原生抽屉继续迭代(非回到原图)。
@@ -453,12 +457,86 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
         : t('Detail')
     : '';
 
+  // 对比拉帘:按住手柄(或在舞台上按下)左右拖动,改变候选层从左裁切的百分比。
+  const moveCurtain = useCallback((clientX: number) => {
+    const el = stageRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setCurtainPct(Math.max(0, Math.min(100, ((clientX - r.left) / r.width) * 100)));
+  }, []);
+  useEffect(() => {
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if (!draggingRef.current) return;
+      const x = 'touches' in e ? e.touches[0]?.clientX : (e as MouseEvent).clientX;
+      if (x != null) moveCurtain(x);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove);
+    window.addEventListener('touchend', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+    };
+  }, [moveCurtain]);
+
   const renderStage = () => {
     if (stageMode === 'compare' && viewCandidate) {
+      const orig = compareOriginalUrl;
+      const cand = viewCandidate.url;
+      // 原图↔候选:方形舞台拉帘,图上圆手柄可拖(与设计稿一致)。缺任一图回退 CompareView。
+      if (orig && cand) {
+        const candLabel = scene ? `${t('Candidate')} · ${sceneLabel(scene)}` : t('Candidate');
+        return (
+          <div className="stage" ref={stageRef} onMouseDown={(e) => moveCurtain(e.clientX)}>
+            <div className="layer full" style={{ backgroundImage: `url("${orig}")` }} />
+            <div
+              className="layer full"
+              style={{ backgroundImage: `url("${cand}")`, clipPath: `inset(0 0 0 ${curtainPct}%)` }}
+            />
+            <span className="tag l">{t('Original')}</span>
+            <span className="tag r">{candLabel}</span>
+            <div className="divider" style={{ left: `${curtainPct}%` }} />
+            <div
+              className="handle"
+              role="slider"
+              aria-label={t('Drag to compare')}
+              aria-valuenow={Math.round(curtainPct)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              tabIndex={0}
+              style={{ left: `${curtainPct}%` }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                draggingRef.current = true;
+              }}
+              onTouchStart={() => {
+                draggingRef.current = true;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft') {
+                  e.preventDefault();
+                  setCurtainPct((p) => Math.max(0, p - 4));
+                } else if (e.key === 'ArrowRight') {
+                  e.preventDefault();
+                  setCurtainPct((p) => Math.min(100, p + 4));
+                }
+              }}
+            >
+              ⇄
+            </div>
+          </div>
+        );
+      }
       return (
         <CompareView
-          originalUrl={compareOriginalUrl}
-          candidateUrl={viewCandidate.url}
+          originalUrl={orig}
+          candidateUrl={cand}
           mode={effectiveMode}
           t={t}
           emptyHint={t('Pick a scene above or ask the design AI — candidates will show here')}
