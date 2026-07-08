@@ -48,8 +48,8 @@ function SliderCompare({
             bottom: 0,
             left: `${percent}%`,
             width: 2,
-            background: '#1677ff',
-            boxShadow: '0 0 4px rgba(0,0,0,0.4)',
+            background: '#fff',
+            boxShadow: '0 0 0 1px rgba(0,0,0,.1)',
           }}
         />
         <span style={badge('left')}>{t('Original')}</span>
@@ -71,11 +71,14 @@ function badge(side: 'left' | 'right'): React.CSSProperties {
     position: 'absolute',
     [side]: 8,
     top: 8,
-    background: side === 'left' ? 'rgba(0,0,0,0.55)' : 'rgba(22,119,255,0.85)',
+    background: side === 'left' ? 'rgba(20,18,30,.5)' : 'linear-gradient(120deg,#7a5cff,#ff6a4d)',
     color: '#fff',
-    padding: '0 8px',
-    borderRadius: 4,
-    fontSize: 12,
+    padding: '2px 9px',
+    borderRadius: 20,
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: '.4px',
+    backdropFilter: 'blur(3px)',
   } as React.CSSProperties;
 }
 

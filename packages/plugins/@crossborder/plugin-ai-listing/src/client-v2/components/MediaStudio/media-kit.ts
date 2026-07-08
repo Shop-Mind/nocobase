@@ -53,7 +53,8 @@ export function installMediaKit(app: MediaStudioApp): MediaKit {
       root.render(
         React.createElement(
           ConfigProvider,
-          null,
+          // 与 Creative Console 统一:内部 antd 控件(Select/InputNumber/Slider/Modal)主色用电光紫。
+          { theme: { token: { colorPrimary: '#6a5cff', borderRadius: 8 } } },
           React.createElement(
             AntdApp,
             { component: false },

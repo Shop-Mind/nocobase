@@ -20,6 +20,8 @@ export interface MediaAsset {
   url: string | null;
   origin: string | null;
   role: string | null;
+  // 'image' | 'video'(视频入列需要区分;role==='video' 亦可判定,assetType 更稳)
+  assetType?: string | null;
   sort: number | null;
   finalSelected: boolean;
   discarded: boolean;
@@ -50,6 +52,10 @@ export interface MediaPanelData {
   gallery: MediaAsset[];
   candidates: MediaAsset[];
   adopted: MediaAsset[];
+  // 视频(P1「视频入列」):videos=全部未弃用视频(采纳优先);videoCandidates/videoAdopted 为细分。
+  videos?: MediaAsset[];
+  videoCandidates?: MediaAsset[];
+  videoAdopted?: MediaAsset[];
 }
 
 // 自定义 action 的 {ok,...} 载荷被 koa 再包一层 data;这里剥掉并归一化错误

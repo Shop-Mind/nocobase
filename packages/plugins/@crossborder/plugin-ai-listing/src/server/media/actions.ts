@@ -72,6 +72,7 @@ function mapAsset(row: { get: (k: string) => unknown }) {
     url: (meta.storedUrl as string) || (row.get('sourceUrl') as string) || null,
     origin: row.get('origin'),
     role: row.get('role'),
+    assetType: row.get('assetType'),
     sort: row.get('sort'),
     finalSelected: Boolean(row.get('finalSelected')),
     discarded: Boolean(row.get('discarded')),
@@ -158,6 +159,10 @@ export function setupMedia(plugin: Plugin): void {
             gallery: mapped.filter((a) => !a.discarded && a.origin !== 'ai_candidate'),
             candidates: byIdDesc.filter((a) => !a.discarded && a.origin === 'ai_candidate' && !a.finalSelected),
             adopted: byIdDesc.filter((a) => !a.discarded && a.finalSelected),
+            // 全部未弃用视频(含源站视频 + AI 候选/采纳),已采纳优先,供 MediaStudio 视频入列(vslot)。只读增量,不改采纳逻辑。
+            videos: videos
+              .filter((a) => !a.discarded)
+              .sort((a, b) => Number(b.finalSelected) - Number(a.finalSelected) || Number(b.id) - Number(a.id)),
             videoCandidates: videos.filter((a) => !a.discarded && a.origin === 'ai_candidate' && !a.finalSelected),
             videoAdopted: videos.filter((a) => !a.discarded && a.finalSelected),
           },
