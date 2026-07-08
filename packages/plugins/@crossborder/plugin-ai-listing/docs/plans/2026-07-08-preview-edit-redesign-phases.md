@@ -230,6 +230,18 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 
 **可选子任务（数据）**：抓取侧补 `shopInfo`（回头率/服务分/发货率/好评率）——独立跟进，不阻塞本 phase。
 
+**验收记录（2026-07-08 · 镜像内实现 + 本地验证,未回写线上块）**
+- 改动:仅 `docs/jsblocks/preview-edit.js`(仓库纳管真源)。① `ShopBar` const(`.aic-scope`>`.shopbar`)插到 RightPanel 顶部、`{Header}` 之前;
+  ② 移除整张「已发布/已审核·字段锁定」绿色 Alert 横幅(发布失败/操作反馈/发布前检查提示仍保留);③ Header 状态行去掉超长供应商 chip、加「🔒 字段已锁定」chip(带 tooltip)。
+- **数据实测**:`aiListingProducts.shopInfo` 只有 `{companyId, supplierName}`,`tradeInfo` 全为 null(114/118 商品有 shopInfo)。
+  故四指标(回头率/服务分/准时发货/好评率)**全部降级「待抓取」**(muted 占位);店铺条真实内容 = 供应商名 + 平台 + 主营品类 + 源商品# + 抓取日期 + 源站链接。
+- **本地验证**:`esbuild --loader:.js=jsx` 转译整块通过(EXIT=0,无 JSX/语法错);店铺条真实数据静态 harness(注入 creative-console CSS)截图与 mockup `.shopbar` 一致。
+  ⚠️ 未做真实页面整体渲染验证——jsBlock 需写入共享库才能在线上看到,按既定策略推迟。
+- **上线策略(与用户确认)**:P3-P7 全在镜像 `preview-edit.js` 攒齐 + 本地验证;jsBlock 依赖客户端注入的 `.aic-scope` CSS,
+  须**先部署 phase 0-2 新客户端到生产,再把本镜像回写共享库**(否则生产旧客户端下店铺条裸奔无样式)。
+- 说明:计划里「标题头 .statusline 98/128 合规」等细节本次以「状态 chip 行 + 🔒锁定 chip」落地(更贴近现有 antd Header 结构);
+  右栏原「来源·供应商」卡的去重 + 底部旧供应商信息合并留到 Phase 6(右栏)一并处理。
+
 ---
 
 ### Phase 4 — SKU 定价区重排（jsBlock）
