@@ -1909,187 +1909,211 @@ function ReviewApp() {
     const Gallery = null;
 
     // ---- 商品属性（规格参数）：发布后展示在商品页「规格参数/产品属性」区，多数平台按类目必填 ----
+    const attrOrig = detail.attributesOriginal || {};
     const AttributesSection = (
-      <Card
-        size="small"
-        style={{ marginTop: 12 }}
-        title={
-          <Space size={6}>
-            <span>商品属性（规格参数）</span>
-            <Tooltip title="发布到平台后展示在商品页「规格参数 / 产品属性」区（如 材质/产地/用途）；多数平台按类目必填，填得全有利搜索曝光。左边属性名、右边属性值，可增删改；来源为抓取的关键属性 + AI 补全建议。">
-              <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
-                ⓘ 有什么用？
-              </Typography.Text>
+      <div className="aic-scope" style={{ marginTop: 12 }}>
+        <div className="card" style={{ margin: 0 }}>
+          <div className="shead">
+            <span className="zh">商品属性（规格参数）</span>
+            <Tooltip title="发布到平台后展示在商品页「规格参数 / 产品属性」区（如 材质/产地/用途）；多数平台按类目必填，填得全有利搜索曝光。左边属性名、右边属性值，可增删改；来源为抓取的关键属性 + AI 补全建议（紫色=AI 整理/补全）。">
+              <span className="i" style={{ cursor: 'help' }}>
+                ⓘ
+              </span>
             </Tooltip>
             {isDirty('attributes') ? <PendingTag /> : null}
-          </Space>
-        }
-      >
-        <Row gutter={[8, 6]}>
-          {attrEntries.map(([k, val], i) => (
-            <Col key={i} xs={24} md={12}>
-              <Space size={4}>
-                <Input
-                  size="small"
-                  style={{ width: 130 }}
-                  disabled={locked}
-                  value={k}
-                  onChange={(e) => {
-                    const nk = e.target.value;
-                    setDraft((d) => {
-                      const ent = Object.entries(d.attributes);
-                      ent[i] = [nk, val];
-                      return { ...d, attributes: Object.fromEntries(ent) };
-                    });
-                  }}
-                />
-                <Input
-                  size="small"
-                  style={{ width: 200 }}
-                  disabled={locked}
-                  value={val}
-                  onChange={(e) => setDraft((d) => ({ ...d, attributes: { ...d.attributes, [k]: e.target.value } }))}
-                />
-                {!locked ? (
-                  <Button
-                    type="link"
-                    size="small"
-                    danger
-                    onClick={() =>
-                      setDraft((d) => {
-                        const a = { ...d.attributes };
-                        delete a[k];
-                        return { ...d, attributes: a };
-                      })
-                    }
+            <span className="sp" />
+            <span className="meta">{attrEntries.length} 项</span>
+          </div>
+          <div className="cbody">
+            <div className="attrgrid">
+              {attrEntries.map(([k, val], i) => {
+                const isAi =
+                  !(k in attrOrig) || String(attrOrig[k] == null ? '' : attrOrig[k]) !== String(val == null ? '' : val);
+                return (
+                  <div
+                    key={i}
+                    className={`attr${isAi ? ' ai' : ''}`}
+                    style={{ gridTemplateColumns: '112px 1fr auto', alignItems: 'center' }}
                   >
-                    删
-                  </Button>
-                ) : null}
-              </Space>
-            </Col>
-          ))}
-        </Row>
-        {!locked ? (
-          <Button
-            size="small"
-            type="dashed"
-            style={{ marginTop: 6 }}
-            onClick={() =>
-              setDraft((d) => ({
-                ...d,
-                attributes: { ...d.attributes, [`新属性${Object.keys(d.attributes).length + 1}`]: '' },
-              }))
-            }
-          >
-            + 添加属性
-          </Button>
-        ) : null}
-      </Card>
+                    <Input
+                      variant="borderless"
+                      size="small"
+                      disabled={locked}
+                      value={k}
+                      onChange={(e) => {
+                        const nk = e.target.value;
+                        setDraft((d) => {
+                          const ent = Object.entries(d.attributes);
+                          ent[i] = [nk, val];
+                          return { ...d, attributes: Object.fromEntries(ent) };
+                        });
+                      }}
+                      style={{ fontSize: 11, fontWeight: 700, color: isAi ? '#5a3ff0' : 'var(--text-3)' }}
+                    />
+                    <Input
+                      variant="borderless"
+                      size="small"
+                      disabled={locked}
+                      value={val}
+                      onChange={(e) =>
+                        setDraft((d) => ({ ...d, attributes: { ...d.attributes, [k]: e.target.value } }))
+                      }
+                      style={{ fontSize: 12, fontWeight: 600 }}
+                    />
+                    {isAi ? (
+                      <span
+                        style={{
+                          fontSize: 8,
+                          color: '#5a3ff0',
+                          border: '1px solid var(--violet-line)',
+                          borderRadius: 4,
+                          padding: '0 3px',
+                          marginRight: 4,
+                        }}
+                      >
+                        AI
+                      </span>
+                    ) : null}
+                    {!locked ? (
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        style={{ padding: '0 6px' }}
+                        onClick={() =>
+                          setDraft((d) => {
+                            const a = { ...d.attributes };
+                            delete a[k];
+                            return { ...d, attributes: a };
+                          })
+                        }
+                      >
+                        删
+                      </Button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            {!locked ? (
+              <Button
+                size="small"
+                type="dashed"
+                style={{ marginTop: 10 }}
+                onClick={() =>
+                  setDraft((d) => ({
+                    ...d,
+                    attributes: { ...d.attributes, [`新属性${Object.keys(d.attributes).length + 1}`]: '' },
+                  }))
+                }
+              >
+                + 添加属性
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
     );
 
     // ---- 商品描述：发布描述可编辑；AI 建议 / 源站文本 / 源站详情页 供参考对照 ----
+    const DESC_TABS = [
+      { label: '发布描述（可编辑）', value: 'final' },
+      { label: '参考建议', value: 'ai' },
+      { label: '源站文本', value: 'original' },
+      { label: '源站详情页', value: 'html' },
+    ];
     const DescriptionSection = (
-      <Card
-        size="small"
-        style={{ marginTop: 12 }}
-        title={
-          <Space size={6}>
-            <span>商品描述</span>
+      <div className="aic-scope" style={{ marginTop: 12 }}>
+        <div className="card" style={{ margin: 0 }}>
+          <div className="shead">
+            <span className="zh">商品描述</span>
             <Tooltip title={SELLING_RULES_TEXT} overlayStyle={{ maxWidth: 420 }}>
-              <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
+              <span className="i" style={{ cursor: 'help' }}>
                 卖点规范 ⓘ
-              </Typography.Text>
+              </span>
             </Tooltip>
             {isDirty('descriptionFinal') ? <PendingTag /> : null}
-          </Space>
-        }
-        extra={
-          <Space size={6} wrap>
+            <span className="sp" />
             {!locked ? (
               <Button
                 size="small"
                 type="link"
-                style={{ padding: 0, fontWeight: 500 }}
+                style={{ padding: 0, fontWeight: 600 }}
                 onClick={() => openFieldAI('description')}
               >
                 ✨ AI 优化描述
               </Button>
             ) : null}
-            <Segmented
-              size="small"
-              value={descTab}
-              onChange={setDescTab}
-              options={[
-                { label: '发布描述（可编辑）', value: 'final' },
-                { label: '参考建议', value: 'ai' },
-                { label: '源站文本', value: 'original' },
-                { label: '源站详情页', value: 'html' },
-              ]}
-            />
-          </Space>
-        }
-      >
-        {descTab === 'final' ? (
-          <>
-            <Input.TextArea
-              rows={8}
-              disabled={locked}
-              value={draft.descriptionFinal}
-              onChange={(e) => setDraftField('descriptionFinal', e.target.value)}
-              placeholder={
-                '发布后作为平台「商品卖点」展示（进 AI Search 索引）。建议英文分点 ≤5 条、每条「Title: Content」，可点右上「✨ AI 优化描述」按官方规范一键生成'
-              }
-            />
-            {!locked && detail.descriptionProcessed ? (
-              <Button
-                size="small"
-                type="link"
-                style={{ padding: 0, marginTop: 4 }}
-                onClick={() => setDraftField('descriptionFinal', detail.descriptionProcessed)}
+          </div>
+          <div className="cbody">
+            <div className="dtabs" style={{ marginBottom: 10 }}>
+              {DESC_TABS.map((t) => (
+                <button
+                  key={t.value}
+                  type="button"
+                  className={descTab === t.value ? 'on' : undefined}
+                  onClick={() => setDescTab(t.value)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {descTab === 'final' ? (
+              <>
+                <Input.TextArea
+                  rows={8}
+                  disabled={locked}
+                  value={draft.descriptionFinal}
+                  onChange={(e) => setDraftField('descriptionFinal', e.target.value)}
+                  placeholder={
+                    '发布后作为平台「商品卖点」展示（进 AI Search 索引）。建议英文分点 ≤5 条、每条「Title: Content」，可点右上「✨ AI 优化描述」按官方规范一键生成'
+                  }
+                />
+                {!locked && detail.descriptionProcessed ? (
+                  <Button
+                    size="small"
+                    type="link"
+                    style={{ padding: 0, marginTop: 4 }}
+                    onClick={() => setDraftField('descriptionFinal', detail.descriptionProcessed)}
+                  >
+                    使用参考建议 →
+                  </Button>
+                ) : null}
+              </>
+            ) : descTab === 'ai' ? (
+              <div
+                className="desc"
+                style={{ color: '#5a3ff0', whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}
               >
-                使用参考建议 →
-              </Button>
-            ) : null}
-          </>
-        ) : descTab === 'ai' ? (
-          <Typography.Paragraph
-            style={{
-              fontSize: 12,
-              color: '#531dab',
-              whiteSpace: 'pre-wrap',
-              maxHeight: 320,
-              overflowY: 'auto',
-              marginBottom: 0,
-            }}
-          >
-            {detail.descriptionProcessed ||
-              '（暂无参考建议。参考建议来自信息处理阶段；要生成新文案请点「✨ AI 优化描述」，结果直接写入发布描述）'}
-          </Typography.Paragraph>
-        ) : descTab === 'original' ? (
-          <Typography.Paragraph
-            style={{
-              fontSize: 12,
-              color: '#666',
-              whiteSpace: 'pre-wrap',
-              maxHeight: 320,
-              overflowY: 'auto',
-              marginBottom: 0,
-            }}
-          >
-            {detail.descriptionOriginal || '-'}
-          </Typography.Paragraph>
-        ) : detail.descriptionHtmlOriginal ? (
-          <iframe
-            title="源站详情页预览"
-            sandbox=""
-            srcDoc={detail.descriptionHtmlOriginal}
-            style={{ width: '100%', height: 480, border: '1px solid #f0f0f0', borderRadius: 6, background: '#fff' }}
-          />
-        ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无源站详情页 HTML" />
-        )}
-      </Card>
+                {detail.descriptionProcessed ||
+                  '（暂无参考建议。参考建议来自信息处理阶段；要生成新文案请点「✨ AI 优化描述」，结果直接写入发布描述）'}
+              </div>
+            ) : descTab === 'original' ? (
+              <div
+                className="desc"
+                style={{ color: 'var(--text-2)', whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}
+              >
+                {detail.descriptionOriginal || '-'}
+              </div>
+            ) : detail.descriptionHtmlOriginal ? (
+              <iframe
+                title="源站详情页预览"
+                sandbox=""
+                srcDoc={detail.descriptionHtmlOriginal}
+                style={{
+                  width: '100%',
+                  height: 480,
+                  border: '1px solid var(--line)',
+                  borderRadius: 10,
+                  background: '#fff',
+                }}
+              />
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无源站详情页 HTML" />
+            )}
+          </div>
+        </div>
+      </div>
     );
 
     RightPanel = (
