@@ -376,6 +376,20 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 
 **验证方法**：Playwright 整页截图比对 + 交互脚本（`docs/plans/scripts/verify-preview-edit-redesign.js`）；`yarn eslint --fix`、`tsc`、相关 vitest 全绿。
 
+**验收记录（2026-07-08 · 部分完成 · commit `70ffac8722`）**
+- **已做(可现在做的收尾)**：
+  - 响应式:creative-console.ts 加 `@media≤920`(studio-body/attrgrid/panes 单列)、`≤560`(skurow 2 列、plad 竖排);
+    `.plad/.studio-tools/.chips/.statusline/.actbar/.filters` flex-wrap 防横向溢出。harness 1440→600px 验 attrgrid 收 1 列。
+  - a11y 键盘可达:creative-console 加 `:focus-visible` 紫色 outline;jsBlock 的 `.pcard`/`.pt-tier`/规格色板 chip
+    补 `role=button`/`tabIndex=0`/`aria-pressed`/`onKeyDown`(Enter/Space)。harness 验键盘 Enter 选中生效、焦点环显示。
+    (MediaStudio 缩略图/候选/勾选在 P1-2 已有 role/aria。)client dist 已重建,已上线的 MediaStudio 同获焦点环+响应式。
+- **遗留(依赖部署,本地/沙箱做不了)**：
+  1. **自托管字体**:Fraunces/Instrument Sans/Noto SC 需字体文件,沙箱无法下载 Google Fonts;当前优雅降级到 system serif/sans。
+     部署时把字体文件打进插件静态资源、`@font-face` 引用即可(Fraunces 是数字/展示字体,影响最明显)。
+  2. **真实 Key 闭环回归**:「改图→采纳→保存→审核→生命周期/变更记录联动」需在真实页跑,而 Phase 3-7 是 jsBlock 镜像、
+     尚未回写共享库 → 必须**先按上线策略部署新客户端到生产、再回写 jsBlock 到共享库**,才能做闭环回归。
+- lint/转译:改动文件 `eslint --fix` 干净、jsBlock esbuild 转译通过、client 构建成功。
+
 ---
 
 ## 五、验收与回归总则
