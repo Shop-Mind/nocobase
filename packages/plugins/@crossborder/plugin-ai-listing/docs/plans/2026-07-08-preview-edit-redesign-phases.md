@@ -298,6 +298,15 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 
 **验证方法**：Playwright——`.attr.ai` 存在且带 AI 标；点 tab 切换文本源；截图比对。
 
+**验收记录（2026-07-08 · 镜像内 + harness 验证,未回写线上块）· commit `c87f10f15b`**
+- 属性 → `.aic-scope>.card>.shead+.cbody>.attrgrid`(2 列)。每属性 `.attr` 单元(键/值/删);AI 整理过的
+  = 值与 `attributesOriginal` 不同或新增 → `.attr.ai`(紫键 + AI 角标)。**保留可编辑**:Input 对 + setDraft 改键/改值/删 + 添加属性。
+- 描述 → `.aic-scope>.card>.shead+.cbody`:Segmented 换成 `.dtabs` 自定义 tab(4 个),`.desc`;保留 descTab/setDescTab
+  + 4 分支(TextArea+使用参考建议 / AI 建议 / 源站文本 / 源站 HTML iframe);✨AI优化描述 移卡头。
+- **harness 实测**:换用商品7(17 属性含 2 个 AI 改动 + 15SKU)——`.attrgrid` 17 项、`.attr.ai`=2(Brand→No Brand、材质→Cardboard,
+  带 AI 角标),与库中「processed 与 original 差异数=2」一致;描述 4 tab 切换、点源站文本切内容、textarea 消失。转译通过、无崩溃。
+  (先用商品26/3 测,二者 processed==original 故 `.attr.ai`=0——即「无 AI 改动则不高亮」,逻辑正确;换商品7 才现 2 个。)
+
 ---
 
 ### Phase 6 — 右栏：生命周期 + 变更记录（jsBlock）
