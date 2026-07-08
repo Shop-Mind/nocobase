@@ -11,6 +11,7 @@
 // 本组件只渲染:工具栏 studio-tools + studio-body(左图集列 gcol/gscroll[视频入列 vslot] + 右舞台 stage)。
 //   深墨区头 studio-head 归 Phase 3(jsBlock Card 头 → 深墨,随客户端一起上线,避免与卡壳标题重复/生产端无头)。
 // 舞台双模式:预览(点任意缩略图/视频即大图) / 对比(选中候选 → 原图↔候选拉帘,复用 CompareView)。
+// 候选区(Phase 2):横滑 + 每张 场景/相对时间/新出 NEW 角标;以此再改=以选中候选为源续改;批量逐张=多选后舞台头 ‹ › 逐张预览。
 // 安全铁律:生成只产候选(不进发布);采纳/弃用是用户显式动作,走受控 action + 审计。AI 改图重活交给原生抽屉。
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -19,7 +20,7 @@ import { CompareView } from './CompareModal';
 import { AdoptModal, type AdoptChoice } from './AdoptModal';
 import { CreativeWorkshop } from '../CreativeWorkshop/CreativeWorkshop';
 import { AIC_SCOPE_CLASS } from '../shared/creative-console';
-import { QUICK_SCENES, sceneLabel } from './scenes-meta';
+import { QUICK_SCENES, sceneLabel, sceneMeta, relTime, isRecent } from './scenes-meta';
 import {
   callMediaApi,
   makeT,
@@ -137,6 +138,7 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   const [currentId, setCurrentId] = useState<number | null>(null); // 左栏单选:当前图 + 改图源(仅图片)
   const [previewVideoId, setPreviewVideoId] = useState<number | null>(null); // 舞台正在预览的视频(不改改图源)
   const [picked, setPicked] = useState<Set<number>>(new Set()); // 多选批量
+  const [batchIndex, setBatchIndex] = useState(0); // 批量逐张:当前在已选集中的位置
   const [viewCandidateId, setViewCandidateId] = useState<number | null>(null); // 对比展示的候选
   const [compareMode, setCompareMode] = useState<'side' | 'slider' | null>(null); // null=跟随候选场景
   const [stageMode, setStageMode] = useState<StageMode>('preview'); // 舞台:预览 / 对比
@@ -204,6 +206,12 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     const detail = data.gallery.filter((g) => !main.includes(g));
     return { main, detail };
   }, [data.gallery]);
+
+  // 批量逐张:已选图片按图集顺序(主图在前)排列,舞台头用 ‹ › 逐张翻。
+  const pickedList = useMemo<MediaAsset[]>(
+    () => [...galleryFiltered.main, ...galleryFiltered.detail].filter((g) => picked.has(g.id)),
+    [galleryFiltered, picked],
+  );
 
   // 视频:优先服务端聚合的 videos(全部未弃用,采纳优先);回退到 videoAdopted∪videoCandidates。
   const videos = useMemo<MediaAsset[]>(() => {
@@ -370,6 +378,38 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     setPreviewVideoId(null);
     setStageMode('compare');
   }, []);
+
+  // 以此再改:以当前选中候选为源,开原生抽屉继续迭代(非回到原图)。
+  const iterateFromCandidate = useCallback(() => {
+    if (!openEditor || !viewCandidate) return;
+    openEditor(
+      [viewCandidate.id],
+      viewCandidate.genParams?.scene ? { scene: viewCandidate.genParams.scene } : undefined,
+    );
+    setWatchUntil(Date.now() + 180000);
+  }, [openEditor, viewCandidate]);
+
+  // 批量逐张:pickedList 变化时钳制 batchIndex;翻页时同步 currentId(舞台预览该张)。
+  useEffect(() => {
+    setBatchIndex((i) => (pickedList.length ? Math.min(i, pickedList.length - 1) : 0));
+  }, [pickedList.length]);
+
+  const stepBatch = useCallback(
+    (delta: number) => {
+      if (pickedList.length < 2) return;
+      setBatchIndex((i) => {
+        const next = (i + delta + pickedList.length) % pickedList.length;
+        const target = pickedList[next];
+        if (target) {
+          setCurrentId(target.id);
+          setPreviewVideoId(null);
+          setStageMode('preview');
+        }
+        return next;
+      });
+    },
+    [pickedList],
+  );
 
   const scene = viewCandidate?.genParams?.scene;
   const effectiveMode: 'side' | 'slider' =
@@ -596,6 +636,33 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
             <div className="stagelbl">
               <span className="t">{stageMode === 'compare' ? t('Compare') : t('Preview')}</span>
               {scene && stageMode === 'compare' ? <span className="scene">{sceneLabel(scene)}</span> : null}
+              {/* 批量逐张:多选 ≥2 张时,‹ › 在已选集里逐张预览/对比 */}
+              {pickedList.length > 1 ? (
+                <span className="batch">
+                  <span
+                    className="nav"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={t('Previous')}
+                    onClick={() => stepBatch(-1)}
+                    onKeyDown={(e) => (e.key === 'Enter' ? stepBatch(-1) : undefined)}
+                  >
+                    ‹
+                  </span>
+                  {pickedList[batchIndex]?.role === 'main' ? t('Main') : t('Detail')} · {t('No.')} {batchIndex + 1} /{' '}
+                  {pickedList.length} {t('sheets')}
+                  <span
+                    className="nav"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={t('Next')}
+                    onClick={() => stepBatch(1)}
+                    onKeyDown={(e) => (e.key === 'Enter' ? stepBatch(1) : undefined)}
+                  >
+                    ›
+                  </span>
+                </span>
+              ) : null}
               <span className="modes">
                 <button
                   type="button"
@@ -617,7 +684,7 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
 
             {renderStage()}
 
-            {/* 候选条(Phase 1 基础版;场景/时间角标与批量逐张见 Phase 2) */}
+            {/* 候选条:横滑 + 每张场景/时间角标 + 新出 NEW,点谁比谁 */}
             {data.candidates.length ? (
               <div className="candbar">
                 <div className="candhead">
@@ -627,21 +694,31 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
                   <span className="candhint">{t('Click a candidate → original / candidate compare')}</span>
                 </div>
                 <div className="candstrip">
-                  {data.candidates.map((c) => (
-                    <div
-                      key={c.id}
-                      className={`ccard${c.id === viewCandidateId ? ' on' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => selectCandidate(c.id)}
-                      onKeyDown={(e) => (e.key === 'Enter' ? selectCandidate(c.id) : undefined)}
-                    >
-                      <div className="cimg">
-                        {c.url ? <img src={c.url} alt={sceneLabel(c.genParams?.scene)} /> : null}
-                        <span className="cchk">✓</span>
+                  {data.candidates.map((c) => {
+                    const sm = sceneMeta(c.genParams?.scene);
+                    return (
+                      <div
+                        key={c.id}
+                        className={`ccard${c.id === viewCandidateId ? ' on' : ''}${
+                          isRecent(c.createdAt) ? ' newgen' : ''
+                        }`}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={c.id === viewCandidateId}
+                        onClick={() => selectCandidate(c.id)}
+                        onKeyDown={(e) => (e.key === 'Enter' ? selectCandidate(c.id) : undefined)}
+                      >
+                        <div className="cimg">
+                          {c.url ? <img src={c.url} alt={sceneLabel(c.genParams?.scene)} /> : null}
+                          <span className="cscene">
+                            {sm.icon} {sm.label}
+                          </span>
+                          <span className="cchk">✓</span>
+                        </div>
+                        <span className="ctime">{relTime(c.createdAt) || sm.label}</span>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : null}
@@ -661,7 +738,8 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
                   type="button"
                   className={`act iter${viewCandidate ? '' : ' mut'}`}
                   disabled={!viewCandidate}
-                  onClick={() => viewCandidate && openDrawer()}
+                  title={t('Iterate from this candidate as the new source')}
+                  onClick={iterateFromCandidate}
                 >
                   ↻ {t('Iterate')}
                 </button>

@@ -401,5 +401,22 @@
   "Video candidates": "Video candidates",
   "Video candidates will appear here → play / adopt / discard": "Video candidates will appear here → play / adopt / discard",
   "Adopting sets the product video (audit as user); publish carries the adopted video.": "Adopting sets the product video (audit as user); publish carries the adopted video.",
-  "Generating one by one — candidates appear on the right as each finishes (upstream is slow).": "Generating one by one — candidates appear on the right as each finishes (upstream is slow)."
+  "Generating one by one — candidates appear on the right as each finishes (upstream is slow).": "Generating one by one — candidates appear on the right as each finishes (upstream is slow).",
+  "Product images · AI editing": "Product images · AI editing",
+  "Manage main / detail images here: pick → edit → compare → adopt": "Manage main / detail images here: pick → edit → compare → adopt",
+  "Preview": "Preview",
+  "Videos": "Videos",
+  "Main video slot": "Main video slot",
+  "Downloaded": "Downloaded",
+  "Source video": "Source video",
+  "Adopt as main video": "Adopt as main video",
+  "Adopted as main video": "Adopted as main video",
+  "Scroll to see all": "Scroll to see all",
+  "Click a candidate → original / candidate compare": "Click a candidate → original / candidate compare",
+  "Adopt selected candidate": "Adopt selected candidate",
+  "No.": "No.",
+  "sheets": "",
+  "Previous": "Previous",
+  "Next": "Next",
+  "Iterate from this candidate as the new source": "Iterate from this candidate as the new source"
 }

@@ -105,6 +105,21 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 
 **验证方法**：Playwright 断言上述三点；`yarn eslint --fix` + `tsc` 通过。
 
+**验收记录（2026-07-08 · 已通过）**
+- 落地与原计划的一处改良：mockup 的通用短类名（`.card/.chip/.field/.step/.stage/.search…`）**不注入全局**，
+  统一作用域化在 `.aic-scope` 之下（仅 `:root` 令牌与 `@keyframes` 全局，且都是惰性的），避免与 antd/壳类名相撞。
+  转换「只改选择器、不改声明值」，令牌/阴影/配色 1:1。新增 `AIC_SCOPE_CLASS='aic-scope'` 常量，后续 phase 给
+  MediaStudio 根与 jsBlock 根挂此 class 即复用全部组件类。
+- 接线位置修正：运行中的 `/admin` 加载的是插件 **v1 入口**（`src/client/plugin.tsx`，它 import 并调用 v2 的 setup），
+  故注入在 v1、v2 两个 `plugin.tsx` 的 `load()` 都各自 try/catch 调用了 `injectCreativeConsole()`。
+- jsBlock 真源：块实际存于 **v2 `flowModels` 表**（`uid=um6v8ddxrz8`，`use=JSBlockModel`，
+  代码路径 `options.stepParams.jsSettings.runJs.code`，1343 行 antd React），已完整落到 `docs/jsblocks/preview-edit.js`（带纳管头注释）。
+- 实况断言（`/admin/bska9eot90k` 预览编辑页，重建 dist 后硬刷新）：
+  `--violet=#6a5cff`、`--jade=#12b981`、`--amber=#ff9e2c`；`#ai-listing-creative-console` **唯一存在**（len≈33k）；
+  含 `.aic-scope .card` 规则；**DOM 中暂无任何 `.aic-scope` → 页面视觉零回归**（截图确认三栏原样渲染）。
+  控制台无新增报错（既有的 antd Tooltip 弃用告警与本改动无关）。
+- `yarn build @crossborder/plugin-ai-listing --client-v2-only` 成功（含 declaration 层）；改动文件 `eslint --fix` 干净。
+
 ---
 
 ### Phase 1 — 媒体区 MediaStudio 视觉重构（React）
@@ -131,6 +146,27 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 - vitest（新 `MediaStudio.interaction.test.tsx`）：渲染后 `click(主图缩略图)` → 舞台 `src`/背景 = 该图；`click(对比)` 且存在候选 → 渲染 `CompareView`；无候选时 `对比` 禁用/回退预览。
 - Playwright：媒体卡截图比对 mockup；断言 `.gscroll` `scrollHeight > clientHeight`。
 
+**验收记录（2026-07-08 · 已通过）**
+- 改动文件(全部本地代码,不碰共享 DB)：`MediaStudio.tsx`(全量重构)、`CompareModal.tsx`(舞台配色→白分隔线/紫珊瑚候选标)、
+  `media-kit.ts`(ConfigProvider 注入紫色主题 colorPrimary=#6a5cff)、`types.ts`(MediaPanelData +videos/videoCandidates/videoAdopted,MediaAsset +assetType)、
+  `scenes-meta.ts`(复用)、locale zh/en(+12 键)、新增 `__tests__/MediaStudio.interaction.test.tsx`。
+- **服务端一处只读增量**(必要的数据前提,非逻辑改动)：`server/media/actions.ts` 的 `candidates` action 增加 `videos`
+  (全部未弃用视频,采纳优先)与 `mapAsset` 增加 `assetType`。原因:源站视频 `origin=null/finalSelected=false`,既不在
+  `videoCandidates` 也不在 `videoAdopted`,不暴露则「视频入列」对真实商品无效。已验证 candidates 响应回带 videos(role=video,url 有)。
+- **两处按架构现实重新落位**(与原计划的偏离,均已在代码注释标注)：
+  1. `.aic-scope` 作用域 class 挂在 MediaStudio 根;媒体区全部改用 Creative Console 组件类(studio-tools/gcol/gscroll/vslot/stage/candstrip/ggrid/th…)。
+  2. **studio-head(深墨区头)+ 卡壳不由 MediaStudio 渲染**,改归 Phase 3。因为「商品图片·AI 改图」这张卡的**壳+标题是外层 jsBlock 的 antd Card**;
+     若 MediaStudio 再渲染同名深墨头 → 标题重复 + 卡中卡。且 **DB 与生产 app.xuanwu.space 共库、但生产跑旧客户端**,现在删 jsBlock 卡头会让生产端「无标题」。
+     故深墨头 = 「jsBlock Card 头 → 深墨」的 restyle,须随新客户端一起上线,正确归 Phase 3。MediaStudio 本 phase 只渲染 工具栏 + 主体。
+- 实况断言(`/admin/bska9eot90k`,重建 client-v2 dist 后硬刷新,真实商品 6 主图+28 详情+1 视频)：
+  `.gscroll` 独立竖滚(scrollH 972 > clientH 452);34 张缩略图;工具栏 6 键(创意工坊[紫]/找美工改图/白底图/去logo水印/高清/🎬图生视频);
+  `.vslot` 视频入列「视频 1 · 主图视频位 · 已下载 · ✓采纳为主视频」;点缩略图→舞台大图切换、点候选→进对比+CompareView、点视频→舞台放视频;
+  页面仅 1 个「商品图片」标题(无重复)、无卡中卡。控制台无新增报错。
+- vitest 4/4 通过;`eslint --fix` 干净;`yarn build @crossborder/plugin-ai-listing` 成功(server 增量已被 dev 自动热重载,API 实测回带 videos)。
+- **遗留(归后续 phase,均需随客户端上线一并处理共享 jsBlock)**：① 删除 jsBlock 底部独立「视频 已下载」卡(现与 vslot 重复) → Phase 3;
+  ② jsBlock Card 头 → 深墨 studio-head → Phase 3;③ 候选场景/时间角标 + NEW + 批量逐张 + 以此再改(接力选中候选) → Phase 2;
+  ④ 缩略图未选态勾选框可再弱化(hover 显) → Phase 8 收尾。
+
 ---
 
 ### Phase 2 — 候选区增强（React）
@@ -156,6 +192,18 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 **验证方法**
 - vitest：给 4 个候选（不同 scene/createdAt）→ 断言角标文案、`NEW`、`.candstrip` 可滚（`scrollWidth>clientWidth`）；选中→`CompareView` 出现；`picked=3` → 渲染 `第 1/3 张` 与翻页按钮。
 - Playwright：候选区截图比对。
+
+**验收记录（2026-07-08 · 已通过）**
+- 改动文件(全部本地 React)：`MediaStudio.tsx`(候选角标 + 批量导航 batchIndex/pickedList/stepBatch + iterateFromCandidate)、
+  `scenes-meta.ts`(新增 `relTime(iso)` 相对时间 + `isRecent(iso)` 近3分钟判定)、locale zh/en(+5 键:第/张/上一张/下一张/接力提示,并把「Iterate」文案对齐为「以此再改」)、
+  新增 `__tests__/MediaStudio.candidates.test.tsx`。`types.ts` 的 candidate `genParams.scene`/`createdAt` Phase 1 已具备,无需再改。
+- 候选角标:`.ccard` = 缩略 + `.cscene`(sceneMeta 图标+中文名)+ `.ctime`(relTime)+ `.newgen`(isRecent→NEW 翠标);`.candstrip` 本就 `overflow-x:auto` 横滑。
+- 以此再改:`iterateFromCandidate` 以 `viewCandidate.id` 为源开原生抽屉续改(非回原图),并把候选场景带入。
+- 批量逐张:`pickedList`=已选图片按图集顺序;≥2 张时舞台头显示琥珀 `.batch`「‹ {主图/详情} · 第 N/M 张 ›」,`‹ ›`(stepBatch)循环翻页并同步 currentId 预览;组标题「已选 M 张」。未选候选时 采纳/以此再改 禁用。
+- 实况断言(`/admin/bska9eot90k`,重建 dist 后硬刷新):候选场景角标「🏞️ 场景图」+ 相对时间「17 小时」+ 旧候选无 NEW(正确);
+  勾选 3 主图 → `.batch`「主图 · 第 1/3 张」,点 › →「第 2/3 张」、舞台随之翻页,组标题「已选 3」。截图与 mockup 候选区一致。
+- vitest:interaction 4/4 + candidates 2/2 全过;`eslint --fix` 干净;`build --client-v2-only` 成功。
+- 说明:live 当前商品仅 1 候选,「多候选横滑 + NEW」由 vitest(4 候选,近出者 newgen、场景/时间文案)覆盖;`.candstrip` 横滑为 CSS `overflow-x:auto`。
 
 ---
 

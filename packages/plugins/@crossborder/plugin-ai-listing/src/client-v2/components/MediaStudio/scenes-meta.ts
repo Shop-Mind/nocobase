@@ -44,3 +44,23 @@ export function sceneLabel(key?: string | null, fallbackTitle?: string): string 
   if (key && SCENE_META[key]) return SCENE_META[key].label;
   return fallbackTitle || key || '改图';
 }
+
+// 相对时间(候选条角标):刚刚 / N 分钟 / N 小时 / N 天。与 scenes-meta 其余中文兜底一致(直接给中文,不依赖 i18n 加载时机)。
+export function relTime(iso?: string | null): string {
+  if (!iso) return '';
+  const ts = new Date(iso).getTime();
+  if (!ts || Number.isNaN(ts)) return '';
+  const m = Math.floor((Date.now() - ts) / 60000);
+  if (m < 1) return '刚刚';
+  if (m < 60) return `${m} 分钟`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时`;
+  return `${Math.floor(h / 24)} 天`;
+}
+
+// 是否近期新出(候选 NEW 翠标):默认 3 分钟内。
+export function isRecent(iso?: string | null, withinMs = 180000): boolean {
+  if (!iso) return false;
+  const ts = new Date(iso).getTime();
+  return Boolean(ts) && !Number.isNaN(ts) && Date.now() - ts < withinMs;
+}
