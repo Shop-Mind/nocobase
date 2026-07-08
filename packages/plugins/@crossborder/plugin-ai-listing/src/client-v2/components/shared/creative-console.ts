@@ -624,4 +624,17 @@ export const CREATIVE_CONSOLE_CSS = `
 .aic-scope .logrow .lc .lv .new{font-family:"Fraunces",serif;font-weight:600;color:var(--text)}
 
 .aic-scope .logrow .lc .ln{font-size:11px;color:var(--text-3);margin-top:2px}
+
+/* ── Phase 8 收尾:防横向溢出 + 键盘焦点可见(a11y) + 窄屏优雅收拢 ── */
+.aic-scope .plad,.aic-scope .studio-tools,.aic-scope .chips,.aic-scope .statusline,.aic-scope .actbar,.aic-scope .filters{flex-wrap:wrap}
+.aic-scope [role="button"]:focus-visible,.aic-scope button:focus-visible,.aic-scope .pcard:focus-visible,.aic-scope .pt-tier:focus-visible,.aic-scope .th:focus-visible,.aic-scope .ccard:focus-visible,.aic-scope .spec-chip:focus-visible,.aic-scope .step .rb:focus-visible{outline:2px solid var(--violet);outline-offset:2px;border-radius:8px}
+@media (max-width:920px){
+  .aic-scope .studio-body{grid-template-columns:1fr}
+  .aic-scope .attrgrid{grid-template-columns:1fr}
+  .aic-scope .panes{grid-template-columns:1fr}
+}
+@media (max-width:560px){
+  .aic-scope .skurow{grid-template-columns:1fr 1fr;row-gap:8px}
+  .aic-scope .plad{flex-direction:column}
+}
 `;

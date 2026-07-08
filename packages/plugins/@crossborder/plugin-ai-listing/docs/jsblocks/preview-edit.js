@@ -936,7 +936,20 @@ function ReviewApp() {
                   p.status
                 ] || 'done';
               return (
-                <div key={p.id} className={`pcard${active ? ' on' : ''}`} onClick={() => setSelectedId(p.id)}>
+                <div
+                  key={p.id}
+                  className={`pcard${active ? ' on' : ''}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={active}
+                  onClick={() => setSelectedId(p.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedId(p.id);
+                    }
+                  }}
+                >
                   <Checkbox
                     checked={checkedIds.includes(p.id)}
                     onClick={(e) => e.stopPropagation()}
@@ -1222,7 +1235,20 @@ function ReviewApp() {
                         : `${t.minQuantity}-${t.maxQuantity}`;
                     const active = i === costTierIdx;
                     return (
-                      <div key={i} className={`pt-tier${active ? ' on' : ''}`} onClick={() => setCostTierIdx(i)}>
+                      <div
+                        key={i}
+                        className={`pt-tier${active ? ' on' : ''}`}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={active}
+                        onClick={() => setCostTierIdx(i)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setCostTierIdx(i);
+                          }
+                        }}
+                      >
                         <span className="pick">成本档</span>
                         <div className="pv">
                           {curSym(t.currency)}
@@ -1254,7 +1280,17 @@ function ReviewApp() {
                     return (
                       <span
                         key={v.value}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={active}
+                        aria-label={v.value}
                         onClick={() => setSelPrimary(v.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelPrimary(v.value);
+                          }
+                        }}
                         style={{
                           position: 'relative',
                           cursor: 'pointer',
