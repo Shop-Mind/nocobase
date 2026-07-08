@@ -1,0 +1,2502 @@
+const React = ctx.libs.React;
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+const {
+  Row,
+  Col,
+  Card,
+  Tag,
+  Button,
+  Space,
+  Typography,
+  Alert,
+  Table,
+  Empty,
+  Input,
+  InputNumber,
+  Select,
+  Image,
+  Divider,
+  Segmented,
+  Tooltip,
+  Switch,
+  Spin,
+  Checkbox,
+  Descriptions,
+  Avatar,
+  Collapse,
+  Pagination,
+  message,
+  Modal,
+} = ctx.libs.antd;
+const dayjs = ctx.libs.dayjs;
+
+const IMG_FALLBACK =
+  'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="240" height="240"%3E%3Crect width="240" height="240" fill="%23f5f5f5"/%3E%3Ctext x="120" y="120" font-size="14" fill="%23bbb" text-anchor="middle" dominant-baseline="middle"%3E图片预览（mock）%3C/text%3E%3C/svg%3E';
+
+const STATUS_META = {
+  processed: { color: 'lime', label: '已处理' },
+  reviewing: { color: 'gold', label: '审核中' },
+  reviewed: { color: 'green', label: '已审核' },
+  publishing: { color: 'geekblue', label: '发布中' },
+  published: { color: 'green', label: '已发布' },
+  publish_failed: { color: 'red', label: '发布失败' },
+};
+const ACTOR_META = {
+  user: { color: 'blue', label: '人工' },
+  ai_employee: { color: 'purple', label: 'AI' },
+  system: { color: 'default', label: '系统' },
+};
+
+// ---- 变更记录人话化：审计里的 fieldName 是英文字段名、值是原始 JSON，电商运营看不懂 —— 全部翻成中文短语。----
+const FIELD_LABELS = {
+  titleProcessed: '标题建议',
+  descriptionProcessed: '描述建议',
+  attributesProcessed: '属性建议',
+  titleFinal: '发布标题',
+  descriptionFinal: '发布描述',
+  attributes: '商品属性',
+  priceTarget: '售价',
+  listPriceTarget: '划线价',
+  ladderTarget: '发布阶梯价',
+  stock: '库存',
+  'skus.priceTarget': 'SKU 定价',
+  'skus.stock': 'SKU 库存',
+  mediaJobs: '图片处理任务',
+  status: '商品状态',
+  reviewStatus: '审核状态',
+  riskFlags: '风险词扫描',
+  categoryTarget: '目标类目',
+  enabled: '规则启用',
+};
+const REVIEW_STATUS_LABELS = { pending: '待审核', approved: '已通过', rejected: '已驳回' };
+const MEDIA_JOB_LABELS = {
+  remove_watermark: '去水印',
+  white_background: '白底图',
+  whitebg: '白底图',
+  localize: '本地化',
+};
+const fieldLabel = (f) => {
+  if (!f) return '';
+  if (FIELD_LABELS[f]) return FIELD_LABELS[f];
+  const m = /^sku#(\d+)\.(priceTarget|stock)$/.exec(f);
+  if (m) return `SKU#${m[1]} ${m[2] === 'stock' ? '库存' : '售价'}`;
+  return f;
+};
+const fmtAuditVal = (f, v) => {
+  if (v == null || v === '') return '（空）';
+  if (f === 'status') return (STATUS_META[v] || {}).label || String(v);
+  if (f === 'reviewStatus') return REVIEW_STATUS_LABELS[v] || String(v);
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'boolean') return v ? '开' : '关';
+  if (typeof v === 'string') return v.length > 30 ? v.slice(0, 30) + '…' : v;
+  if (Array.isArray(v)) {
+    if (f === 'ladderTarget') {
+      // 显示具体档位而不是「N 档」——否则档数不变、价格变了会看起来像「3 档 → 3 档」的无效变更。
+      if (!v.length) return '未设置';
+      const s = v.map((t) => `≥${(t || {}).minQuantity}:${(t || {}).price}`).join(' / ');
+      return `${v.length} 档（${s.length > 30 ? s.slice(0, 30) + '…' : s}）`;
+    }
+    return `${v.length} 项`;
+  }
+  if (typeof v === 'object') {
+    if (v.count != null) return `${v.count} 个 SKU`;
+    if (Array.isArray(v.types))
+      return `${v.created != null ? v.created + ' 个：' : ''}${v.types
+        .map((t) => MEDIA_JOB_LABELS[t] || t)
+        .join('、')}`;
+    const ks = Object.keys(v);
+    return `${ks.length} 项（${ks.slice(0, 3).join('、')}${ks.length > 3 ? '…' : ''}）`;
+  }
+  return String(v);
+};
+
+// decimal 列读回字符串、前端提交数字——服务端历史上把「"0.3" vs 0.3」记成了变更（已修）。
+// 存量审计里这类 0.3 → 0.3 的无效条目在展示层过滤掉，不再干扰运营阅读。
+const numLike = (v) => typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v)));
+const canonAuditVal = (f, v) => {
+  if (v == null || v === '') return null;
+  const numericField =
+    ['priceTarget', 'listPriceTarget', 'stock'].includes(f) ||
+    /^sku#\d+\.(priceTarget|stock)$/.test(f) ||
+    f === 'skus.priceTarget' ||
+    f === 'skus.stock';
+  if (numericField && numLike(v)) return Number(v);
+  if (f === 'ladderTarget' && Array.isArray(v))
+    return v.map((t) => ({ m: Number((t || {}).minQuantity), p: Number((t || {}).price) }));
+  return v;
+};
+const isNoopAudit = (l) => {
+  if (l.oldValue == null || l.newValue == null) return false;
+  return (
+    JSON.stringify(canonAuditVal(l.fieldName, l.oldValue)) === JSON.stringify(canonAuditVal(l.fieldName, l.newValue))
+  );
+};
+
+const PendingTag = () => (
+  <Tag color="gold" style={{ marginLeft: 6, transform: 'scale(0.85)', transformOrigin: 'left' }}>
+    待提交
+  </Tag>
+);
+
+// AI 员工原生头像（复刻原生 AIEmployeeShortcut 的 hover 转头：常态明亮、hover flip 转头）。
+// 顶层组件（非 ReviewApp 内嵌）以保证跨父渲染稳定，头像只取一次、focus 态不丢。kit 由 window.__aiListingBlockKit 提供。
+function EmployeeAvatar({ kit, username, size, disabled, title, onClick }) {
+  const [normal, setNormal] = useState(null);
+  const [hover, setHover] = useState(null);
+  const [focus, setFocus] = useState(false);
+  useEffect(() => {
+    if (!kit || !kit.getAvatar) return;
+    kit
+      .getAvatar(username, { mouth: undefined, mask: undefined })
+      .then((u) => u && setNormal(u))
+      .catch(() => {});
+    kit
+      .getAvatar(username, { mask: undefined, flip: true })
+      .then((u) => u && setHover(u))
+      .catch(() => {});
+  }, [kit, username]);
+  return (
+    <Tooltip title={title}>
+      <span
+        style={{ cursor: disabled ? 'not-allowed' : 'pointer', display: 'inline-block', opacity: disabled ? 0.4 : 1 }}
+        onMouseEnter={() => setFocus(true)}
+        onMouseLeave={() => setFocus(false)}
+        onClick={() => {
+          if (!disabled) onClick();
+        }}
+      >
+        <Avatar
+          size={size || 36}
+          shape="circle"
+          src={(focus ? hover : normal) || undefined}
+          style={{ background: normal ? undefined : '#722ed1' }}
+        >
+          {normal ? null : 'AI'}
+        </Avatar>
+      </span>
+    </Tooltip>
+  );
+}
+
+// AI 候选区（Phase 2）：把插件 bundle 里的 MediaStudio 面板挂进本区块容器（window.__aiListingMediaKit）。
+// 生成→对比→采纳/弃用全部走受控 action；采纳后 onChange 刷新本页详情图集（发布装配已「采纳集优先」）。
+// kit 未安装（旧 bundle）时静默显示占位，绝不影响主体编辑。React 隔离：mount 内部自建 root，与本区块 React 无耦合。
+function AiCandidateZone({ productId, onChange }) {
+  const ref = useRef(null);
+  const cbRef = useRef(onChange);
+  cbRef.current = onChange;
+  useEffect(() => {
+    const kit = (typeof window !== 'undefined' && window.__aiListingMediaKit) || null;
+    if (!kit || !kit.mount || !ref.current || !productId) return;
+    let unmount = null;
+    try {
+      unmount = kit.mount(ref.current, {
+        productId,
+        onChange: () => {
+          if (cbRef.current) cbRef.current();
+        },
+      });
+    } catch (e) {
+      /* 挂载失败不影响主体 */
+    }
+    return () => {
+      try {
+        if (unmount) unmount();
+      } catch (e) {}
+    };
+  }, [productId]);
+  const has = typeof window !== 'undefined' && window.__aiListingMediaKit;
+  return (
+    <Card
+      size="small"
+      style={{ marginTop: 12 }}
+      title={
+        <Space size={6}>
+          <span>商品图片 · AI 改图</span>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            主图/详情图在这里管理：选图 → 改图 → 对比 → 采纳，采纳后进入发布图集
+          </Typography.Text>
+        </Space>
+      }
+    >
+      {has ? (
+        <div ref={ref} />
+      ) : (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          AI 图片工具未就绪（请刷新或联系管理员）
+        </Typography.Text>
+      )}
+    </Card>
+  );
+}
+
+const unwrap = (body) => {
+  if (!body || typeof body !== 'object') return null;
+  if (typeof body.ok === 'boolean') return body;
+  if (body.data && typeof body.data === 'object' && typeof body.data.ok === 'boolean') return body.data;
+  return body;
+};
+const callApi = async (url, data) => {
+  try {
+    const res = await ctx.request({ url, method: 'post', data: data || {}, skipNotify: true });
+    return unwrap(res?.data) || { ok: false, errors: [{ code: 'EMPTY_RESPONSE', message: '空响应' }], traceId: '-' };
+  } catch (err) {
+    return (
+      unwrap(err?.response?.data) || {
+        ok: false,
+        errors: [{ code: 'NETWORK_ERROR', message: '网络异常' }],
+        traceId: '-',
+      }
+    );
+  }
+};
+const errOf = (env) => {
+  const first = (env && env.errors && env.errors[0]) || {};
+  return {
+    code: first.code || 'UNKNOWN',
+    msg: first.friendlyMessage || first.message || '操作失败',
+    traceId: (env && env.traceId) || '-',
+    retryable: first.recoverable,
+  };
+};
+
+// 列表缩略图：alicdn 图加尺寸后缀提速省流量；非 alicdn 或已带后缀的原样返回。
+const thumb = (u, size) => {
+  if (!u || typeof u !== 'string' || !/^https?:\/\//i.test(u)) return u;
+  if (!/alicdn\.com/i.test(u) || /_\d+x\d+/.test(u)) return u;
+  return /\.(jpe?g|png|webp)$/i.test(u) ? u + '_' + size + 'x' + size + '.jpg' : u;
+};
+
+const listEnv = await callApi('aiListingReview:list', { page: 1, pageSize: 20 });
+
+function ReviewApp() {
+  const [products, setProducts] = useState(listEnv && listEnv.ok ? listEnv.data.products : []);
+  const [listError] = useState(listEnv && listEnv.ok ? null : listEnv);
+  const [kw, setKw] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [platformFilter, setPlatformFilter] = useState('');
+  const [selectedId, setSelectedId] = useState(
+    listEnv && listEnv.ok && listEnv.data.products[0] ? listEnv.data.products[0].id : null,
+  );
+  // 左侧列表服务端分页：只取当前页数据，商品量大也不卡。
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(20);
+  const [listTotal, setListTotal] = useState(
+    listEnv && listEnv.ok ? Number(listEnv.data.total) || listEnv.data.products.length : 0,
+  );
+  const [checkedIds, setCheckedIds] = useState([]);
+
+  const [detail, setDetail] = useState(null);
+  const [skus, setSkus] = useState([]);
+  const [media, setMedia] = useState([]);
+  const [draft, setDraft] = useState(null);
+  const [baseline, setBaseline] = useState(null); // 载入/保存后的基准值，用于「待提交」黄标对比
+  const [imgIdx, setImgIdx] = useState(0);
+  const [logs, setLogs] = useState([]);
+  const [logFilter, setLogFilter] = useState('');
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState(null); // {type,msg}
+  const [precheck, setPrecheck] = useState(null);
+  const [mobile, setMobile] = useState(false);
+  // Alibaba.com 官方标题规范（帮助中心 20142419 + 发布接入文档 3.3.1），标题编辑提示与 Toby 上下文共用。
+  const TITLE_RULES_TEXT =
+    'Alibaba.com 官方标题规范：① 结构=核心品名+特征属性+标准/认证+型号，与买家搜索词强相关；' +
+    '② with/for 可用但核心词必须在其前面（如 steel pipe with ASTM Standard）；' +
+    '③ 长度适当：上限 128 英文字符（中文约 40 字，发布后编辑页翻译），买家搜索词仅 50 字符，过长降低匹配；' +
+    '④ 禁关键词罗列堆砌（降低搜索匹配精度与排序）；⑤ 慎用 / – ( ) 等特殊符号，必须用时前后加空格；' +
+    '⑥ 禁夸大词、绝对化用语与违禁词。';
+  // Alibaba.com 官方商品卖点规范（《商品卖点上线》+ 发布接入文档 3.4.5）：发布描述落到结构化详描 textDesc（商品卖点），
+  // 进 AI Search 索引并在商详高优展示。描述编辑提示与 Toby 上下文共用。
+  const SELLING_RULES_TEXT =
+    'Alibaba.com 官方商品卖点规范（发布描述写入平台「商品卖点」，进 AI Search 索引并在商详高优展示）：' +
+    '① 英文分点最多 5 条，每条「标题: 内容」形式，标题首字母大写，不用特殊符号；' +
+    '② 内容可含商品变体表达、商品特征、商品竞争优势（材质/做工、价格、服务、供应链时效）、适用人群/场景；5 条建议依次覆盖：产品核心亮点（差异化价值）、关键功能与用途、材质/规格/尺寸（自然语言转译，便于买家判断）、适用场景与人群、配件与服务支持（不承诺售后担保）；' +
+    '③ 用清晰自然的语言，禁关键词罗列堆砌；' +
+    '④ 避免与标题、属性重复用词，用更丰富的表达契合买家搜索习惯，突出帮助买家决策的附加信息；' +
+    '⑤ 与标题/属性/详情信息保持一致，全文 ≤2000 字符；⑥ 禁夸大词、绝对化用语与违禁词。';
+  // 官方文档《商品卖点上线》的 5 类卖点内容说明 + 参考示例（左右两列完整搬运）：只注入 AI 上下文，不进 UI tooltip。
+  const SELLING_EXAMPLES_TEXT =
+    '官方 5 类卖点内容说明与参考示例（示例为耳机品类，仅参考格式与风格，内容必须取材于当前商品，禁止照抄）：\n' +
+    '1. 产品核心亮点——突出最主要卖点或创新点，说明产品最具吸引力或差异化的特性，明确传递核心价值。' +
+    '示例：Active Noise Cancellation ANC: ANC noise cancelling earbuds help block ambient sound on subway bus airplane and in office so you can focus on music podcasts and calls\n' +
+    '2. 重要功能或特性说明——呈现关键功能和用途，介绍产品的主要功能、实用性和能带来的利益。' +
+    '示例：Touch Control And Transparency Mode: Tap to play pause answer calls and switch modes letting you hear surroundings for street walking commuting and quick conversations\n' +
+    '3. 材质（材料、规格、尺寸等）——明确描述产品的主要属性、材料、容量、尺寸、重量等，以便买家判断是否匹配需求；建议用自然语言转译，让买家更容易理解。' +
+    '示例：Bluetooth 5 0 Wireless Connection: Bluetooth earbuds provide stable pairing with iPhone Android phone iPad laptop and help reduce dropouts for videos and gaming\n' +
+    '4. 场景适用与用户体验——适用范围、便捷性、目标客户群：指明适用人群或场合，以及产品使用的便捷性和体验优势。' +
+    '示例：In Ear Silicone Ear Tips And Lightweight Fit: In ear design with multiple ear tip sizes improves seal and comfort making them suitable for running gym workouts and long listening sessions\n' +
+    '5. 配件、使用与服务支持——说明产品是否附带操作说明、配件或支持渠道，突出简单易用性，但不承诺售后、保证信息。' +
+    '示例：Charging Case Included And Easy Setup: Comes with charging case charging cable extra ear tips and user guide for fast pairing and convenient everyday carry';
+
+  // 通用发布编辑器状态：选中的主规格值（颜色）、成本档（阶梯档位）、批量定价利润率、描述页签。
+  const [selPrimary, setSelPrimary] = useState(null);
+  const [costTierIdx, setCostTierIdx] = useState(0);
+  const [marginPct, setMarginPct] = useState(30);
+  const [descTab, setDescTab] = useState('final');
+
+  // kit + refs：getData/getSchema/applyPatch 读最新 draft/detail（避免闭包过期）。
+  const kit = (typeof window !== 'undefined' && window.__aiListingBlockKit) || null;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
+  const skusRef = useRef(skus);
+  skusRef.current = skus;
+
+  const platforms = useMemo(() => {
+    const set = new Set();
+    products.forEach((p) => {
+      if (p.targetPlatform) set.add(p.targetPlatform);
+      if (p.sourcePlatform) set.add(p.sourcePlatform);
+    });
+    return Array.from(set);
+  }, [products]);
+
+  const reloadList = useCallback(
+    async (over) => {
+      const params = {
+        keyword: kw,
+        status: statusFilter,
+        platform: platformFilter,
+        page: listPage,
+        pageSize: listPageSize,
+        ...over,
+      };
+      const env = await callApi('aiListingReview:list', params);
+      if (env.ok) {
+        setProducts(env.data.products);
+        setListTotal(Number(env.data.total) || env.data.products.length);
+        if (params.page) setListPage(params.page);
+      }
+    },
+    [kw, statusFilter, platformFilter, listPage, listPageSize],
+  );
+
+  const loadDetail = useCallback(async (id) => {
+    if (!id) {
+      setDetail(null);
+      return;
+    }
+    setLoadingDetail(true);
+    setPrecheck(null);
+    const [dEnv, lEnv] = await Promise.all([
+      callApi('aiListingReview:detail', { id }),
+      callApi('aiListingReview:changeLog', { id }),
+    ]);
+    if (dEnv.ok) {
+      const p = dEnv.data.product;
+      setDetail(p);
+      setSkus(dEnv.data.skus || []);
+      setMedia(dEnv.data.media || []);
+      setImgIdx(0);
+      setSelPrimary(null);
+      setCostTierIdx(0);
+      setDescTab('final');
+      const nextDraft = {
+        // 免采纳:最终标题默认沿用原标题(与服务端 approveDraft 兜底一致);AI 优化/手改直接落在这里,点「保存」才入库。
+        titleFinal: p.titleFinal || p.titleOriginal || '',
+        descriptionFinal: p.descriptionFinal || '',
+        priceTarget: p.priceTarget != null ? Number(p.priceTarget) : null,
+        listPriceTarget: p.listPriceTarget != null ? Number(p.listPriceTarget) : null,
+        stock: p.stock != null ? Number(p.stock) : null,
+        ladderTarget: Array.isArray(p.ladderTarget)
+          ? p.ladderTarget.map((t) => ({ minQuantity: t.minQuantity, price: t.price }))
+          : [],
+        attributes: { ...(p.attributesProcessed || {}) },
+        skus: (dEnv.data.skus || []).map((s) => ({
+          id: s.id,
+          priceTarget: s.priceTarget != null ? Number(s.priceTarget) : null,
+          stock: s.stock != null ? Number(s.stock) : null,
+        })),
+      };
+      setDraft(nextDraft);
+      setBaseline(nextDraft); // 基准 = 刚载入的最终值；AI/人工改动后与之比对出「待提交」
+    }
+    if (lEnv.ok) setLogs(lEnv.data.logs || []);
+    setLoadingDetail(false);
+  }, []);
+
+  useEffect(() => {
+    loadDetail(selectedId);
+  }, [selectedId, loadDetail]);
+
+  const locked = detail && detail.locked;
+
+  const setDraftField = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
+  const setSkuField = (sid, f, v) =>
+    setDraft((d) => ({ ...d, skus: d.skus.map((s) => (s.id === sid ? { ...s, [f]: v } : s)) }));
+
+  // ── jsBlock 通用 AI 能力：把「最终字段」暂存注册进 kit。Toby 经原生抽屉对话调 jsBlockApplyPatch 直接改暂存；
+  //    只有点「保存」才走受控 saveFinal 入库（逐字段审计 actorType=user、reviewed 锁定→409）。AI 绝不写库。
+  const buildFields = useCallback(() => {
+    const p = detailRef.current || {};
+    return [
+      {
+        name: 'titleFinal',
+        label: '标题',
+        type: 'string',
+        hint: `面向目标平台「${p.targetPlatform || '-'}」的最终标题；原始:「${
+          p.titleOriginal || ''
+        }」；参考建议(处理阶段规则清洗):「${
+          p.titleProcessed || ''
+        }」；核心品名前置（with/for 前）、≤128 英文字符（中文约 40 字）、禁堆砌与夸大词、特殊符号前后加空格`,
+      },
+      {
+        name: 'descriptionFinal',
+        label: '发布描述（平台商品卖点）',
+        type: 'string',
+        hint: `最终发布描述——发布时写入 Alibaba 结构化详描「商品卖点」(textDesc，≤2000 字符，进 AI Search 索引)；原始:「${(
+          p.descriptionOriginal || ''
+        ).slice(0, 80)}」；参考建议:「${(p.descriptionProcessed || '').slice(
+          0,
+          80,
+        )}」；写法：英文分点 ≤5 条、每条「Title: Content」（标题首字母大写、禁特殊符号），依次覆盖核心亮点/功能用途/材质规格/适用场景人群/配件服务，避免与标题重复用词，条与条之间用换行分隔`,
+      },
+      {
+        name: 'skus',
+        label: 'SKU 定价',
+        type: 'array',
+        hint:
+          '数组 [{id, priceTarget, stock}]。id 与规格见背景信息「SKU 清单」；priceTarget=该规格目标售价（数字），stock=库存（整数）。批量定价优先改这里（商品级售价/总库存会自动汇总）',
+      },
+      {
+        name: 'ladderTarget',
+        label: '发布阶梯价',
+        type: 'array',
+        hint:
+          '数组 [{minQuantity, price}]，¥ 价格。档数跟随源站/用户要求（起订量递增、价格随数量不升；目标平台有上限时发布时截断，Alibaba 为 4 档）；设了阶梯草稿走「按数量阶梯价」（与 SKU 规格价二选一），清空 [] 回固定/规格价',
+      },
+      {
+        name: 'listPriceTarget',
+        label: '划线价',
+        type: 'number',
+        hint: '数字；划线价（原价展示用），一般为售价的 1.2~1.5 倍',
+      },
+      {
+        name: 'priceTarget',
+        label: '商品级售价',
+        type: 'number',
+        hint: '数字；一般不用手填——保存时自动取最低 SKU 售价',
+      },
+      { name: 'stock', label: '商品级总库存', type: 'number', hint: '整数；一般不用手填——保存时自动汇总各 SKU 库存' },
+      {
+        name: 'attributes',
+        label: '商品属性',
+        type: 'object',
+        hint: `键值对对象（发布后展示在商品页规格参数区）；来源属性:${JSON.stringify(p.attributesOriginal || {})}`,
+      },
+    ];
+  }, []);
+
+  useEffect(() => {
+    if (!kit) return undefined;
+    kit.register('review-detail', {
+      title: '预览编辑·商品最终字段（Toby 可对话编辑）',
+      submitLabel: '保存',
+      getData: () => {
+        const d = draftRef.current || {};
+        return {
+          titleFinal: d.titleFinal,
+          descriptionFinal: d.descriptionFinal,
+          priceTarget: d.priceTarget,
+          listPriceTarget: d.listPriceTarget,
+          stock: d.stock,
+          attributes: d.attributes || {},
+          skus: d.skus || [],
+          ladderTarget: d.ladderTarget || [],
+        };
+      },
+      getSchema: buildFields,
+      // 只读背景信息（进 system prompt，用户看不到）：技术细节放这里，让可见的输入框提示语保持自然口语。
+      getSystemContext: () => {
+        const p = detailRef.current || {};
+        const sInfo = p.shopInfo || {};
+        const ladder0 =
+          ((skusRef.current || []).find((s) => Array.isArray(s.ladderPrice) && s.ladderPrice.length) || {})
+            .ladderPrice || [];
+        const ladderText = ladder0.length
+          ? ladder0
+              .map(
+                (t) =>
+                  `${
+                    t.maxQuantity === -1 || t.maxQuantity == null
+                      ? '≥' + t.minQuantity
+                      : t.minQuantity + '-' + t.maxQuantity
+                  }件=${t.currency || ''}${t.price}`,
+              )
+              .join('，')
+          : '（无）';
+        return [
+          `商品数据库主键 id：${p.id}（如需读取该商品完整的原始/建议/最终字段，可调用 reviewGetProduct 并传此 id；不要用标题里的货号当 id）。`,
+          `商品状态：${p.status || '-'}${p.locked ? '（已审核锁定，不可修改）' : ''}；目标平台：${
+            p.targetPlatform || '-'
+          }。`,
+          `来源背景：平台 ${p.sourcePlatform || '-'}；源类目「${p.categoryOriginal || '-'}」；供应商「${
+            sInfo.supplierName || '-'
+          }」；起订量 MOQ ${p.moq != null ? p.moq : '-'}；原价 ${p.currencyOriginal || ''} ${
+            p.priceOriginal != null ? p.priceOriginal : '-'
+          }（起订档）。`,
+          `源站采购阶梯价：${ladderText}。用户让你定价时：按用户预计采购量命中的档位作为成本价，叠加用户给的利润率/运费估算每个 SKU 的目标售价，用 jsBlockApplyPatch 写 skus 数组（[{id, priceTarget, stock}]）；商品级售价与总库存保存时自动汇总，不必单独填。划线价（listPriceTarget）一般为售价的 1.2~1.5 倍。把计算过程简述给用户。`,
+          `发布阶梯价（草稿将写入）：${JSON.stringify(
+            (draftRef.current || {}).ladderTarget || [],
+          )}。用户要求按数量整体阶梯报价时：写 ladderTarget 数组 [{minQuantity, price}]（¥，档数跟随源站或用户要求，起订量递增、价格随数量不升，可参照源站档位加利润率；Alibaba 发布时最多写 4 档）；设了阶梯草稿走阶梯价（与逐 SKU 规格价平台二选一），清空 [] 则回固定/规格价。`,
+          'SKU 清单（id=规格）：' +
+            ((skusRef.current || [])
+              .map((s) => `${s.id}=${(s.specAttrs || []).map((a) => a.value).join('/') || s.specValue || s.sku}`)
+              .join('；') || '（无）'),
+          `优化标题时必须严格遵守：${TITLE_RULES_TEXT}`,
+          `优化发布描述（descriptionFinal）时必须严格遵守：${SELLING_RULES_TEXT}`,
+          SELLING_EXAMPLES_TEXT,
+          '属性优化同样突出品类关键词与真实卖点，禁用夸大词与平台违禁词。',
+        ].join('\n');
+      },
+      applyPatch: (patch) =>
+        setDraft((d) => {
+          if (!d) return d;
+          const next = { ...d };
+          for (const [k, v] of Object.entries(patch || {})) {
+            if (k === 'attributes' && v && typeof v === 'object' && !Array.isArray(v))
+              next.attributes = { ...(d.attributes || {}), ...v };
+            else if (k === 'skus' && Array.isArray(v)) {
+              // AI 批量定价：按 id 合并进 SKU 暂存，只认 priceTarget/stock 两个数字字段。
+              next.skus = (d.skus || []).map((s) => {
+                const p = v.find((x) => x && Number(x.id) === s.id);
+                if (!p) return s;
+                const ns = { ...s };
+                if (p.priceTarget != null && !Number.isNaN(Number(p.priceTarget)))
+                  ns.priceTarget = Number(p.priceTarget);
+                if (p.stock != null && !Number.isNaN(Number(p.stock))) ns.stock = Number(p.stock);
+                return ns;
+              });
+            } else if (k === 'ladderTarget' && Array.isArray(v)) {
+              next.ladderTarget = v
+                .map((t) => ({ minQuantity: Math.round(Number(t && t.minQuantity)), price: Number(t && t.price) }))
+                .filter((t) => t.minQuantity > 0 && t.price > 0);
+            } else if (k === 'priceTarget' || k === 'listPriceTarget' || k === 'stock')
+              next[k] = v === '' || v == null ? null : Number(v);
+            else if (k === 'titleFinal' || k === 'descriptionFinal') next[k] = v == null ? '' : String(v);
+          }
+          return next;
+        }),
+    });
+    return () => kit.unregister('review-detail');
+  }, [kit, buildFields]);
+
+  const isDirty = useCallback(
+    (field) => {
+      if (!draft || !baseline) return false;
+      if (field === 'price') {
+        return (
+          JSON.stringify([draft.priceTarget, draft.listPriceTarget]) !==
+          JSON.stringify([baseline.priceTarget, baseline.listPriceTarget])
+        );
+      }
+      return JSON.stringify(draft[field]) !== JSON.stringify(baseline[field]);
+    },
+    [draft, baseline],
+  );
+
+  const dirtyCount = useMemo(() => {
+    if (!draft || !baseline) return 0;
+    const keys = [
+      'titleFinal',
+      'descriptionFinal',
+      'priceTarget',
+      'listPriceTarget',
+      'ladderTarget',
+      'stock',
+      'attributes',
+      'skus',
+    ];
+    return keys.filter((k) => JSON.stringify(draft[k]) !== JSON.stringify(baseline[k])).length;
+  }, [draft, baseline]);
+
+  // 编辑型：Toby 经原生抽屉对话改「最终值」暂存（jsBlockApplyPatch）。
+  const openToby = useCallback(async () => {
+    if (!kit) {
+      message.warning('AI 能力未就绪，请刷新页面');
+      return;
+    }
+    const p = detailRef.current;
+    if (!p) return;
+    const ok = await kit.openAI('review-detail', {
+      username: 'lst-toby',
+      prompt: `帮我把这个商品优化得更适合 ${
+        p.targetPlatform || '目标平台'
+      }：标题更吸引人、描述更完整、补全关键参数；也可以按源站阶梯价加上我的利润率帮我算目标售价。改好先给我看，我确认后再点「保存」。`,
+    });
+    if (!ok) message.warning('打开原生 AI 抽屉失败');
+  }, [kit]);
+
+  // 字段级 AI 优化（仿平台官方「标题优化」）：一键打开原生抽屉并自动发送，Toby 直接改对应暂存字段（页面实时可见、标黄「待提交」），点「保存」才入库。
+  const openFieldAI = useCallback(
+    async (field) => {
+      if (!kit) {
+        message.warning('AI 能力未就绪，请刷新页面');
+        return;
+      }
+      const p = detailRef.current;
+      if (!p) return;
+      const prompts = {
+        title:
+          '请优化这个商品的标题：严格遵守平台标题规范（核心品名前置、不堆砌关键词、禁夸大词，≤128 英文字符），突出真实卖点。直接把优化后的标题写入暂存字段 titleFinal 给我看，并用一两句话说明改动理由。',
+        description:
+          '请按 Alibaba.com 官方「商品卖点」规范重写这个商品的发布描述（发布时写入结构化详描商品卖点，进 AI Search 索引）：' +
+          '用英文写最多 5 条卖点，每条一行、「标题: 内容」形式（标题首字母大写，不用特殊符号），' +
+          '依次覆盖①产品核心亮点②关键功能与用途③材质/规格/尺寸（自然语言表达）④适用场景与人群⑤配件与服务支持（不承诺售后担保），' +
+          '内容取材于源站描述与商品属性、与标题信息一致但避免重复标题用词，语言自然清晰、不堆砌关键词，全文 ≤2000 字符，禁夸大词与违禁词。' +
+          '直接把结果写入暂存字段 descriptionFinal 给我看，并用中文简述每条卖点的取材依据。',
+      };
+      const ok = await kit.openAI('review-detail', {
+        username: 'lst-toby',
+        prompt: prompts[field] || '',
+        autoSend: true,
+      });
+      if (!ok) message.warning('打开原生 AI 抽屉失败');
+    },
+    [kit],
+  );
+
+  // 只读型：Rena 合规检查，不改数据（走 window.aiListingOpenAssistant，不注入写工具指令）。
+  const openRena = useCallback(async () => {
+    const p = detailRef.current;
+    if (!p) return;
+    const opener = typeof window !== 'undefined' ? window.aiListingOpenAssistant : null;
+    if (typeof opener !== 'function') {
+      message.warning('AI 能力未就绪，请刷新页面');
+      return;
+    }
+    const content = [
+      `商品ID ${p.id}｜目标平台 ${p.targetPlatform || '-'}`,
+      `标题：${p.titleFinal || p.titleProcessed || p.titleOriginal || ''}`,
+      `描述：${(p.descriptionFinal || p.descriptionProcessed || p.descriptionOriginal || '').slice(0, 200)}`,
+      `参数：${JSON.stringify(p.attributesProcessed || p.attributesOriginal || {})}`,
+    ].join('\n');
+    const ok = await opener('lst-rena', {
+      content,
+      prompt: '帮我看看这个商品有没有违禁词或合规风险，再给点更适合目标平台的合规和卖点建议。',
+    });
+    if (!ok) message.warning('打开原生 AI 抽屉失败');
+  }, []);
+
+  const saveWith = useCallback(
+    async (d) => {
+      if (!detail || !d) return false;
+      setBusy(true);
+      setBanner(null);
+      // 商品级售价/总库存自动汇总（电商通用约定：展示价=最低 SKU 售价「¥X 起」，总库存=各 SKU 之和）；
+      // 没有任何 SKU 定价/库存时退回手填值。
+      const skuPrices = (d.skus || []).map((s) => s.priceTarget).filter((n) => n != null);
+      const skuStockSum = (d.skus || []).reduce((a, s) => a + (s.stock || 0), 0);
+      const env = await callApi('aiListingReview:saveFinal', {
+        id: detail.id,
+        values: {
+          titleFinal: d.titleFinal,
+          descriptionFinal: d.descriptionFinal,
+          priceTarget: skuPrices.length ? Math.min(...skuPrices) : d.priceTarget,
+          listPriceTarget: d.listPriceTarget,
+          stock: skuStockSum > 0 ? skuStockSum : d.stock,
+          ladderTarget: d.ladderTarget || [],
+          attributesProcessed: d.attributes,
+        },
+        skus: d.skus,
+      });
+      if (env.ok) {
+        setBanner({ type: 'success', msg: `已保存最终字段（变更 ${env.data.changed} 项），商品进入「审核中」。` });
+        await loadDetail(detail.id);
+        await reloadList();
+      } else {
+        const e = errOf(env);
+        setBanner({ type: 'error', msg: `${e.msg}（${e.code}） traceId: ${e.traceId}` });
+      }
+      setBusy(false);
+      return env.ok;
+    },
+    [detail, loadDetail, reloadList],
+  );
+
+  const save = useCallback(() => saveWith(draft), [saveWith, draft]);
+
+  const approveCore = useCallback(async () => {
+    if (!detail) return;
+    setBusy(true);
+    setBanner(null);
+    const env = await callApi('aiListingReview:approveDraft', { id: detail.id });
+    if (env.ok) {
+      setBanner({ type: 'success', msg: '已标记审核通过，关键字段已锁定。' });
+      await loadDetail(detail.id);
+      await reloadList();
+    } else {
+      const e = errOf(env);
+      setBanner({ type: 'warning', msg: `${e.msg}（${e.code}）` });
+    }
+    setBusy(false);
+  }, [detail, loadDetail, reloadList]);
+
+  // 审核守卫：库存漏填是高频返工点（发布必填，缺了发布报错要退回重改）——审核前拦下，可一键补默认库存；
+  // 顺带兜住「改了没点保存就直接审核」的场景（审核读的是已入库值，暂存不生效）。
+  const approve = useCallback(async () => {
+    if (!detail || !draft) return approveCore();
+    const skuList = draft.skus || [];
+    const missingSkuStock = skuList.filter((s) => s.priceTarget != null && !(s.stock > 0));
+    const stockMissing = skuList.length
+      ? missingSkuStock.length > 0 || !skuList.some((s) => s.stock > 0)
+      : !(draft.stock > 0);
+    const unsaved = dirtyCount > 0;
+    if (!stockMissing && !unsaved) return approveCore();
+    const filled = stockMissing
+      ? {
+          ...draft,
+          skus: skuList.map((s) => (s.stock > 0 ? s : { ...s, stock: 1000 })),
+          stock: skuList.length ? draft.stock : draft.stock > 0 ? draft.stock : 1000,
+        }
+      : draft;
+    Modal.confirm({
+      title: stockMissing ? '库存未填写，发布时会报错' : `有 ${dirtyCount} 项修改未保存`,
+      content: stockMissing
+        ? `发布平台要求库存必填，缺库存会导致发布失败、需退回重改。可先按默认值 1000 补齐${
+            skuList.length ? `（${missingSkuStock.length || skuList.length} 个 SKU）` : ''
+          }再通过，之后仍可退回修改。`
+        : '标记审核读取的是已保存的值，未保存的修改不会生效。将先保存这些修改，再标记审核通过。',
+      okText: stockMissing ? '补库存 1000 并通过' : '保存并通过',
+      cancelText: '返回补填',
+      onOk: async () => {
+        if (stockMissing) setDraft(filled);
+        const ok = await saveWith(filled);
+        if (ok) await approveCore();
+      },
+    });
+  }, [detail, draft, dirtyCount, approveCore, saveWith]);
+
+  const rollback = useCallback(async () => {
+    if (!detail) return;
+    setBusy(true);
+    setBanner(null);
+    const env = await callApi('aiListingReview:rollbackReview', { id: detail.id });
+    if (env.ok) {
+      setBanner({ type: 'info', msg: '已回退审核，可重新编辑。' });
+      await loadDetail(detail.id);
+      await reloadList();
+    }
+    setBusy(false);
+  }, [detail, loadDetail, reloadList]);
+
+  // 退回编辑：已发布 / 卡死的发布中 显式退回「审核中」重新走编辑→审核→发布（发布失败无需退回，直接编辑即可）。
+  const reopen = useCallback(async () => {
+    if (!detail) return;
+    setBusy(true);
+    setBanner(null);
+    const env = await callApi('aiListingReview:reopenForEdit', { id: detail.id });
+    if (env.ok) {
+      setBanner({ type: 'info', msg: (env.warnings || [])[0] || '已退回编辑，可重新修改后再走审核发布。' });
+      await loadDetail(detail.id);
+      await reloadList();
+    } else {
+      const e = errOf(env);
+      setBanner({ type: 'warning', msg: `${e.msg}（${e.code}）` });
+    }
+    setBusy(false);
+  }, [detail, loadDetail, reloadList]);
+
+  const precheckRun = useCallback(async () => {
+    if (!detail) return;
+    const env = await callApi('aiListingReview:aiPrecheck', { id: detail.id });
+    if (env.ok) setPrecheck(env.data);
+  }, [detail]);
+
+  const batchApprove = useCallback(async () => {
+    if (!checkedIds.length) return;
+    setBusy(true);
+    let ok = 0,
+      fail = 0;
+    for (const id of checkedIds) {
+      const env = await callApi('aiListingReview:approveDraft', { id });
+      if (env.ok) ok++;
+      else fail++;
+    }
+    setBanner({
+      type: fail ? 'warning' : 'success',
+      msg: `批量审核：成功 ${ok}，失败 ${fail}（未填标题会自动沿用原标题；失败多为商品状态不允许）。`,
+    });
+    setCheckedIds([]);
+    await reloadList();
+    if (selectedId) await loadDetail(selectedId);
+    setBusy(false);
+  }, [checkedIds, reloadList, loadDetail, selectedId]);
+
+  // ---------- 左侧列表 ----------
+  const LeftPanel = (
+    <Card size="small" styles={{ body: { padding: 8 } }}>
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Input.Search
+          placeholder="搜索商品标题"
+          allowClear
+          value={kw}
+          onChange={(e) => setKw(e.target.value)}
+          onSearch={() => reloadList({ page: 1 })}
+        />
+        <Space size={6} style={{ width: '100%' }}>
+          <Select
+            size="small"
+            style={{ flex: 1, minWidth: 96 }}
+            value={statusFilter}
+            onChange={(v) => {
+              setStatusFilter(v);
+              reloadList({ status: v, page: 1 });
+            }}
+            options={[
+              { value: '', label: '全部状态' },
+              { value: 'processed', label: '已处理' },
+              { value: 'reviewing', label: '审核中' },
+              { value: 'reviewed', label: '已审核' },
+              { value: 'publish_failed', label: '发布失败' },
+              { value: 'publishing', label: '发布中' },
+              { value: 'published', label: '已发布' },
+            ]}
+          />
+          <Select
+            size="small"
+            style={{ flex: 1, minWidth: 96 }}
+            value={platformFilter}
+            onChange={(v) => {
+              setPlatformFilter(v);
+              reloadList({ platform: v, page: 1 });
+            }}
+            options={[{ value: '', label: '全部平台' }, ...platforms.map((p) => ({ value: p, label: p }))]}
+          />
+        </Space>
+        {checkedIds.length ? (
+          <Space size={6}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              已选 {checkedIds.length}
+            </Typography.Text>
+            <Button size="small" type="primary" loading={busy} onClick={batchApprove}>
+              批量审核通过
+            </Button>
+            <Button size="small" onClick={() => setCheckedIds([])}>
+              清空
+            </Button>
+          </Space>
+        ) : null}
+        <div
+          style={{
+            maxHeight: 'calc(100vh - 330px)',
+            minHeight: 200,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          {products.length === 0 ? (
+            <Empty description="无商品" image={Empty.PRESENTED_IMAGE_SIMPLE}>
+              <Button size="small" type="primary" onClick={() => ctx.router?.navigate?.('/admin/bhgkujnjpe7')}>
+                去信息处理
+              </Button>
+            </Empty>
+          ) : (
+            products.map((p) => {
+              const active = p.id === selectedId;
+              const sm = STATUS_META[p.status] || { color: 'default', label: p.status };
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => setSelectedId(p.id)}
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    padding: 8,
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    border: active ? '1px solid #1677ff' : '1px solid #f0f0f0',
+                    background: active ? '#e6f4ff' : '#fff',
+                  }}
+                >
+                  <Checkbox
+                    checked={checkedIds.includes(p.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      setCheckedIds((ids) => (e.target.checked ? [...ids, p.id] : ids.filter((x) => x !== p.id)))
+                    }
+                  />
+                  <Image
+                    width={44}
+                    height={44}
+                    src={thumb(p.mainImage, 120) || IMG_FALLBACK}
+                    fallback={IMG_FALLBACK}
+                    preview={false}
+                    style={{ borderRadius: 4, objectFit: 'cover' }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Typography.Text ellipsis style={{ display: 'block', fontSize: 13 }}>
+                      {p.title || '（无标题）'}
+                    </Typography.Text>
+                    <Space size={4} style={{ marginTop: 2 }}>
+                      <Tag color={sm.color} style={{ marginInlineEnd: 0 }}>
+                        {sm.label}
+                      </Tag>
+                      {p.targetPlatform ? <Tag style={{ marginInlineEnd: 0 }}>{p.targetPlatform}</Tag> : null}
+                    </Space>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+        {listTotal > listPageSize || listPage > 1 ? (
+          <Pagination
+            size="small"
+            current={listPage}
+            pageSize={listPageSize}
+            total={listTotal}
+            showSizeChanger
+            pageSizeOptions={['20', '50', '100']}
+            showTotal={(t) => `共 ${t} 件`}
+            onChange={(p, ps) => {
+              const np = ps !== listPageSize ? 1 : p;
+              setListPage(np);
+              setListPageSize(ps);
+              reloadList({ page: np, pageSize: ps });
+            }}
+          />
+        ) : null}
+      </Space>
+    </Card>
+  );
+
+  // ---------- 右侧详情 ----------
+  let RightPanel;
+  if (!detail) {
+    RightPanel = (
+      <Card size="small" style={{ height: '100%' }}>
+        <Empty description="请选择左侧商品" />
+      </Card>
+    );
+  } else {
+    const sm = STATUS_META[detail.status] || { color: 'default', label: detail.status };
+    const mainMedia = media.filter((m) => m.role === 'main' || (!m.role && m.assetType === 'image'));
+    const detailMedia = media.filter((m) => m.role === 'detail');
+    const videoMedia = media.filter((m) => m.assetType === 'video');
+    const mainSrc = (mainMedia[imgIdx] && mainMedia[imgIdx].sourceUrl) || IMG_FALLBACK;
+    const dlTag = (m) =>
+      !m ? null : m.processStatus === 'success' ? (
+        <Tag color="green" style={{ marginInlineStart: 4 }}>
+          已下载
+        </Tag>
+      ) : m.processStatus === 'failed' ? (
+        <Tag color="red" style={{ marginInlineStart: 4 }}>
+          下载失败
+        </Tag>
+      ) : m.processStatus === 'running' ? (
+        <Tag color="blue" style={{ marginInlineStart: 4 }}>
+          下载中
+        </Tag>
+      ) : null;
+    const attrEntries = Object.entries(draft.attributes || {});
+
+    // ---- 销售信息（SKU）：通用发布编辑器范式（对齐 1688 国际站/抖店/拼多多发布页）----
+    // 规格维度（颜色×尺寸）组合出 SKU，每个组合独立售价/库存；商品级展示价=最低 SKU 售价（X 起），总库存=各 SKU 之和。
+    const curSym = (c) => (c === 'CNY' ? '¥' : c === 'USD' ? '$' : c ? c + ' ' : '');
+    const firstLadder =
+      (skus.find((s) => Array.isArray(s.ladderPrice) && s.ladderPrice.length) || {}).ladderPrice || [];
+    const ladderShared =
+      firstLadder.length > 0 &&
+      skus.every((s) => !s.ladderPrice || JSON.stringify(s.ladderPrice) === JSON.stringify(firstLadder));
+    const skuUnit = (skus.find((s) => s.unit) || {}).unit || '';
+    const dims = [];
+    for (const s of skus) {
+      for (const a of s.specAttrs || []) {
+        let d = dims.find((x) => x.name === a.name);
+        if (!d) {
+          d = { name: a.name, values: [] };
+          dims.push(d);
+        }
+        let v = d.values.find((x) => x.value === a.value);
+        if (!v) {
+          v = { value: a.value, image: a.image, count: 0 };
+          d.values.push(v);
+        }
+        v.count += 1;
+        if (!v.image && a.image) v.image = a.image;
+      }
+    }
+    const primaryDim = dims.find((d) => d.values.some((v) => v.image)) || dims[0] || null;
+    const otherDims = dims.filter((d) => d !== primaryDim);
+    const primarySel =
+      selPrimary != null ? selPrimary : primaryDim && primaryDim.values[0] ? primaryDim.values[0].value : null;
+    const skuAttr = (s, name) => {
+      const a = (s.specAttrs || []).find((x) => x.name === name);
+      return a ? a.value : null;
+    };
+    const rowSkus = primaryDim ? skus.filter((s) => skuAttr(s, primaryDim.name) === primarySel) : skus;
+
+    // 成本档（点选阶梯档位作为采购成本）→ 批量定价：售价 = 成本 × (1 + 利润率%)。
+    const costTier = firstLadder.length ? firstLadder[Math.min(costTierIdx, firstLadder.length - 1)] : null;
+    const costPrice = costTier ? costTier.price : null;
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const draftSku = (id) => ((draft && draft.skus) || []).find((s) => s.id === id) || {};
+    const fillPrices = (onlyCurrent) => {
+      if (costPrice == null || locked) return;
+      const target = round2(costPrice * (1 + (marginPct || 0) / 100));
+      const ids = (onlyCurrent ? rowSkus : skus).map((s) => s.id);
+      setDraft((d) => ({ ...d, skus: d.skus.map((s) => (ids.includes(s.id) ? { ...s, priceTarget: target } : s)) }));
+    };
+    const skuPriceList = ((draft && draft.skus) || []).map((s) => s.priceTarget).filter((n) => n != null);
+    const autoPrice = skuPriceList.length ? Math.min(...skuPriceList) : null;
+    const autoStock = ((draft && draft.skus) || []).reduce((a, s) => a + (s.stock || 0), 0);
+    const unitLabel = skuUnit ? skuUnit.toLowerCase() + 's' : '件';
+
+    // ---- 发布阶梯价编辑器：档数跟随源站生成（信息处理时），此处可增删改；
+    // 设了阶梯 → 草稿走「按数量阶梯价」（与 SKU 规格价平台二选一），清空 → 回固定价/规格价。
+    const ladderDraft = (draft && draft.ladderTarget) || [];
+    const setLadderTier = (i, k, v) =>
+      setDraft((d) => ({ ...d, ladderTarget: (d.ladderTarget || []).map((t, j) => (j === i ? { ...t, [k]: v } : t)) }));
+    const removeLadderTier = (i) =>
+      setDraft((d) => ({ ...d, ladderTarget: (d.ladderTarget || []).filter((_, j) => j !== i) }));
+    const addLadderTier = () =>
+      setDraft((d) => {
+        const cur = d.ladderTarget || [];
+        const last = cur[cur.length - 1];
+        const tier = last
+          ? {
+              minQuantity: Math.max(Math.round((last.minQuantity || 1) * 2), (last.minQuantity || 1) + 1),
+              price: round2((last.price || 0) * 0.9) || null,
+            }
+          : { minQuantity: detail.moq || 1, price: d.priceTarget != null ? d.priceTarget : autoPrice };
+        return { ...d, ladderTarget: [...cur, tier] };
+      });
+    const genLadderFromSource = () => {
+      if (!firstLadder.length) return;
+      setDraft((d) => ({
+        ...d,
+        ladderTarget: firstLadder.map((t) => ({
+          minQuantity: t.minQuantity,
+          price: round2(t.price * (1 + (marginPct || 0) / 100)),
+        })),
+      }));
+    };
+    const ladderIssues = [];
+    for (let i = 1; i < ladderDraft.length; i++) {
+      if (!(Number(ladderDraft[i].minQuantity) > Number(ladderDraft[i - 1].minQuantity)))
+        ladderIssues.push('起订量需逐档递增');
+      if (Number(ladderDraft[i].price) > Number(ladderDraft[i - 1].price))
+        ladderIssues.push('价格应随数量增加而不升（量大更优惠）');
+    }
+    const ladderOverLimit = ladderDraft.length > 4;
+    const LadderEditor = (
+      <div style={{ marginTop: 10, padding: '8px 10px', border: '1px dashed #d9d9d9', borderRadius: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            发布阶梯价
+          </Typography.Text>
+          <Tooltip title="档数跟随源站，可自由增删改（起订量递增、价格随数量不升，¥ 自动折 USD）。设了阶梯，草稿走「按数量阶梯价」；清空则回固定价（SKU 全有售价时走规格价）。目标平台有档数上限时（Alibaba.com 为 4 档）发布时截断并标注。">
+            <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
+              ⓘ
+            </Typography.Text>
+          </Tooltip>
+          {isDirty('ladderTarget') ? <PendingTag /> : null}
+          <span style={{ flex: 1 }} />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {ladderDraft.length
+              ? `${ladderDraft.length} 档 · 草稿走阶梯价`
+              : `未设置 · 草稿走${skus.length ? '规格价（SKU 全有售价时）/固定价' : '固定价'}`}
+          </Typography.Text>
+        </div>
+        {ladderDraft.map((t, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              ≥
+            </Typography.Text>
+            <InputNumber
+              size="small"
+              disabled={locked}
+              min={1}
+              precision={0}
+              value={t.minQuantity}
+              onChange={(v) => setLadderTier(i, 'minQuantity', v)}
+              style={{ width: 96 }}
+              aria-label={`第 ${i + 1} 档起订量`}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {unitLabel} → 售价 ¥
+            </Typography.Text>
+            <InputNumber
+              size="small"
+              disabled={locked}
+              min={0.01}
+              step={0.01}
+              value={t.price}
+              onChange={(v) => setLadderTier(i, 'price', v)}
+              style={{ width: 96 }}
+              aria-label={`第 ${i + 1} 档售价`}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t.price > 0 ? `≈ $${(t.price / 7.2).toFixed(2)}` : ''}
+            </Typography.Text>
+            {!locked ? (
+              <Button size="small" type="text" danger onClick={() => removeLadderTier(i)}>
+                删除
+              </Button>
+            ) : null}
+          </div>
+        ))}
+        {ladderIssues.length ? (
+          <Typography.Text type="danger" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+            {[...new Set(ladderIssues)].join('；')}（保存会被拦截）
+          </Typography.Text>
+        ) : null}
+        {ladderOverLimit ? (
+          <Typography.Text type="warning" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+            Alibaba.com 平台上限 4 档：发布时仅前 4 档写入草稿（结果说明会标注），其余档保留在系统内。
+          </Typography.Text>
+        ) : null}
+        {!locked ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            <Button size="small" onClick={addLadderTier}>
+              + 新增档位
+            </Button>
+            {firstLadder.length > 1 ? (
+              <Button size="small" onClick={genLadderFromSource}>
+                按源阶梯 ×(1+利润率{marginPct || 0}%) 生成
+              </Button>
+            ) : null}
+            {ladderDraft.length ? (
+              <Button size="small" onClick={() => setDraftField('ladderTarget', [])}>
+                清空（回固定/规格价）
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+
+    const SkuSection = skus.length ? (
+      <div style={{ padding: '12px 14px', background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <Typography.Text strong>销售信息（SKU 定价）</Typography.Text>
+          <Tooltip title="通用发布范式：规格维度（颜色×尺寸）组合出 SKU，每个组合独立售价与库存；发布到 1688 国际站 / 抖店 / 拼多多等平台时按各平台规格结构自动映射。">
+            <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
+              ⓘ
+            </Typography.Text>
+          </Tooltip>
+          {isDirty('skus') ? <PendingTag /> : null}
+          <span style={{ flex: 1 }} />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {skus.length} 个 SKU
+          </Typography.Text>
+        </div>
+        {ladderShared ? (
+          <div style={{ marginBottom: 10 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              源站采购阶梯（点选你的预计采购档，作为定价成本）
+            </Typography.Text>
+            <div
+              style={{
+                display: 'flex',
+                gap: 20,
+                flexWrap: 'wrap',
+                marginTop: 4,
+                paddingBottom: 8,
+                borderBottom: '1px solid #f5f5f5',
+              }}
+            >
+              {firstLadder.map((t, i) => {
+                const rng =
+                  t.maxQuantity == null || t.maxQuantity === -1
+                    ? `≥${t.minQuantity}`
+                    : `${t.minQuantity}-${t.maxQuantity}`;
+                const active = i === costTierIdx;
+                return (
+                  <div
+                    key={i}
+                    onClick={() => setCostTierIdx(i)}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '2px 8px',
+                      borderRadius: 6,
+                      background: active ? '#fff1f0' : 'transparent',
+                    }}
+                  >
+                    <div style={{ fontSize: 20, fontWeight: 700, color: active ? '#ff4d4f' : '#222' }}>
+                      {curSym(t.currency)}
+                      {t.price}
+                    </div>
+                    <div style={{ fontSize: 12, color: active ? '#ff4d4f' : '#888' }}>
+                      {rng} {unitLabel}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+        {primaryDim ? (
+          <div style={{ marginBottom: 8 }}>
+            <Typography.Text strong style={{ fontSize: 13 }}>
+              {primaryDim.name}：{primarySel}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
+              {primaryDim.values.length} 种 · 点选切换（绿色角标=该{primaryDim.name}下已定价规格数）
+            </Typography.Text>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+              {primaryDim.values.map((v) => {
+                const active = v.value === primarySel;
+                const priced = skus.filter(
+                  (s) => skuAttr(s, primaryDim.name) === v.value && draftSku(s.id).priceTarget != null,
+                ).length;
+                return (
+                  <span
+                    key={v.value}
+                    onClick={() => setSelPrimary(v.value)}
+                    style={{
+                      position: 'relative',
+                      cursor: 'pointer',
+                      display: 'inline-block',
+                      border: active ? '2px solid #222' : '1px solid #d9d9d9',
+                      borderRadius: 8,
+                      padding: 2,
+                      lineHeight: 0,
+                    }}
+                  >
+                    {v.image ? (
+                      <Image
+                        width={48}
+                        height={48}
+                        preview={false}
+                        src={v.image}
+                        fallback={IMG_FALLBACK}
+                        style={{ borderRadius: 6, objectFit: 'cover', pointerEvents: 'none' }}
+                      />
+                    ) : (
+                      <span style={{ display: 'inline-block', lineHeight: '20px', padding: '4px 12px', fontSize: 12 }}>
+                        {v.value}
+                      </span>
+                    )}
+                    {priced > 0 ? (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: -8,
+                          right: -8,
+                          background: '#52c41a',
+                          color: '#fff',
+                          fontSize: 11,
+                          borderRadius: 10,
+                          padding: '0 6px',
+                          lineHeight: '16px',
+                          zIndex: 1,
+                        }}
+                      >
+                        {priced}
+                      </span>
+                    ) : null}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+        {rowSkus.length ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {otherDims.length ? (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {otherDims.map((d) => d.name).join(' / ')}
+              </Typography.Text>
+            ) : null}
+            {rowSkus.map((s) => {
+              const d = draftSku(s.id);
+              const skuCost =
+                Array.isArray(s.ladderPrice) && s.ladderPrice[costTierIdx]
+                  ? s.ladderPrice[costTierIdx].price
+                  : costPrice;
+              const cur =
+                (Array.isArray(s.ladderPrice) && s.ladderPrice[0] && s.ladderPrice[0].currency) ||
+                detail.currencyOriginal;
+              const mg =
+                d.priceTarget != null && skuCost != null && d.priceTarget > 0
+                  ? Math.round(((d.priceTarget - skuCost) / d.priceTarget) * 100)
+                  : null;
+              return (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span
+                    style={{
+                      border: '1px solid #d9d9d9',
+                      borderRadius: 6,
+                      padding: '3px 10px',
+                      fontSize: 12,
+                      minWidth: 96,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {otherDims.length
+                      ? otherDims
+                          .map((dm) => skuAttr(s, dm.name))
+                          .filter(Boolean)
+                          .join(' / ')
+                      : s.specValue || s.sku}
+                  </span>
+                  <Typography.Text type="secondary" style={{ fontSize: 12, width: 84 }}>
+                    成本 {skuCost != null ? `${curSym(cur)}${skuCost}` : '-'}
+                  </Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    售价
+                  </Typography.Text>
+                  <InputNumber
+                    size="small"
+                    disabled={locked}
+                    min={0}
+                    step={0.01}
+                    value={d.priceTarget}
+                    onChange={(v) => setSkuField(s.id, 'priceTarget', v)}
+                    style={{ width: 92 }}
+                  />
+                  <Typography.Text
+                    style={{ fontSize: 12, width: 64, color: mg == null ? '#bbb' : mg < 0 ? '#ff4d4f' : '#52c41a' }}
+                  >
+                    {mg == null ? '毛利 -' : `毛利 ${mg}%`}
+                  </Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    库存
+                  </Typography.Text>
+                  <InputNumber
+                    size="small"
+                    disabled={locked}
+                    min={0}
+                    value={d.stock}
+                    onChange={(v) => setSkuField(s.id, 'stock', v)}
+                    style={{ width: 84 }}
+                    placeholder="必填"
+                    status={!locked && d.priceTarget != null && !(d.stock > 0) ? 'error' : undefined}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {!locked && ladderShared ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+              marginTop: 10,
+              padding: '6px 8px',
+              background: '#fafafa',
+              borderRadius: 6,
+            }}
+          >
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              批量定价：成本 {costTier ? `${curSym(costTier.currency)}${costTier.price}` : '-'} × (1 + 利润率
+            </Typography.Text>
+            <InputNumber
+              size="small"
+              min={0}
+              max={500}
+              value={marginPct}
+              onChange={(v) => setMarginPct(v || 0)}
+              style={{ width: 72 }}
+              suffix="%"
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              )
+            </Typography.Text>
+            <Button size="small" onClick={() => fillPrices(false)}>
+              应用到全部 SKU
+            </Button>
+            {primaryDim ? (
+              <Button size="small" onClick={() => fillPrices(true)}>
+                仅当前{primaryDim.name}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {LadderEditor}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+            marginTop: 10,
+            paddingTop: 8,
+            borderTop: '1px solid #f5f5f5',
+          }}
+        >
+          <Typography.Text style={{ fontSize: 13 }}>
+            发布展示价：
+            <Typography.Text strong style={{ fontSize: 15, color: '#ff4d4f' }}>
+              {autoPrice != null ? `${autoPrice} 起` : '未定价'}
+            </Typography.Text>
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            （自动=最低 SKU 售价）
+          </Typography.Text>
+          <span style={{ flex: 1 }} />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            划线价
+          </Typography.Text>
+          <InputNumber
+            size="small"
+            disabled={locked}
+            min={0}
+            step={0.01}
+            value={draft.listPriceTarget}
+            onChange={(v) => setDraftField('listPriceTarget', v)}
+            style={{ width: 92 }}
+          />
+          <Typography.Text style={{ fontSize: 13 }}>
+            总库存：
+            {autoStock > 0 ? (
+              <Typography.Text strong>{autoStock}</Typography.Text>
+            ) : (
+              <Typography.Text type="danger">未填</Typography.Text>
+            )}
+          </Typography.Text>
+          {autoStock > 0 ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              （自动=各 SKU 之和）
+            </Typography.Text>
+          ) : (
+            <InputNumber
+              size="small"
+              disabled={locked}
+              min={0}
+              value={draft.stock}
+              onChange={(v) => setDraftField('stock', v)}
+              style={{ width: 92 }}
+              placeholder="必填"
+              status={!locked ? 'error' : undefined}
+            />
+          )}
+          {!locked && (draft.skus || []).some((s) => !(s.stock > 0)) ? (
+            <Button
+              size="small"
+              onClick={() =>
+                setDraft((d) => ({ ...d, skus: d.skus.map((s) => (s.stock > 0 ? s : { ...s, stock: 1000 })) }))
+              }
+            >
+              空库存全部填 1000
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    ) : (
+      <div style={{ padding: '12px 14px', background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8 }}>
+        <Typography.Text strong>销售信息</Typography.Text>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            该商品无 SKU，直接填商品级定价：售价
+          </Typography.Text>
+          <InputNumber
+            size="small"
+            disabled={locked}
+            min={0}
+            step={0.01}
+            value={draft.priceTarget}
+            onChange={(v) => setDraftField('priceTarget', v)}
+            style={{ width: 92 }}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            划线价
+          </Typography.Text>
+          <InputNumber
+            size="small"
+            disabled={locked}
+            min={0}
+            step={0.01}
+            value={draft.listPriceTarget}
+            onChange={(v) => setDraftField('listPriceTarget', v)}
+            style={{ width: 92 }}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            库存
+          </Typography.Text>
+          <InputNumber
+            size="small"
+            disabled={locked}
+            min={0}
+            value={draft.stock}
+            onChange={(v) => setDraftField('stock', v)}
+            style={{ width: 92 }}
+            placeholder="必填"
+            status={!locked && !(draft.stock > 0) ? 'error' : undefined}
+          />
+        </div>
+        {LadderEditor}
+      </div>
+    );
+
+    // 供应商卡（源站同款位置：图库下方）。评分/响应时间等店铺指标 OpenAPI 未提供，如实说明。
+    const shopI = detail.shopInfo || {};
+    const SupplierCard = shopI.supplierName ? (
+      <div
+        style={{
+          marginTop: 12,
+          padding: '10px 12px',
+          background: '#f0f7ff',
+          border: '1px solid #d6e4ff',
+          borderRadius: 8,
+          maxWidth: 300,
+        }}
+      >
+        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          <Space size={6}>
+            <span
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                background: '#1677ff',
+                color: '#fff',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {String(shopI.supplierName).slice(0, 1).toUpperCase()}
+            </span>
+            <Typography.Text strong style={{ fontSize: 13 }}>
+              {shopI.supplierName}
+            </Typography.Text>
+          </Space>
+          {detail.sourceUrl ? (
+            <Typography.Link href={detail.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+              在源站查看商品与店铺 →
+            </Typography.Link>
+          ) : null}
+          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+            店铺评分 / 响应时间 / 准时发货率：源平台接口未提供（需爬虫抓取店铺页）
+          </Typography.Text>
+        </Space>
+      </div>
+    ) : null;
+
+    // ---- 抓取全量信息（来源/供应商/关键属性/证书/贸易信息/详情页 HTML 原文）----
+    const shop = detail.shopInfo || {};
+    const certs = Array.isArray(detail.certifications) ? detail.certifications : [];
+    const trade = detail.tradeInfo && typeof detail.tradeInfo === 'object' ? detail.tradeInfo : {};
+    const origAttrs = Object.entries(detail.attributesOriginal || {});
+    const srcStatusTag = detail.statusOriginal ? (
+      <Tag color={detail.statusOriginal === 'PRODUCT_ONLINE' ? 'green' : 'default'}>
+        {detail.statusOriginal === 'PRODUCT_ONLINE' ? '源站在售' : detail.statusOriginal}
+      </Tag>
+    ) : (
+      '-'
+    );
+    const infoItems = [
+      {
+        key: 'source',
+        label: (
+          <Space size={6}>
+            <span>商品信息</span>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              来源 / 供应商 / MOQ
+            </Typography.Text>
+          </Space>
+        ),
+        children: (
+          <Descriptions
+            size="small"
+            column={2}
+            bordered
+            items={[
+              { key: 'p', label: '来源平台', children: detail.sourcePlatform || '-' },
+              { key: 'pid', label: '源商品 ID', children: detail.sourceProductId || '-' },
+              { key: 'cat', label: '源类目', children: detail.categoryOriginal || '-' },
+              { key: 'st', label: '源商品状态', children: srcStatusTag },
+              { key: 'moq', label: '起订量 MOQ', children: detail.moq != null ? detail.moq : '-' },
+              { key: 'cur', label: '原币种', children: detail.currencyOriginal || '-' },
+              { key: 'sup', label: '供应商（店铺）', children: shop.supplierName || '-' },
+              {
+                key: 'cap',
+                label: '抓取时间',
+                children: detail.createdAt ? dayjs(detail.createdAt).format('YYYY-MM-DD HH:mm') : '-',
+              },
+              {
+                key: 'url',
+                label: '源链接',
+                span: 2,
+                children: detail.sourceUrl ? (
+                  <Typography.Link
+                    href={detail.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    ellipsis
+                    style={{ maxWidth: 420, display: 'inline-block' }}
+                  >
+                    {detail.sourceUrl}
+                  </Typography.Link>
+                ) : (
+                  '-'
+                ),
+              },
+            ]}
+          />
+        ),
+      },
+      origAttrs.length
+        ? {
+            key: 'attrs',
+            label: (
+              <Space size={6}>
+                <span>关键属性（原始）</span>
+                <Tag>{origAttrs.length} 项</Tag>
+              </Space>
+            ),
+            children: (
+              <Descriptions
+                size="small"
+                column={2}
+                bordered
+                items={origAttrs.map(([ak, av], i) => ({ key: String(i), label: ak, children: String(av ?? '-') }))}
+              />
+            ),
+          }
+        : null,
+      certs.length
+        ? {
+            key: 'certs',
+            label: (
+              <Space size={6}>
+                <span>证书</span>
+                <Tag color="magenta">{certs.length} 个</Tag>
+              </Space>
+            ),
+            children: (
+              <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                {certs.map((c, i) => (
+                  <Space key={i} size={8} wrap>
+                    <Tag color="magenta">{c.certName || '证书'}</Tag>
+                    <Typography.Text style={{ fontSize: 12 }}>{c.certNo || ''}</Typography.Text>
+                    {(c.certUrls || []).map((u, ui) => (
+                      <Image
+                        key={ui}
+                        width={48}
+                        height={48}
+                        src={u}
+                        fallback={IMG_FALLBACK}
+                        style={{ borderRadius: 4, objectFit: 'cover', border: '1px solid #f0f0f0' }}
+                      />
+                    ))}
+                  </Space>
+                ))}
+              </Space>
+            ),
+          }
+        : null,
+      Object.keys(trade).length
+        ? {
+            key: 'trade',
+            label: '贸易信息',
+            children: (
+              <Descriptions
+                size="small"
+                column={2}
+                bordered
+                items={Object.entries(trade).map(([tk, tv], i) => ({
+                  key: String(i),
+                  label: tk,
+                  children: typeof tv === 'object' ? JSON.stringify(tv) : String(tv ?? '-'),
+                }))}
+              />
+            ),
+          }
+        : null,
+      {
+        key: 'reviews',
+        label: (
+          <Space size={6}>
+            <span>评价</span>
+            {detail.productReviews || detail.shopReviews ? null : (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                接口未提供
+              </Typography.Text>
+            )}
+          </Space>
+        ),
+        children:
+          detail.productReviews || detail.shopReviews ? (
+            <Space direction="vertical" size={6} style={{ width: '100%' }}>
+              {detail.shopReviews ? (
+                <Typography.Text style={{ fontSize: 12 }}>
+                  店铺评价：{JSON.stringify(detail.shopReviews)}
+                </Typography.Text>
+              ) : null}
+              {Array.isArray(detail.productReviews)
+                ? detail.productReviews.map((rv, i) => (
+                    <div key={i} style={{ borderBottom: '1px solid #f0f0f0', paddingBottom: 4 }}>
+                      <Typography.Text style={{ fontSize: 12 }}>
+                        {typeof rv === 'object' ? JSON.stringify(rv) : String(rv)}
+                      </Typography.Text>
+                    </div>
+                  ))
+                : null}
+            </Space>
+          ) : (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              产品评价 / 店铺评价：Alibaba 官方接口未提供评论数据。抓取选项勾选「产品评价 /
+              店铺评价」时会在任务步骤中记录说明；接入爬虫服务后即可真实抓取并在此展示。
+            </Typography.Text>
+          ),
+      },
+    ].filter(Boolean);
+
+    const Header = (
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          marginBottom: 8,
+          flexWrap: 'wrap',
+          gap: 8,
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 280 }}>
+          {/* 商品标题：常显输入框（免采纳，默认沿用原标题）+ 官方式「AI 优化」一键入口 */}
+          <Space size={8} wrap style={{ marginBottom: 4 }}>
+            <Typography.Text strong style={{ fontSize: 13 }}>
+              商品标题
+            </Typography.Text>
+            <Tooltip title={TITLE_RULES_TEXT} overlayStyle={{ maxWidth: 420 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
+                标题规范 ⓘ
+              </Typography.Text>
+            </Tooltip>
+            {!locked ? (
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, height: 20, fontWeight: 500 }}
+                onClick={() => openFieldAI('title')}
+              >
+                ✨ AI 优化标题
+              </Button>
+            ) : null}
+            {isDirty('titleFinal') ? <PendingTag /> : null}
+          </Space>
+          {locked ? (
+            <Typography.Text strong style={{ fontSize: 15, display: 'block' }}>
+              {draft.titleFinal || detail.titleOriginal || '（无标题）'}
+            </Typography.Text>
+          ) : (
+            <Input
+              value={draft.titleFinal}
+              maxLength={128}
+              showCount
+              placeholder="发布标题（默认沿用原标题，可直接改或点「AI 优化标题」）"
+              onChange={(e) => setDraftField('titleFinal', e.target.value)}
+            />
+          )}
+          {!locked && (detail.titleOriginal || '') && draft.titleFinal !== (detail.titleOriginal || '') ? (
+            <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+              原标题：{detail.titleOriginal}
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: '0 4px', height: 18 }}
+                onClick={() => setDraftField('titleFinal', detail.titleOriginal || '')}
+              >
+                恢复
+              </Button>
+            </div>
+          ) : null}
+          <Space size={4} wrap style={{ marginTop: 4 }}>
+            <Tag color={sm.color}>{sm.label}</Tag>
+            {detail.statusOriginal === 'PRODUCT_ONLINE' ? <Tag color="green">源站在售</Tag> : null}
+            {detail.categoryOriginal ? <Tag>{detail.categoryOriginal}</Tag> : null}
+            {detail.moq != null ? (
+              <Tag color="orange">
+                起订 {detail.moq} {skuUnit || '件'}
+              </Tag>
+            ) : null}
+            {(detail.shopInfo || {}).supplierName ? (
+              <Tag color="blue">{(detail.shopInfo || {}).supplierName}</Tag>
+            ) : null}
+          </Space>
+        </div>
+        <Space wrap align="center">
+          {/* AI 员工与发布前检查与审核操作同排（用户反馈：这些都属于「审核动作」，集中放一起） */}
+          <EmployeeAvatar
+            kit={kit}
+            username="lst-toby"
+            disabled={locked}
+            title={
+              locked
+                ? `已锁定，请先「${detail.status === 'reviewed' ? '回退审核' : '退回编辑'}」再让 Toby 编辑`
+                : '文案管家 Toby：对话式改标题/描述/属性，或按阶梯成本+利润率批量给 SKU 定价（先暂存标黄，点「保存」才入库）。也可直接说「按 500 件档、40% 利润率给全部 SKU 定价」'
+            }
+            onClick={openToby}
+          />
+          <EmployeeAvatar
+            kit={kit}
+            username="lst-rena"
+            title="合规研究员 Rena：只读检查违禁词/合规风险与卖点建议，不改数据"
+            onClick={openRena}
+          />
+          <Button size="small" onClick={precheckRun}>
+            🔍 发布前检查
+          </Button>
+          <Tooltip title="移动端预览">
+            <span>
+              <Switch
+                size="small"
+                checkedChildren="移动"
+                unCheckedChildren="PC"
+                checked={mobile}
+                onChange={setMobile}
+              />
+            </span>
+          </Tooltip>
+          {locked ? (
+            detail.status === 'reviewed' ? (
+              <Button size="small" loading={busy} onClick={rollback}>
+                回退审核
+              </Button>
+            ) : (
+              <Tooltip
+                title={
+                  detail.status === 'published'
+                    ? '退回后可重新编辑并再走审核发布；平台上已发布的内容不受影响'
+                    : '发布中一般请等批次结束；超过 5 分钟没动静可用本按钮解锁'
+                }
+              >
+                <Button size="small" loading={busy} onClick={reopen}>
+                  退回编辑
+                </Button>
+              </Tooltip>
+            )
+          ) : (
+            <>
+              {dirtyCount ? (
+                <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+                  待提交 {dirtyCount}
+                </Tag>
+              ) : null}
+              <Button size="small" loading={busy} onClick={save}>
+                保存
+              </Button>
+              <Button size="small" type="primary" loading={busy} onClick={approve}>
+                {detail.status === 'publish_failed' ? '重新标记审核' : '标记审核通过'}
+              </Button>
+            </>
+          )}
+        </Space>
+      </div>
+    );
+
+    // 主图/详情图统一在下方「商品图片 · AI 改图」区管理(避免与之重复);此处只留视频 + 供应商信息。
+    const Gallery = (
+      <div style={{ marginBottom: 12 }}>
+        {videoMedia.length ? (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <Typography.Text strong style={{ fontSize: 12 }}>
+                视频
+              </Typography.Text>
+              {dlTag(videoMedia[0])}
+            </div>
+            {videoMedia.map((m) => (
+              <video
+                key={m.id}
+                src={m.sourceUrl}
+                controls
+                style={{ width: mobile ? 220 : 280, borderRadius: 8, border: '1px solid #f0f0f0', display: 'block' }}
+              />
+            ))}
+          </div>
+        ) : null}
+        {SupplierCard}
+      </div>
+    );
+
+    // ---- 商品属性（规格参数）：发布后展示在商品页「规格参数/产品属性」区，多数平台按类目必填 ----
+    const AttributesSection = (
+      <Card
+        size="small"
+        style={{ marginTop: 12 }}
+        title={
+          <Space size={6}>
+            <span>商品属性（规格参数）</span>
+            <Tooltip title="发布到平台后展示在商品页「规格参数 / 产品属性」区（如 材质/产地/用途）；多数平台按类目必填，填得全有利搜索曝光。左边属性名、右边属性值，可增删改；来源为抓取的关键属性 + AI 补全建议。">
+              <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
+                ⓘ 有什么用？
+              </Typography.Text>
+            </Tooltip>
+            {isDirty('attributes') ? <PendingTag /> : null}
+          </Space>
+        }
+      >
+        <Row gutter={[8, 6]}>
+          {attrEntries.map(([k, val], i) => (
+            <Col key={i} xs={24} md={12}>
+              <Space size={4}>
+                <Input
+                  size="small"
+                  style={{ width: 130 }}
+                  disabled={locked}
+                  value={k}
+                  onChange={(e) => {
+                    const nk = e.target.value;
+                    setDraft((d) => {
+                      const ent = Object.entries(d.attributes);
+                      ent[i] = [nk, val];
+                      return { ...d, attributes: Object.fromEntries(ent) };
+                    });
+                  }}
+                />
+                <Input
+                  size="small"
+                  style={{ width: 200 }}
+                  disabled={locked}
+                  value={val}
+                  onChange={(e) => setDraft((d) => ({ ...d, attributes: { ...d.attributes, [k]: e.target.value } }))}
+                />
+                {!locked ? (
+                  <Button
+                    type="link"
+                    size="small"
+                    danger
+                    onClick={() =>
+                      setDraft((d) => {
+                        const a = { ...d.attributes };
+                        delete a[k];
+                        return { ...d, attributes: a };
+                      })
+                    }
+                  >
+                    删
+                  </Button>
+                ) : null}
+              </Space>
+            </Col>
+          ))}
+        </Row>
+        {!locked ? (
+          <Button
+            size="small"
+            type="dashed"
+            style={{ marginTop: 6 }}
+            onClick={() =>
+              setDraft((d) => ({
+                ...d,
+                attributes: { ...d.attributes, [`新属性${Object.keys(d.attributes).length + 1}`]: '' },
+              }))
+            }
+          >
+            + 添加属性
+          </Button>
+        ) : null}
+      </Card>
+    );
+
+    // ---- 商品描述：发布描述可编辑；AI 建议 / 源站文本 / 源站详情页 供参考对照 ----
+    const DescriptionSection = (
+      <Card
+        size="small"
+        style={{ marginTop: 12 }}
+        title={
+          <Space size={6}>
+            <span>商品描述</span>
+            <Tooltip title={SELLING_RULES_TEXT} overlayStyle={{ maxWidth: 420 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
+                卖点规范 ⓘ
+              </Typography.Text>
+            </Tooltip>
+            {isDirty('descriptionFinal') ? <PendingTag /> : null}
+          </Space>
+        }
+        extra={
+          <Space size={6} wrap>
+            {!locked ? (
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, fontWeight: 500 }}
+                onClick={() => openFieldAI('description')}
+              >
+                ✨ AI 优化描述
+              </Button>
+            ) : null}
+            <Segmented
+              size="small"
+              value={descTab}
+              onChange={setDescTab}
+              options={[
+                { label: '发布描述（可编辑）', value: 'final' },
+                { label: '参考建议', value: 'ai' },
+                { label: '源站文本', value: 'original' },
+                { label: '源站详情页', value: 'html' },
+              ]}
+            />
+          </Space>
+        }
+      >
+        {descTab === 'final' ? (
+          <>
+            <Input.TextArea
+              rows={8}
+              disabled={locked}
+              value={draft.descriptionFinal}
+              onChange={(e) => setDraftField('descriptionFinal', e.target.value)}
+              placeholder={
+                '发布后作为平台「商品卖点」展示（进 AI Search 索引）。建议英文分点 ≤5 条、每条「Title: Content」，可点右上「✨ AI 优化描述」按官方规范一键生成'
+              }
+            />
+            {!locked && detail.descriptionProcessed ? (
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, marginTop: 4 }}
+                onClick={() => setDraftField('descriptionFinal', detail.descriptionProcessed)}
+              >
+                使用参考建议 →
+              </Button>
+            ) : null}
+          </>
+        ) : descTab === 'ai' ? (
+          <Typography.Paragraph
+            style={{
+              fontSize: 12,
+              color: '#531dab',
+              whiteSpace: 'pre-wrap',
+              maxHeight: 320,
+              overflowY: 'auto',
+              marginBottom: 0,
+            }}
+          >
+            {detail.descriptionProcessed ||
+              '（暂无参考建议。参考建议来自信息处理阶段；要生成新文案请点「✨ AI 优化描述」，结果直接写入发布描述）'}
+          </Typography.Paragraph>
+        ) : descTab === 'original' ? (
+          <Typography.Paragraph
+            style={{
+              fontSize: 12,
+              color: '#666',
+              whiteSpace: 'pre-wrap',
+              maxHeight: 320,
+              overflowY: 'auto',
+              marginBottom: 0,
+            }}
+          >
+            {detail.descriptionOriginal || '-'}
+          </Typography.Paragraph>
+        ) : detail.descriptionHtmlOriginal ? (
+          <iframe
+            title="源站详情页预览"
+            sandbox=""
+            srcDoc={detail.descriptionHtmlOriginal}
+            style={{ width: '100%', height: 480, border: '1px solid #f0f0f0', borderRadius: 6, background: '#fff' }}
+          />
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无源站详情页 HTML" />
+        )}
+      </Card>
+    );
+
+    RightPanel = (
+      <Card size="small" style={{ height: '100%' }} styles={{ body: { padding: 12 } }}>
+        {Header}
+        {locked ? (
+          <Alert
+            type={detail.status === 'published' ? 'success' : 'info'}
+            showIcon
+            style={{ marginBottom: 8 }}
+            message={
+              detail.status === 'reviewed'
+                ? '该商品已审核，关键字段已锁定。如需修改请先「回退审核」。'
+                : detail.status === 'published'
+                ? '该商品已发布，本地字段已锁定。如需修改请点「退回编辑」（平台上已发布的内容不受影响）。'
+                : '该商品正在发布中，请等批次结束；超过 5 分钟没动静可点「退回编辑」解锁。'
+            }
+            description={
+              detail.status === 'published' && detail.publishUrl ? (
+                <a href={detail.publishUrl} target="_blank" rel="noreferrer">
+                  查看平台上的商品/草稿 →
+                </a>
+              ) : undefined
+            }
+          />
+        ) : null}
+        {detail.status === 'publish_failed' ? (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 8 }}
+            message={`上次发布失败${
+              detail.lastPublishFailure && detail.lastPublishFailure.errorCode
+                ? `（${detail.lastPublishFailure.errorCode}）`
+                : ''
+            }：${(detail.lastPublishFailure || {}).reason || '未记录原因，请查看发布页记录'}`}
+            description="可直接在本页修改（保存后自动回到「审核中」）；若问题在平台侧、本地无需改动，也可直接点「重新标记审核」后去发布页重发。"
+          />
+        ) : null}
+        {banner ? (
+          <Alert
+            type={banner.type}
+            showIcon
+            closable
+            style={{ marginBottom: 8 }}
+            message={banner.msg}
+            onClose={() => setBanner(null)}
+          />
+        ) : null}
+
+        {precheck ? (
+          <Alert
+            style={{ marginBottom: 10 }}
+            type={precheck.ready ? 'success' : 'warning'}
+            showIcon
+            message={precheck.ready ? '发布前检查通过（注意：本阶段不做真实发布）' : '发布前检查发现问题'}
+            description={
+              precheck.issues.length ? (
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {precheck.issues.map((it, i) => (
+                    <li key={i}>
+                      <Tag color={it.level === 'block' ? 'red' : 'gold'}>{it.level === 'block' ? '阻断' : '建议'}</Tag>
+                      {it.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null
+            }
+          />
+        ) : null}
+
+        <Spin spinning={loadingDetail}>
+          <div
+            style={
+              mobile ? { maxWidth: 375, margin: '0 auto', border: '1px solid #eee', borderRadius: 8, padding: 12 } : {}
+            }
+          >
+            {/* 商品图片(主图/详情图)与 AI 改图统一在此区,不再单列图集,避免重复 */}
+            {detail && detail.id ? (
+              <AiCandidateZone productId={detail.id} onChange={() => loadDetail(detail.id)} />
+            ) : null}
+            <Row gutter={16}>
+              <Col flex={mobile ? '1' : '0 0 auto'}>{Gallery}</Col>
+              <Col flex="auto">{SkuSection}</Col>
+            </Row>
+            {AttributesSection}
+            {DescriptionSection}
+            {/* 更多来源信息（默认收起）：商品信息 / 关键属性原始 / 证书 / 贸易信息 / 评价 */}
+            <Collapse size="small" style={{ marginTop: 12 }} items={infoItems} />
+          </div>
+        </Spin>
+      </Card>
+    );
+  }
+
+  // ---------- 商品生命周期面板（仿官方 demo 订单详情的 Order workflow 侧栏）----------
+  // 阶段按顺序列出：已完成 ✓、当前阶段高亮、后续灰置；每个阶段旁只出现「当前合法」的流转按钮，
+  // 按钮复用本页既有受控动作（回退审核/退回编辑/标记审核），跨页动作跳对应页面。
+  const PUBLISH_PAGE = 'tys37qjf3jz';
+  const PROCESS_PAGE = 'bhgkujnjpe7';
+  const goPage = (uid) => ctx.router?.navigate?.(`/admin/${uid}`);
+  let LifecyclePanel = null;
+  if (detail) {
+    const st = detail.status;
+    const stepIdx =
+      {
+        captured: 0,
+        capturing: 0,
+        processing: 0,
+        process_failed: 0,
+        processed: 1,
+        reviewing: 2,
+        reviewed: 3,
+        publishing: 4,
+        published: 5,
+        publish_failed: 5,
+      }[st] ?? 2;
+    const canApprove = ['processed', 'reviewing', 'publish_failed'].includes(st) && detail.titleFinal;
+    const steps = [
+      { label: '1. 已抓取' },
+      {
+        label: '2. 已处理',
+        action: ['captured', 'process_failed'].includes(st)
+          ? { text: '去处理', run: () => goPage(PROCESS_PAGE) }
+          : null,
+      },
+      {
+        label: '3. 编辑 / 审核中',
+        action:
+          st === 'reviewed'
+            ? { text: '回退审核', run: rollback }
+            : ['published', 'publish_failed', 'publishing'].includes(st)
+            ? { text: '退回编辑', run: reopen }
+            : null,
+      },
+      {
+        label: '4. 已审核（可发布）',
+        action: canApprove ? { text: st === 'publish_failed' ? '重新标记审核' : '标记审核通过', run: approve } : null,
+      },
+      { label: '5. 发布中' },
+      {
+        label: st === 'publish_failed' ? '6. 发布失败' : '6. 已发布',
+        danger: st === 'publish_failed',
+        action: st === 'reviewed' ? { text: '去发布', run: () => goPage(PUBLISH_PAGE) } : null,
+      },
+    ];
+    // 「下一步」主行动：电商运营看这块只想知道「现在该干嘛」——按状态给出唯一的主 CTA。
+    const nextAction = ['captured', 'process_failed'].includes(st)
+      ? { text: '下一步：去信息处理', run: () => goPage(PROCESS_PAGE) }
+      : ['processed', 'reviewing'].includes(st)
+      ? { text: '下一步：标记审核通过', run: approve }
+      : st === 'publish_failed'
+      ? { text: '下一步：重新标记审核', run: approve }
+      : st === 'reviewed'
+      ? { text: '下一步：去发布', run: () => goPage(PUBLISH_PAGE) }
+      : st === 'published' && detail.publishUrl
+      ? { text: '查看平台上的商品 →', run: () => window.open(detail.publishUrl, '_blank') }
+      : null;
+    // 发布就绪清单：把「发布必须的信息」直接亮出来，缺什么一眼看到（库存漏填是最高频返工点）。
+    const dSkus = (draft && draft.skus) || [];
+    const priceReady =
+      dSkus.some((s) => s.priceTarget != null) ||
+      (draft && draft.priceTarget != null) ||
+      ((draft && draft.ladderTarget) || []).length > 0;
+    const stockReady = dSkus.length
+      ? dSkus.some((s) => s.stock > 0) && dSkus.every((s) => !(s.priceTarget != null) || s.stock > 0)
+      : !!(draft && draft.stock > 0);
+    const readiness =
+      !locked && draft
+        ? [
+            { label: '标题', ok: true, note: draft.titleFinal ? '已填写' : '沿用原标题' },
+            { label: '定价', ok: priceReady, note: priceReady ? '已定价' : '未定价' },
+            {
+              label: '库存',
+              ok: stockReady,
+              note: stockReady ? '已填写' : '未填（发布会失败）',
+              fix: !stockReady
+                ? () =>
+                    setDraft((d) => ({
+                      ...d,
+                      skus: (d.skus || []).map((s) => (s.stock > 0 ? s : { ...s, stock: 1000 })),
+                      stock: (d.skus || []).length ? d.stock : d.stock > 0 ? d.stock : 1000,
+                    }))
+                : null,
+            },
+            {
+              label: '描述',
+              ok: !!draft.descriptionFinal,
+              note: draft.descriptionFinal ? '已填写' : '建议 AI 生成',
+              soft: true,
+            },
+          ]
+        : null;
+    LifecyclePanel = (
+      <Card
+        size="small"
+        styles={{ body: { padding: 10 } }}
+        title={
+          <Space size={6}>
+            <span>商品生命周期</span>
+            <Tooltip title="阶段按流程顺序列出：✓ 已完成、蓝色为当前阶段；蓝色主按钮是当前该做的下一步。">
+              <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
+                ⓘ
+              </Typography.Text>
+            </Tooltip>
+          </Space>
+        }
+        extra={<Tag color={(STATUS_META[st] || {}).color || 'default'}>{(STATUS_META[st] || {}).label || st}</Tag>}
+      >
+        {nextAction ? (
+          <Button type="primary" block loading={busy} onClick={nextAction.run} style={{ marginBottom: 8 }}>
+            {nextAction.text}
+          </Button>
+        ) : (
+          <div style={{ fontSize: 12, color: '#888', marginBottom: 8, textAlign: 'center' }}>发布中，等待批次完成…</div>
+        )}
+        {readiness ? (
+          <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: '6px 10px', marginBottom: 8 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              发布就绪检查
+            </Typography.Text>
+            {readiness.map((r) => (
+              <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                <span style={{ fontSize: 13, lineHeight: 1 }}>{r.ok ? '✅' : r.soft ? '⚠️' : '❌'}</span>
+                <Typography.Text style={{ fontSize: 12, width: 32 }}>{r.label}</Typography.Text>
+                <Typography.Text
+                  type={r.ok ? 'secondary' : r.soft ? 'warning' : 'danger'}
+                  style={{ fontSize: 12, flex: 1 }}
+                >
+                  {r.note}
+                </Typography.Text>
+                {r.fix ? (
+                  <Button size="small" type="link" style={{ padding: 0, height: 18, fontSize: 12 }} onClick={r.fix}>
+                    一键填 1000
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          {steps.map((s, i) => {
+            const current = i === stepIdx;
+            const done = i < stepIdx;
+            return (
+              <div
+                key={s.label}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  border: current ? (s.danger ? '1px solid #ff4d4f' : '1px solid #1677ff') : '1px solid #f0f0f0',
+                  background: current ? (s.danger ? '#fff2f0' : '#e6f4ff') : '#fff',
+                  borderRadius: 6,
+                  padding: '3px 10px',
+                }}
+              >
+                <Typography.Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: current ? 600 : 400,
+                    color: current && s.danger ? '#cf1322' : done ? '#8c8c8c' : undefined,
+                  }}
+                >
+                  {s.label}
+                  {done ? ' ✓' : ''}
+                </Typography.Text>
+                {s.action ? (
+                  <Button
+                    size="small"
+                    type="link"
+                    style={{ padding: 0, height: 18, fontSize: 12 }}
+                    loading={busy}
+                    onClick={s.action.run}
+                  >
+                    {s.action.text}
+                  </Button>
+                ) : null}
+              </div>
+            );
+          })}
+        </Space>
+        {detail.status === 'publish_failed' && detail.lastPublishFailure ? (
+          <div style={{ fontSize: 12, color: '#cf1322', marginTop: 8 }}>
+            上次失败：{(detail.lastPublishFailure.reason || '').slice(0, 60)}
+          </div>
+        ) : null}
+        {detail.publishUrl && st !== 'published' ? (
+          <div style={{ marginTop: 8 }}>
+            <a href={detail.publishUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+              查看平台上的商品/草稿 →
+            </a>
+          </div>
+        ) : null}
+      </Card>
+    );
+  }
+
+  // ---------- 变更记录（人话版：中文字段名 + 值摘要；原始字段名进悬停提示留给排查用）----------
+  const shownLogs = logs.filter((l) => !isNoopAudit(l)).filter((l) => !logFilter || l.actorType === logFilter);
+  const ChangeLog = (
+    <Card
+      size="small"
+      title="变更记录"
+      styles={{ body: { padding: 8, maxHeight: 'calc(100vh - 480px)', overflowY: 'auto' } }}
+      extra={
+        <Segmented
+          size="small"
+          value={logFilter}
+          onChange={setLogFilter}
+          options={[
+            { label: '全部', value: '' },
+            { label: '人工', value: 'user' },
+            { label: 'AI', value: 'ai_employee' },
+            { label: '系统', value: 'system' },
+          ]}
+        />
+      }
+    >
+      {shownLogs.length === 0 ? (
+        <Empty description={logs.length ? '该来源暂无变更' : '暂无变更'} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {shownLogs.map((l) => {
+            const am = ACTOR_META[l.actorType] || { color: 'default', label: l.actorType };
+            const f = l.fieldName;
+            const hasOld = l.oldValue != null && l.oldValue !== '';
+            return (
+              <div
+                key={l.id}
+                style={{
+                  borderLeft: `3px solid ${
+                    am.color === 'blue' ? '#1677ff' : am.color === 'purple' ? '#722ed1' : '#d9d9d9'
+                  }`,
+                  paddingLeft: 8,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Tag color={am.color} style={{ marginInlineEnd: 0 }}>
+                    {am.label}
+                  </Tag>
+                  <Tooltip title={`字段：${f || l.action}`}>
+                    <Typography.Text strong style={{ fontSize: 12 }}>
+                      {fieldLabel(f) || l.action}
+                    </Typography.Text>
+                  </Tooltip>
+                  <span style={{ flex: 1 }} />
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    {l.createdAt ? dayjs(l.createdAt).format('MM-DD HH:mm') : ''}
+                  </Typography.Text>
+                </div>
+                <div style={{ fontSize: 12, color: '#555', wordBreak: 'break-all', marginTop: 2 }}>
+                  {hasOld ? (
+                    <>
+                      <Typography.Text delete type="secondary" style={{ fontSize: 12 }}>
+                        {fmtAuditVal(f, l.oldValue)}
+                      </Typography.Text>{' '}
+                      →{' '}
+                    </>
+                  ) : null}
+                  {fmtAuditVal(f, l.newValue)}
+                </div>
+                {l.reason ? <div style={{ fontSize: 11, color: '#999', marginTop: 1 }}>{l.reason}</div> : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+
+  if (listError) {
+    const e = errOf(listError);
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message={`商品列表加载失败（${e.code}）`}
+        description={<Typography.Text copyable code>{`traceId: ${e.traceId}`}</Typography.Text>}
+      />
+    );
+  }
+
+  // 三栏布局：中栏（商品详情）是唯一的长内容主滚动区；左右两栏 sticky 跟随视口，
+  // 既修掉「左栏被中栏撑高、下面一大片空白」的问题，也让操作/记录始终在手边。
+  return (
+    <Row gutter={12}>
+      <Col xs={24} sm={7} md={6} lg={5}>
+        <div style={{ position: 'sticky', top: 8 }}>{LeftPanel}</div>
+      </Col>
+      <Col xs={24} sm={17} md={12} lg={13}>
+        {RightPanel}
+      </Col>
+      <Col xs={24} sm={24} md={6} lg={6}>
+        <div style={{ position: 'sticky', top: 8, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {LifecyclePanel}
+          {ChangeLog}
+        </div>
+      </Col>
+    </Row>
+  );
+}
+
+ctx.render(<ReviewApp />);
