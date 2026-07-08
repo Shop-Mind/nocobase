@@ -324,6 +324,16 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 
 **验证方法**：Playwright——切不同 status 商品，断言 stepper 当前步；`changeLog` 行渲染且色标正确；点「人工」筛选后仅剩 user 行；截图比对。
 
+**验收记录（2026-07-08 · 镜像内 + harness 验证,未回写线上块）· commit `54d37abbc4`**
+- 生命周期 → `.aic-scope>.sidecard>.sc-head+.sc-body`:下一步 CTA→`.viewbtn`;发布就绪检查保留;6 步→`.steps/.step`
+  (`.dot.done` 翠✓ / `.dot.cur` 紫 / `.dot.wait` 灰 + 连接线),当前步=stepIdx(由 `product.status` 映射);
+  保留 steps action / publish_failed 珊瑚失败原因 / 查看平台商品链接。
+- 变更记录 → `.sidecard>.sc-head(变更记录 + .afilter)+.sc-body>.log/.logrow`:操作者色标 `.actor.user`(人工琥珀)/`.ai`(紫)/`.sys`(灰)
+  + 字段 + Fraunces 时间戳 + 旧值(划线)→新值 + 备注。保留 shownLogs(isNoopAudit+logFilter)/setLogFilter/fmtAuditVal。
+- **数据要点**:changeLog 参数是 **`{ id }`** 不是 `{ productId }`(之前 400 就因此);响应 `{ok,data:{logs:[…]}}`,actorType∈user/ai_employee/system。
+- **harness 实测(商品1,status=reviewing + 真实 changeLog{id:1})**:`.steps` 6 步、当前步=第3(编辑/审核中,紫 dot)、前2步翠✓;
+  `.logrow` 6 行操作者色标(人工/系统/AI)正确;点「人工」筛选 → 仅剩 2 行且全 user。转译通过、无崩溃、截图与 mockup 右栏一致。
+
 ---
 
 ### Phase 7 — 左栏商品列表 + 整页壳 / topbar（jsBlock）
