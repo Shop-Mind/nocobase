@@ -154,13 +154,15 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .shopbar .sb-main{min-width:0;flex:1}
 
-.aic-scope .shopbar .sb-name{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px}
+.aic-scope .shopbar .sb-name{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:nowrap}
 
-.aic-scope .shopbar .sb-plat{font-size:10px;font-weight:700;color:#1a63c0;background:var(--blue-soft);padding:2px 8px;border-radius:20px;white-space:nowrap}
+.aic-scope .shopbar .sb-name .sb-nm{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.aic-scope .shopbar .sb-plat{font-size:10px;font-weight:700;color:#1a63c0;background:var(--blue-soft);padding:2px 8px;border-radius:20px;white-space:nowrap;flex-shrink:0}
 
 .aic-scope .shopbar .sb-sub{font-size:11.5px;color:var(--text-3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-.aic-scope .shopbar .sb-stats{display:flex;gap:19px;padding:0 18px;border-left:1px solid var(--line-2);border-right:1px solid var(--line-2);flex-shrink:0}
+.aic-scope .shopbar .sb-stats{display:flex;gap:13px;padding:0 13px;border-left:1px solid var(--line-2);border-right:1px solid var(--line-2);flex-shrink:0}
 
 .aic-scope .shopbar .sb-stats .st{text-align:center}
 
@@ -320,6 +322,10 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .stagelbl .modes button.on{background:#fff;color:var(--violet);box-shadow:var(--shadow-sm)}
 
+.aic-scope .stagelbl .modes button:disabled{opacity:.45;cursor:not-allowed}
+
+.aic-scope .stagelbl .modes.submode{margin-left:8px}
+
 .aic-scope .stage{position:relative;border-radius:13px;overflow:hidden;box-shadow:var(--shadow-md);aspect-ratio:1/1;max-height:330px;background:#efeae0;user-select:none;margin:0 auto}
 
 .aic-scope .stage .layer{position:absolute;inset:0;background-size:cover;background-position:center}
@@ -339,6 +345,12 @@ export const CREATIVE_CONSOLE_CSS = `
 .aic-scope .stage .divider{position:absolute;top:0;bottom:0;left:54%;width:2px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.1)}
 
 .aic-scope .stage .handle{position:absolute;top:50%;left:54%;transform:translate(-50%,-50%);width:36px;height:36px;border-radius:50%;background:#fff;display:grid;place-items:center;box-shadow:var(--shadow-md);color:var(--violet);font-size:15px;cursor:ew-resize}
+
+.aic-scope .stage.duo{aspect-ratio:2/1;display:grid;grid-template-columns:1fr 1fr;gap:2px;background:#d9d2c6}
+
+.aic-scope .stage.duo .duocell{position:relative;overflow:hidden;background:#efeae0;display:grid;place-items:center}
+
+.aic-scope .stage.duo .duocell img{width:100%;height:100%;object-fit:contain}
 
 .aic-scope .cand{display:flex;align-items:center;gap:7px;margin:12px 0;flex-wrap:wrap}
 

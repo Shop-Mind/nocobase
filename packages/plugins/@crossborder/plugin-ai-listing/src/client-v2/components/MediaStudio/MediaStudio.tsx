@@ -416,8 +416,10 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   );
 
   const scene = viewCandidate?.genParams?.scene;
+  // 对比子模式:拉帘(slider,与设计稿一致的默认)/ 并排(side,两张图直接对比)。
+  // 用户可显式切换(compareMode);否则默认拉帘,除非候选自带 compareMode:'side'。
   const effectiveMode: 'side' | 'slider' =
-    compareMode || (viewCandidate?.genParams?.compareMode === 'slider' ? 'slider' : 'side');
+    compareMode || (viewCandidate?.genParams?.compareMode === 'side' ? 'side' : 'slider');
 
   const TABS: Array<{ key: GalleryTab; label: string }> = [
     { key: 'all', label: t('All') },
@@ -489,9 +491,23 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     if (stageMode === 'compare' && viewCandidate) {
       const orig = compareOriginalUrl;
       const cand = viewCandidate.url;
-      // 原图↔候选:方形舞台拉帘,图上圆手柄可拖(与设计稿一致)。缺任一图回退 CompareView。
+      // 原图↔候选:拉帘(方形舞台圆手柄可拖,与设计稿一致)或并排(两张图直接对比)。缺任一图回退 CompareView。
       if (orig && cand) {
         const candLabel = scene ? `${t('Candidate')} · ${sceneLabel(scene)}` : t('Candidate');
+        if (effectiveMode === 'side') {
+          return (
+            <div className="stage duo">
+              <div className="duocell">
+                <img src={orig} alt={t('Original')} />
+                <span className="tag l">{t('Original')}</span>
+              </div>
+              <div className="duocell">
+                <img src={cand} alt={candLabel} />
+                <span className="tag r">{candLabel}</span>
+              </div>
+            </div>
+          );
+        }
         return (
           <div className="stage" ref={stageRef} onMouseDown={(e) => moveCurtain(e.clientX)}>
             <div className="layer full" style={{ backgroundImage: `url("${orig}")` }} />
@@ -758,6 +774,24 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
                   {t('Compare')}
                 </button>
               </span>
+              {stageMode === 'compare' && viewCandidate ? (
+                <span className="modes submode">
+                  <button
+                    type="button"
+                    className={effectiveMode === 'slider' ? 'on' : undefined}
+                    onClick={() => setCompareMode('slider')}
+                  >
+                    ⇄ {t('Curtain')}
+                  </button>
+                  <button
+                    type="button"
+                    className={effectiveMode === 'side' ? 'on' : undefined}
+                    onClick={() => setCompareMode('side')}
+                  >
+                    ⊟ {t('Side by side')}
+                  </button>
+                </span>
+              ) : null}
             </div>
 
             {renderStage()}
