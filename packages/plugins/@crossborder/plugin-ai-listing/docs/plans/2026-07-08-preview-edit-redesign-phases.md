@@ -348,6 +348,15 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 
 **验证方法**：Playwright——列表卡样式 + 点击载入新商品（标题变化）；筛选/分页交互；整页截图比对。
 
+**验收记录（2026-07-08 · 镜像内 + harness 验证,未回写线上块）· commit `083180897c`**
+- LeftPanel → `.aic-scope` 列表面板:`.lp`(`.search` 搜索 + `.filters` 全部状态/全部平台两 Select)+ `.plist` + `.lpage`。
+  每商品 → `.pcard`(选中 `.pcard.on` 紫描边光晕):批量 Checkbox + `.pt` 缩略 + `.pb`(`.pn` 两行标题 + `.pm`(`.badge`
+  状态徽章[已发布/已审核→pub 翠、审核中/失败/发布中→rev 琥珀、其余→done 蓝] + `.plat` 平台))。保留 kw/搜索 reloadList、
+  status/platform 筛选、checkedIds 批量、setSelectedId 点卡载入 detail、Pagination 翻页。
+- **topbar `.wtop` 不适用**:真实页嵌在 NocoBase admin 壳内,顶栏/侧栏由外壳提供(计划已注明「外壳侧栏不动」)。
+- **harness 实测(12 卡)**:`.pcard` 渲染 + 状态徽章 + `.search`+2 筛选;点第 3 张卡 → `.pcard.on` 从 0 移到 2、触发 loadDetail;
+  `.lpage` 分页「共 28 / 1 2 / 20 per page」。转译通过、无崩溃、截图与 mockup 列表一致(harness mock 恒返回商品1 detail,故中栏内容不随点卡变,选中态与载入逻辑已验)。
+
 ---
 
 ### Phase 8 — 全局收尾 + 闭环验收
