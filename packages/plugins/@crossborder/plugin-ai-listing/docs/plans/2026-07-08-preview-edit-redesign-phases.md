@@ -271,6 +271,19 @@ jsBlock 通过 `window.__aiListingMediaKit.mount(container, { productId })` 把 
 
 **验证方法**：Playwright——成本档点选切换 `.on`；改 `售价` input → `毛利` 文本变化；截图比对。回归：跑既有 saveFinal 相关 verify（阶梯价校验路径不变）。
 
+**验收记录（2026-07-08 · 镜像内 + 本地 jsBlock 渲染 harness 验证,未回写线上块）· commit `64bf41c6c0`**
+- **先搭本地 jsBlock 渲染 harness**(解锁 P4 交互验证):esbuild(nodePaths→仓库 node_modules,`.js`→jsx)把 React+antd+dayjs+镜像 jsBlock
+  (剥头、包进 async IIFE)打成 iife bundle;从运行中 admin 浏览器 localStorage 取 NOCOBASE_TOKEN,浏览器内 fetch 真实
+  `aiListingReview:detail`(商品26,42SKU+2档阶梯价)/`:list` 作 mock(changeLog stub);mock ctx.{libs,request,render,router,model,element}
+  + stub window kit;注入 creative-console CSS → serve + Playwright。真实 jsBlock 完整渲染(含 Phase 3 店铺条/深墨头)。
+- **重排(逻辑零改,只换 className/wrapper/style)**:外壳 `.aic-scope>.card>.shead+.cbody`;源站采购阶梯 `.plad/.pt-tier`
+  (成本档珊瑚 `.on`+成本档标,价格 Fraunces);SKU 行 `.skurow` 网格(`.tag2`/`.cost`/售价 InputNumber/`.margin` 实时/库存 InputNumber);
+  发布阶梯价 `.ladbox` 紫虚线;规格保留图片色板+绿计数;批量定价/汇总保留原逻辑。所有 onChange/value/mg 计算/校验表达式原样保留。
+- **harness 实测交互(静态截图验不了的)**:点成本档 $0.06→$0.05,`.pt-tier.on` 从档0→档1;某 SKU 改售价 0.5 → 毛利「-」→「90%」
+  实时重算((0.5−0.05)/0.5);无崩溃、无悬挂引用(esbuild 转译通过)。截图定价卡与 mockup 一致。
+- 遗留:汇总区(发布展示价/划线价/总库存)可进一步 `.summ` 卡片式(功能已正常),留后续;`saveFinal`/阶梯价校验服务端路径未动,回归待写库后或既有 verify。
+- harness 构建脚本在 scratchpad(方法已入记忆),后续 P5-P7 复用。
+
 ---
 
 ### Phase 5 — 商品属性 + 描述（jsBlock）
