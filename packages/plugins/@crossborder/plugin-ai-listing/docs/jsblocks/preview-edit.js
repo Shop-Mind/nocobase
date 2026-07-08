@@ -1832,7 +1832,19 @@ function ReviewApp() {
               </Button>
             </div>
           ) : null}
+          {/* 状态行(精简版):锁定态 + 状态 + 源站在售 + 品类 + 起订。供应商已移到顶部店铺条,此处去重不再重复。 */}
           <Space size={4} wrap style={{ marginTop: 4 }}>
+            {locked ? (
+              <Tooltip
+                title={
+                  detail.status === 'reviewed'
+                    ? '已审核锁定,改前先「回退审核」'
+                    : '已锁定,改前先「退回编辑」(平台内容不受影响)'
+                }
+              >
+                <Tag color="green">🔒 字段已锁定</Tag>
+              </Tooltip>
+            ) : null}
             <Tag color={sm.color}>{sm.label}</Tag>
             {detail.statusOriginal === 'PRODUCT_ONLINE' ? <Tag color="green">源站在售</Tag> : null}
             {detail.categoryOriginal ? <Tag>{detail.categoryOriginal}</Tag> : null}
@@ -1840,9 +1852,6 @@ function ReviewApp() {
               <Tag color="orange">
                 起订 {detail.moq} {skuUnit || '件'}
               </Tag>
-            ) : null}
-            {(detail.shopInfo || {}).supplierName ? (
-              <Tag color="blue">{(detail.shopInfo || {}).supplierName}</Tag>
             ) : null}
           </Space>
         </div>
@@ -1913,6 +1922,52 @@ function ReviewApp() {
             </>
           )}
         </Space>
+      </div>
+    );
+
+    // 店铺 / 供应商条(仿 1688 店铺头,置于商品内容最顶)。Creative Console 皮肤 → 外层挂 .aic-scope。
+    // 店铺四指标(回头率/服务分/准时发货/好评率)源站 OpenAPI 未提供 → 优雅降级「待抓取」(数据补齐前占位)。
+    const shopBarInfo = detail.shopInfo || {};
+    const supplierName = shopBarInfo.supplierName || '未知供应商';
+    const shopInitial = (String(supplierName).trim()[0] || '?').toUpperCase();
+    const capturedAt = detail.createdAt ? dayjs(detail.createdAt).format('YYYY-MM-DD') : '';
+    const shopSub = [
+      detail.categoryOriginal ? '主营 ' + detail.categoryOriginal : null,
+      detail.sourceProductId ? '源商品 #' + detail.sourceProductId : null,
+      capturedAt ? '抓取于 ' + capturedAt : null,
+    ]
+      .filter(Boolean)
+      .join('　·　');
+    const ShopBar = (
+      <div className="aic-scope">
+        <div className="shopbar">
+          <div className="sb-logo">{shopInitial}</div>
+          <div className="sb-main">
+            <div className="sb-name">
+              {supplierName}
+              {detail.sourcePlatform ? <span className="sb-plat">{detail.sourcePlatform} · 供应商</span> : null}
+            </div>
+            {shopSub ? <div className="sb-sub">{shopSub}</div> : null}
+          </div>
+          <div className="sb-stats">
+            {['回头率', '服务分', '准时发货', '好评率'].map((k) => (
+              <div className="st" key={k}>
+                <div
+                  className="sv"
+                  style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, color: 'var(--text-3)' }}
+                >
+                  待抓取
+                </div>
+                <div className="sk">{k}</div>
+              </div>
+            ))}
+          </div>
+          {detail.sourceUrl ? (
+            <a className="sb-act" href={detail.sourceUrl} target="_blank" rel="noreferrer">
+              在源站查看店铺 →
+            </a>
+          ) : null}
+        </div>
       </div>
     );
 
@@ -2127,28 +2182,10 @@ function ReviewApp() {
 
     RightPanel = (
       <Card size="small" style={{ height: '100%' }} styles={{ body: { padding: 12 } }}>
+        {ShopBar}
         {Header}
-        {locked ? (
-          <Alert
-            type={detail.status === 'published' ? 'success' : 'info'}
-            showIcon
-            style={{ marginBottom: 8 }}
-            message={
-              detail.status === 'reviewed'
-                ? '该商品已审核，关键字段已锁定。如需修改请先「回退审核」。'
-                : detail.status === 'published'
-                ? '该商品已发布，本地字段已锁定。如需修改请点「退回编辑」（平台上已发布的内容不受影响）。'
-                : '该商品正在发布中，请等批次结束；超过 5 分钟没动静可点「退回编辑」解锁。'
-            }
-            description={
-              detail.status === 'published' && detail.publishUrl ? (
-                <a href={detail.publishUrl} target="_blank" rel="noreferrer">
-                  查看平台上的商品/草稿 →
-                </a>
-              ) : undefined
-            }
-          />
-        ) : null}
+        {/* 原「已发布/已审核·字段锁定」整张绿横幅已精简移除:锁定态由 Header 的锁定行 + 右栏生命周期面板(含
+            「查看平台上的商品」)表达,不再占一整块。发布失败/操作反馈/发布前检查等即时提示仍保留。 */}
         {detail.status === 'publish_failed' ? (
           <Alert
             type="error"
