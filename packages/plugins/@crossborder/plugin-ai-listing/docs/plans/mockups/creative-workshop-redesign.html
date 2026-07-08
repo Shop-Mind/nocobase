@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>创意工坊 · 视觉升级稿（Creative Console）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --canvas:#f4f1ea; --canvas-2:#eae4d9; --paper:#fffdf8; --paper-2:#faf7f0;
+    --ink:#15121e; --ink-2:#1e1a2c; --ink-3:#2a2440;
+    --violet:#6a5cff; --violet-2:#8b78ff; --violet-soft:#efeaff; --violet-line:#ded6ff;
+    --amber:#ff9e2c; --amber-soft:#fff2dd;
+    --coral:#ff6a4d; --jade:#12b981; --jade-soft:#dcf7ec;
+    --text:#1b1926; --text-2:#6b6578; --text-3:#9a94a6;
+    --line:rgba(20,18,30,.09); --line-2:rgba(20,18,30,.06);
+    --shadow-sm:0 1px 2px rgba(20,18,30,.05),0 2px 8px rgba(20,18,30,.05);
+    --shadow-md:0 6px 24px -8px rgba(28,20,60,.22),0 2px 8px rgba(20,18,30,.06);
+    --shadow-lg:0 24px 60px -20px rgba(30,20,70,.4);
+    --r:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:"Instrument Sans","Noto Sans SC",system-ui,sans-serif;
+    color:var(--text); background:var(--canvas);
+    -webkit-font-smoothing:antialiased; letter-spacing:.1px;
+    background-image:radial-gradient(1200px 600px at 82% -10%, #efe7fb 0%, transparent 55%),
+                     radial-gradient(900px 500px at -5% 8%, #fdeede 0%, transparent 50%);
+  }
+  /* 细颗粒噪点(暖墨面用),营造质感而非纯色 */
+  .grain::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.05;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");}
+  .num{font-family:"Fraunces",serif;font-variant-numeric:tabular-nums;font-feature-settings:"ss01"}
+  .display{font-family:"Fraunces",serif}
+
+  .app{max-width:1440px;margin:24px auto;border-radius:24px;overflow:hidden;
+    background:var(--paper);box-shadow:var(--shadow-lg);border:1px solid var(--line);}
+
+  /* ── 顶栏 ── */
+  .topbar{position:relative;height:60px;display:flex;align-items:center;gap:18px;padding:0 20px;
+    background:linear-gradient(100deg,#141020 0%,#1c1633 46%,#241a3e 100%);color:#fff;overflow:hidden}
+  .topbar .mesh{position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(220px 120px at 8% 30%, rgba(124,108,255,.55), transparent 70%),
+              radial-gradient(180px 120px at 34% 120%, rgba(255,106,77,.35), transparent 70%);}
+  .brand{display:flex;align-items:center;gap:11px;z-index:1}
+  .brand .logo{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:16px;
+    background:conic-gradient(from 200deg,#8b78ff,#6a5cff,#ff6a4d,#8b78ff);box-shadow:0 4px 14px rgba(124,108,255,.5)}
+  .brand b{font-weight:600;font-size:15px;letter-spacing:.3px}
+  .brand .sub{font-size:10.5px;color:#b9b2d6;letter-spacing:1.5px;text-transform:uppercase;margin-top:1px}
+  .seg{display:flex;gap:2px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.09);
+    border-radius:11px;padding:3px;z-index:1}
+  .seg button{border:0;background:transparent;color:#c3bcda;font:inherit;font-size:12.5px;font-weight:600;
+    padding:6px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px}
+  .seg button.on{background:linear-gradient(180deg,#7b6bff,#6a5cff);color:#fff;box-shadow:0 3px 10px rgba(106,92,255,.5)}
+  .topbar .right{margin-left:auto;display:flex;align-items:center;gap:12px;z-index:1}
+  .pctx{display:flex;align-items:center;gap:8px;font-size:12px;color:#cfc8e6;
+    background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);padding:6px 12px;border-radius:20px}
+  .pctx .dot{width:6px;height:6px;border-radius:50%;background:var(--jade);box-shadow:0 0 0 3px rgba(18,185,129,.25)}
+  .ghost{border:1px solid rgba(255,255,255,.22);background:transparent;color:#e7e3f5;font:inherit;font-size:12px;
+    padding:6px 12px;border-radius:9px;cursor:pointer}
+
+  /* ── 工作区三栏 ── */
+  .work{display:flex;min-height:760px}
+
+  /* 左：功能坞 */
+  .dock{position:relative;width:96px;flex-shrink:0;padding:14px 0 20px;
+    background:linear-gradient(180deg,#171324 0%,#1b1630 100%);}
+  .dock .cap{color:#655c86;font-size:9.5px;letter-spacing:1.6px;text-align:center;text-transform:uppercase;margin-bottom:8px}
+  .tool{position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 4px;cursor:pointer;
+    color:#8f88ad;transition:color .18s}
+  .tool .ic{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:19px;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);transition:transform .18s,background .18s,box-shadow .18s}
+  .tool span{font-size:11px;font-weight:500;white-space:nowrap}
+  .tool:hover{color:#d7d1ee}
+  .tool:hover .ic{transform:translateY(-2px);background:rgba(255,255,255,.08)}
+  .tool.on{color:#fff}
+  .tool.on .ic{background:linear-gradient(180deg,#7d6dff,#6a5cff);border-color:transparent;
+    box-shadow:0 8px 20px -4px rgba(106,92,255,.7),inset 0 1px 0 rgba(255,255,255,.3)}
+  .tool.on::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;
+    background:linear-gradient(#8b78ff,#ff6a4d)}
+  .tool .new{position:absolute;top:5px;right:14px;font-size:8px;font-weight:700;color:#fff;
+    background:linear-gradient(120deg,#ff6a4d,#ff9e2c);border-radius:6px;padding:1px 5px;letter-spacing:.5px}
+
+  /* 中：创作舞台 */
+  .stage{flex:1;min-width:0;padding:26px 30px;overflow:auto;
+    background:linear-gradient(180deg,var(--paper) 0%,var(--paper-2) 100%)}
+  .st-head{display:flex;align-items:center;gap:12px;margin-bottom:3px}
+  .st-head h1{font-family:"Fraunces",serif;font-weight:600;font-size:29px;letter-spacing:-.4px;line-height:1.05}
+  .chip{font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;letter-spacing:.3px}
+  .chip.pro{color:#6a4cff;background:var(--violet-soft);border:1px solid var(--violet-line)}
+  .sub{color:var(--text-2);font-size:13.5px;margin:6px 0 22px;max-width:640px;line-height:1.5}
+
+  .block{margin-bottom:22px}
+  .lbl{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.4px;
+    color:#3a3550;text-transform:uppercase;margin-bottom:11px}
+  .lbl .kicker{width:16px;height:2px;border-radius:2px;background:linear-gradient(90deg,var(--violet),transparent)}
+  .lbl .opt{font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-3);font-size:11px}
+
+  /* 商品图带入 */
+  .carry-note{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#0f8a5f;
+    background:linear-gradient(90deg,var(--jade-soft),transparent);border:1px solid #bfead6;border-left:3px solid var(--jade);
+    padding:9px 13px;border-radius:11px;margin-bottom:12px}
+  .carry-note .tag{margin-left:auto;font-weight:600;color:#0f8a5f;background:#fff;border:1px solid #bfead6;
+    padding:2px 9px;border-radius:20px;font-size:11px}
+  .imgs{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .thumb{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden;cursor:pointer;
+    box-shadow:var(--shadow-sm);border:1.5px solid transparent;transition:transform .16s,box-shadow .16s}
+  .thumb:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
+  .thumb.sel{border-color:var(--violet);box-shadow:0 0 0 3px rgba(106,92,255,.18),var(--shadow-md)}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .thumb .star{position:absolute;left:6px;top:6px;width:19px;height:19px;border-radius:50%;display:grid;place-items:center;
+    background:linear-gradient(160deg,#ffc65c,#ff9e2c);color:#fff;font-size:11px;box-shadow:0 2px 6px rgba(255,158,44,.5);border:1.5px solid #fff}
+  .thumb .check{position:absolute;right:6px;top:6px;width:20px;height:20px;border-radius:7px;display:grid;place-items:center;
+    background:var(--violet);color:#fff;font-size:12px;border:1.5px solid #fff;box-shadow:var(--shadow-sm)}
+  .thumb .adopted{position:absolute;right:6px;bottom:6px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;
+    background:linear-gradient(160deg,#2fd399,#12b981);color:#fff;font-size:10px;border:1.5px solid #fff;box-shadow:0 2px 6px rgba(18,185,129,.5)}
+  .thumb .up{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:4px;
+    color:#a89fbb;background:repeating-linear-gradient(45deg,#faf7f1,#faf7f1 8px,#f3eee5 8px,#f3eee5 16px);
+    border:1.5px dashed var(--violet-line)}
+  .thumb .up b{font-size:20px;font-weight:400;color:var(--violet)}
+
+  /* 模版风格 */
+  .pills{display:flex;flex-wrap:wrap;gap:9px}
+  .pill{font-size:12.5px;font-weight:500;padding:7px 14px;border-radius:20px;cursor:pointer;
+    background:#fff;border:1px solid var(--line);color:#4a4560;transition:.14s;box-shadow:var(--shadow-sm)}
+  .pill:hover{border-color:var(--violet-line);color:var(--violet)}
+  .pill.on{background:linear-gradient(180deg,#7d6dff,#6a5cff);color:#fff;border-color:transparent;box-shadow:0 4px 12px -2px rgba(106,92,255,.5)}
+  .tabs{display:flex;gap:4px;background:var(--canvas-2);border-radius:11px;padding:3px;margin-bottom:12px;width:max-content}
+  .tabs button{border:0;background:transparent;font:inherit;font-size:12px;font-weight:600;color:var(--text-2);
+    padding:6px 14px;border-radius:8px;cursor:pointer}
+  .tabs button.on{background:var(--paper);color:var(--violet);box-shadow:var(--shadow-sm)}
+
+  /* AI 推荐词面板 */
+  .reco{background:linear-gradient(140deg,#f3efff,#faf7ff);border:1px solid var(--violet-line);border-radius:16px;padding:15px 16px;
+    position:relative;overflow:hidden}
+  .reco::after{content:"";position:absolute;right:-30px;top:-30px;width:140px;height:140px;border-radius:50%;
+    background:radial-gradient(circle,rgba(139,120,255,.22),transparent 70%)}
+  .reco .rh{display:flex;align-items:center;gap:8px;margin-bottom:12px;position:relative}
+  .reco .ai{font-size:10px;font-weight:700;color:#fff;background:linear-gradient(120deg,#8b78ff,#6a5cff);
+    padding:2px 8px;border-radius:6px;letter-spacing:.5px}
+  .reco .rh b{font-size:12.5px;color:#5a3fd6}
+  .reco .rh .refresh{margin-left:auto;font-size:11.5px;color:#6a5cff;cursor:pointer;font-weight:600}
+  .reco .item{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #ece7ff;border-radius:11px;
+    padding:10px 12px;margin-bottom:8px;position:relative;box-shadow:var(--shadow-sm)}
+  .reco .item p{font-size:12.5px;color:#3a3550;flex:1;line-height:1.4}
+  .reco .item button{border:1px solid var(--violet-line);background:#fff;color:#6a5cff;font:inherit;font-weight:600;
+    font-size:11.5px;padding:5px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
+  .reco .item button:hover{background:var(--violet);color:#fff;border-color:transparent}
+
+  textarea.prompt{width:100%;border:1px solid var(--line);border-radius:13px;padding:13px 14px;font:inherit;font-size:13.5px;
+    resize:none;height:96px;background:#fff;color:var(--text);box-shadow:var(--shadow-sm);outline:none}
+  textarea.prompt:focus{border-color:var(--violet);box-shadow:0 0 0 3px rgba(106,92,255,.14)}
+
+  .ratios{display:flex;flex-wrap:wrap;gap:8px}
+  .rt{font-size:12px;font-weight:600;min-width:44px;text-align:center;padding:6px 10px;border-radius:9px;cursor:pointer;
+    background:#fff;border:1px solid var(--line);color:#4a4560}
+  .rt.on{background:var(--ink);color:#fff;border-color:transparent}
+
+  /* 生成栏 */
+  .genbar{display:flex;align-items:flex-end;gap:22px;flex-wrap:wrap;padding:18px;border-radius:16px;margin-top:6px;
+    background:linear-gradient(120deg,#1a1528,#241b3d);color:#fff;box-shadow:var(--shadow-md);position:relative;overflow:hidden}
+  .genbar .mesh{position:absolute;inset:0;background:radial-gradient(200px 120px at 90% 120%,rgba(255,106,77,.3),transparent 70%),radial-gradient(200px 140px at 10% -20%,rgba(124,108,255,.4),transparent 70%)}
+  .field{display:flex;flex-direction:column;gap:6px;z-index:1}
+  .field label{font-size:10.5px;color:#a79fc4;letter-spacing:.6px;text-transform:uppercase}
+  .field .val{display:flex;align-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
+    border-radius:9px;overflow:hidden}
+  .field .val input{width:48px;border:0;background:transparent;color:#fff;font:inherit;font-weight:600;text-align:center;padding:7px 0;outline:none}
+  .field .val .step{width:24px;text-align:center;color:#b7afd4;cursor:pointer;padding:6px 0;font-size:13px}
+  .seg-dark{display:flex;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:2px}
+  .seg-dark button{border:0;background:transparent;color:#c3bcda;font:inherit;font-size:12px;font-weight:600;padding:6px 12px;border-radius:7px;cursor:pointer}
+  .seg-dark button.on{background:#fff;color:var(--ink)}
+  .model-pick{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:9px;color:#fff;
+    font:inherit;font-size:12.5px;padding:7px 12px;min-width:168px;display:flex;align-items:center;gap:8px}
+  .cost{margin-left:auto;text-align:right;z-index:1}
+  .cost .k{font-size:10.5px;color:#a79fc4;letter-spacing:.6px;text-transform:uppercase}
+  .cost .v{font-family:"Fraunces",serif;font-size:22px;color:#ffc45c;font-weight:600}
+  .cost .v small{font-size:12px;color:#e9c58a;font-weight:500}
+  .gen{z-index:1;border:0;cursor:pointer;font:inherit;font-weight:700;font-size:14.5px;color:#fff;
+    padding:13px 26px;border-radius:12px;display:flex;align-items:center;gap:9px;position:relative;overflow:hidden;
+    background:linear-gradient(120deg,#7c6cff 0%,#8b6bff 45%,#ff6a4d 130%);
+    box-shadow:0 10px 26px -6px rgba(124,108,255,.65),inset 0 1px 0 rgba(255,255,255,.3)}
+  .gen::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.4) 50%,transparent 70%);
+    transform:translateX(-120%);animation:sheen 3.2s ease-in-out infinite}
+  @keyframes sheen{0%,60%{transform:translateX(-120%)}100%{transform:translateX(120%)}}
+
+  /* 右：审阅台 */
+  .inspector{width:372px;flex-shrink:0;padding:22px 20px;overflow:auto;
+    background:linear-gradient(180deg,#f0ece3,#ece7dd);border-left:1px solid var(--line)}
+  .insp-h{font-size:11.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#4a4560;
+    display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .insp-h .badge{margin-left:auto;font-size:11px;color:var(--violet);background:var(--violet-soft);
+    border:1px solid var(--violet-line);border-radius:20px;padding:1px 9px;font-weight:600}
+
+  /* 拉帘对比舞台 */
+  .compare{position:relative;border-radius:16px;overflow:hidden;box-shadow:var(--shadow-lg);background:#111}
+  .compare img{width:100%;display:block}
+  .compare .after{position:absolute;inset:0;width:56%;overflow:hidden}
+  .compare .after img{width:calc(100%/.56);max-width:none}
+  .compare .handle{position:absolute;top:0;bottom:0;left:56%;width:3px;background:#fff;box-shadow:0 0 12px rgba(0,0,0,.5)}
+  .compare .handle::after{content:"⇄";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:34px;height:34px;border-radius:50%;background:#fff;color:var(--ink);display:grid;place-items:center;
+    font-size:14px;box-shadow:var(--shadow-md)}
+  .compare .cap{position:absolute;top:9px;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:600;color:#fff;backdrop-filter:blur(6px)}
+  .compare .cap.l{left:9px;background:rgba(0,0,0,.5)}
+  .compare .cap.r{right:9px;background:rgba(106,92,255,.85)}
+
+  .cands{display:flex;gap:9px;margin-top:16px;flex-wrap:wrap}
+  .cand{width:66px;height:66px;border-radius:11px;overflow:hidden;cursor:pointer;box-shadow:var(--shadow-sm);
+    border:2px solid transparent;transition:.15s;animation:pop .4s both}
+  .cand:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
+  .cand.on{border-color:var(--violet);box-shadow:0 0 0 3px rgba(106,92,255,.18)}
+  .cand img{width:100%;height:100%;object-fit:cover}
+  @keyframes pop{from{opacity:0;transform:scale(.85) translateY(6px)}to{opacity:1;transform:none}}
+  .acts{display:flex;gap:10px;margin-top:16px}
+  .btn-adopt{flex:1;border:0;cursor:pointer;font:inherit;font-weight:700;font-size:13.5px;color:#fff;padding:11px;border-radius:11px;
+    background:linear-gradient(120deg,#12b981,#0f9d6e);box-shadow:0 8px 20px -6px rgba(18,185,129,.6)}
+  .btn-discard{border:1px solid var(--line);background:#fff;cursor:pointer;font:inherit;font-weight:600;font-size:13.5px;
+    color:#b4405a;padding:11px 18px;border-radius:11px}
+  .fineprint{font-size:11px;color:var(--text-3);margin-top:12px;line-height:1.5}
+
+  /* 进场错峰淡入 */
+  .rise{opacity:0;transform:translateY(10px);animation:rise .6s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .d1{animation-delay:.05s}.d2{animation-delay:.12s}.d3{animation-delay:.19s}.d4{animation-delay:.26s}
+  .d5{animation-delay:.33s}.d6{animation-delay:.4s}.d7{animation-delay:.48s}
+
+  .note{max-width:1440px;margin:14px auto 40px;color:var(--text-2);font-size:12.5px;line-height:1.7;padding:0 6px}
+  .note b{color:var(--text)}
+  .swatches{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
+  .sw{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text-2)}
+  .sw i{width:16px;height:16px;border-radius:5px;display:inline-block;box-shadow:var(--shadow-sm)}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 顶栏 -->
+  <div class="topbar grain">
+    <div class="mesh"></div>
+    <div class="brand">
+      <div class="logo">🎨</div>
+      <div>
+        <b>创意工坊</b>
+        <div class="sub">Creative Console</div>
+      </div>
+    </div>
+    <div class="seg">
+      <button class="on">🖼️ 智能图片</button>
+      <button>🎬 智能视频</button>
+    </div>
+    <div class="right">
+      <div class="pctx"><span class="dot"></span>当前商品 · 无线蓝牙耳机 Pro</div>
+      <button class="ghost">← 返回候选区</button>
+    </div>
+  </div>
+
+  <div class="work">
+    <!-- 左 功能坞 -->
+    <div class="dock grain">
+      <div class="cap">Tools</div>
+      <div class="tool on"><div class="ic">🏞️</div><span>场景图</span></div>
+      <div class="tool"><div class="ic">⬜</div><span>白底图</span></div>
+      <div class="tool"><div class="ic">🧽</div><span>图片擦除</span></div>
+      <div class="tool"><div class="ic">🎨</div><span>商品换色</span></div>
+      <div class="tool"><div class="ic">⭐</div><span>营销卖点</span></div>
+      <div class="tool"><div class="ic">🏷️</div><span class="new">新</span><span>Logo定制</span></div>
+      <div class="tool"><div class="ic">👤</div><span class="new">新</span><span>模特图</span></div>
+      <div class="tool"><div class="ic">🔬</div><span>细节图</span></div>
+      <div class="tool"><div class="ic">🌐</div><span class="new">新</span><span>图片翻译</span></div>
+      <div class="tool"><div class="ic">🏭</div><span>流程图</span></div>
+      <div class="tool"><div class="ic">🔍</div><span>高清增强</span></div>
+      <div class="tool"><div class="ic">💬</div><span>指令生图</span></div>
+    </div>
+
+    <!-- 中 创作舞台 -->
+    <div class="stage">
+      <div class="rise d1">
+        <div class="st-head"><h1 class="display">场景图</h1><span class="chip pro">进阶 · 对标官方</span></div>
+        <p class="sub">把商品放进理想的使用场景（桌面 / 户外 / 生活方式），主体不变，光影与场景自然融合。</p>
+      </div>
+
+      <!-- 商品图带入 -->
+      <div class="block rise d2">
+        <div class="lbl"><span class="kicker"></span>商品图片 <span class="opt">单图 · 点缩略图切换</span></div>
+        <div class="carry-note">✅ 已自动带入「无线蓝牙耳机 Pro」主图 + 详情图，无需重新上传<span class="tag">已选 1</span></div>
+        <div class="imgs">
+          <div class="thumb sel"><img src="https://picsum.photos/seed/w1/200"/><span class="star">★</span><span class="check">✓</span></div>
+          <div class="thumb"><img src="https://picsum.photos/seed/w2/200"/><span class="adopted">✓</span></div>
+          <div class="thumb"><img src="https://picsum.photos/seed/w3/200"/></div>
+          <div class="thumb"><img src="https://picsum.photos/seed/w4/200"/></div>
+          <div class="thumb"><div class="up"><b>+</b>上传</div></div>
+        </div>
+      </div>
+
+      <!-- 模版风格 -->
+      <div class="block rise d3">
+        <div class="lbl"><span class="kicker"></span>模版风格</div>
+        <div class="tabs"><button class="on">推荐提示词</button><button>推荐风格模版</button><button>自定义模版</button></div>
+        <div class="pills">
+          <span class="pill on">极简白</span><span class="pill">ins 风</span><span class="pill">户外生活</span>
+          <span class="pill">轻奢质感</span><span class="pill">赛博科技</span><span class="pill">暖色居家</span>
+        </div>
+      </div>
+
+      <!-- AI 推荐词 -->
+      <div class="block rise d4">
+        <div class="reco">
+          <div class="rh"><span class="ai">AI</span><b>推荐提示词 · 已看图分析该商品</b><span class="refresh">🔄 换一换</span></div>
+          <div class="item"><p>北欧原木桌面，清晨自然光从左侧洒入，旁边一杯手冲咖啡，温暖居家办公氛围</p><button>填入</button></div>
+          <div class="item"><p>现代简约白色大理石台面，柔和顶光，背景虚化绿植，突出商品高级质感</p><button>填入</button></div>
+          <div class="item"><p>户外木质露营桌，暖调黄昏光线，远处虚化山景，传达便携与生活方式</p><button>填入</button></div>
+        </div>
+      </div>
+
+      <!-- 提示词 + 比例 -->
+      <div class="block rise d5">
+        <div class="lbl"><span class="kicker"></span>提示词描述 <span class="opt">必填</span></div>
+        <textarea class="prompt" placeholder="描述你想要的场景，如：北欧风木桌 + 晨光 + 咖啡杯…">现代简约白色大理石台面，柔和顶光，背景虚化绿植，突出商品高级质感</textarea>
+      </div>
+      <div class="block rise d5">
+        <div class="lbl"><span class="kicker"></span>图片比例 <span class="opt">可选</span></div>
+        <div class="ratios">
+          <span class="rt on">原图</span><span class="rt">1:1</span><span class="rt">4:3</span><span class="rt">3:4</span>
+          <span class="rt">16:9</span><span class="rt">9:16</span><span class="rt">3:2</span><span class="rt">4:5</span>
+        </div>
+      </div>
+
+      <!-- 生成栏 -->
+      <div class="genbar rise d6">
+        <div class="mesh"></div>
+        <div class="field"><label>每图张数</label><div class="val"><span class="step">−</span><input value="1"/><span class="step">+</span></div></div>
+        <div class="field"><label>模型档</label><div class="seg-dark"><button class="on">基础</button><button>进阶</button></div></div>
+        <div class="field"><label>模型</label><div class="model-pick">⚡ 自动选模型 ▾</div></div>
+        <div class="cost"><div class="k">预计消耗</div><div class="v num">51 <small>i豆</small></div></div>
+        <button class="gen">✨ 开始生成</button>
+      </div>
+    </div>
+
+    <!-- 右 审阅台 -->
+    <div class="inspector">
+      <div class="insp-h">📎 对比预览 · 前 / 后</div>
+      <div class="compare">
+        <img src="https://picsum.photos/seed/before/640/560"/>
+        <div class="after"><img src="https://picsum.photos/seed/after/640/560"/></div>
+        <div class="handle"></div>
+        <span class="cap l">原图</span><span class="cap r">效果</span>
+      </div>
+
+      <div class="insp-h" style="margin-top:22px">🎉 生成候选 <span class="badge">3</span></div>
+      <div class="cands">
+        <div class="cand on" style="animation-delay:.05s"><img src="https://picsum.photos/seed/c1/140"/></div>
+        <div class="cand" style="animation-delay:.15s"><img src="https://picsum.photos/seed/c2/140"/></div>
+        <div class="cand" style="animation-delay:.25s"><img src="https://picsum.photos/seed/c3/140"/></div>
+      </div>
+      <div class="acts">
+        <button class="btn-adopt">✓ 采纳</button>
+        <button class="btn-discard">弃用</button>
+      </div>
+      <p class="fineprint">采纳后写入商品最终图（审计 actorType=user），发布时采纳集优先。生成只产候选，采纳 / 弃用由你决定。</p>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>视觉语言（Creative Console）</b>：暖墨底座（功能坞 / 顶栏深墨紫 + 细颗粒 + 光晕）× 象牙暖白画布；主色电光紫（AI/激活）+ 暖琥珀（i豆/价值）+ 翡翠绿（采纳）；显示字体 Fraunces（标题/数字更精致），正文 Instrument Sans + Noto Sans SC。
+  <div class="swatches">
+    <span class="sw"><i style="background:#15121e"></i>墨底 #15121e</span>
+    <span class="sw"><i style="background:#f4f1ea"></i>象牙 #f4f1ea</span>
+    <span class="sw"><i style="background:#6a5cff"></i>电光紫 #6a5cff</span>
+    <span class="sw"><i style="background:#ff9e2c"></i>琥珀 #ff9e2c</span>
+    <span class="sw"><i style="background:#ff6a4d"></i>暖珊瑚 #ff6a4d</span>
+    <span class="sw"><i style="background:#12b981"></i>翡翠 #12b981</span>
+  </div>
+  实现说明：整体走真实 antd v5 组件 + inline style/CSS 变量落地；显示字体自托管（或降级到系统）不阻塞；深色面用极轻噪点提质感；动效控制在「进场错峰淡入 + 功能坞 hover 微抬 + 生成按钮暖光扫过 + 候选上浮」几个高价值节点，不堆砌。
+</div>
+</body>
+</html>
