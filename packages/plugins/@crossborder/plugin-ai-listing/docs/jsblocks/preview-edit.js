@@ -233,27 +233,27 @@ function AiCandidateZone({ productId, onChange }) {
     };
   }, [productId]);
   const has = typeof window !== 'undefined' && window.__aiListingMediaKit;
+  // Creative Console 深墨区头(studio-head)由本卡壳提供;MediaStudio 挂进下方挂载点,只渲染工具栏 + 主体。
   return (
-    <Card
-      size="small"
-      style={{ marginTop: 12 }}
-      title={
-        <Space size={6}>
-          <span>商品图片 · AI 改图</span>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            主图/详情图在这里管理：选图 → 改图 → 对比 → 采纳，采纳后进入发布图集
-          </Typography.Text>
-        </Space>
-      }
-    >
-      {has ? (
-        <div ref={ref} />
-      ) : (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          AI 图片工具未就绪（请刷新或联系管理员）
-        </Typography.Text>
-      )}
-    </Card>
+    <div className="aic-scope" style={{ marginTop: 12 }}>
+      <div className="card" style={{ margin: 0 }}>
+        <div className="studio-head">
+          <div className="st">
+            <span className="g">🎨</span>商品图片 · AI 改图
+          </div>
+          <span className="hint">主图 / 详情图在这里管理:选图 → 改图 → 对比 → 采纳(采纳后进入发布图集)</span>
+        </div>
+        {has ? (
+          <div ref={ref} />
+        ) : (
+          <div style={{ padding: 16 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              AI 图片工具未就绪（请刷新或联系管理员）
+            </Typography.Text>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1555,52 +1555,7 @@ function ReviewApp() {
       </div>
     );
 
-    // 供应商卡（源站同款位置：图库下方）。评分/响应时间等店铺指标 OpenAPI 未提供，如实说明。
-    const shopI = detail.shopInfo || {};
-    const SupplierCard = shopI.supplierName ? (
-      <div
-        style={{
-          marginTop: 12,
-          padding: '10px 12px',
-          background: '#f0f7ff',
-          border: '1px solid #d6e4ff',
-          borderRadius: 8,
-          maxWidth: 300,
-        }}
-      >
-        <Space direction="vertical" size={4} style={{ width: '100%' }}>
-          <Space size={6}>
-            <span
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 6,
-                background: '#1677ff',
-                color: '#fff',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              {String(shopI.supplierName).slice(0, 1).toUpperCase()}
-            </span>
-            <Typography.Text strong style={{ fontSize: 13 }}>
-              {shopI.supplierName}
-            </Typography.Text>
-          </Space>
-          {detail.sourceUrl ? (
-            <Typography.Link href={detail.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
-              在源站查看商品与店铺 →
-            </Typography.Link>
-          ) : null}
-          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-            店铺评分 / 响应时间 / 准时发货率：源平台接口未提供（需爬虫抓取店铺页）
-          </Typography.Text>
-        </Space>
-      </div>
-    ) : null;
+    // 供应商信息已置顶为店铺条 .shopbar(Phase 3),此处不再单列供应商卡,避免重复。
 
     // ---- 抓取全量信息（来源/供应商/关键属性/证书/贸易信息/详情页 HTML 原文）----
     const shop = detail.shopInfo || {};
@@ -1971,30 +1926,9 @@ function ReviewApp() {
       </div>
     );
 
-    // 主图/详情图统一在下方「商品图片 · AI 改图」区管理(避免与之重复);此处只留视频 + 供应商信息。
-    const Gallery = (
-      <div style={{ marginBottom: 12 }}>
-        {videoMedia.length ? (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-              <Typography.Text strong style={{ fontSize: 12 }}>
-                视频
-              </Typography.Text>
-              {dlTag(videoMedia[0])}
-            </div>
-            {videoMedia.map((m) => (
-              <video
-                key={m.id}
-                src={m.sourceUrl}
-                controls
-                style={{ width: mobile ? 220 : 280, borderRadius: 8, border: '1px solid #f0f0f0', display: 'block' }}
-              />
-            ))}
-          </div>
-        ) : null}
-        {SupplierCard}
-      </div>
-    );
+    // 视频已并入上方「商品图片 · AI 改图」区的图集列(vslot),供应商信息已置顶为店铺条 .shopbar,
+    // 此处不再单列图集/视频/供应商,避免与之重复(Phase 3)。
+    const Gallery = null;
 
     // ---- 商品属性（规格参数）：发布后展示在商品页「规格参数/产品属性」区，多数平台按类目必填 ----
     const AttributesSection = (
@@ -2241,10 +2175,8 @@ function ReviewApp() {
             {detail && detail.id ? (
               <AiCandidateZone productId={detail.id} onChange={() => loadDetail(detail.id)} />
             ) : null}
-            <Row gutter={16}>
-              <Col flex={mobile ? '1' : '0 0 auto'}>{Gallery}</Col>
-              <Col flex="auto">{SkuSection}</Col>
-            </Row>
+            {/* 图集/视频/供应商已上移(AI 改图区 vslot + 顶部店铺条),此处只余 SKU 定价,占满整行。 */}
+            {SkuSection}
             {AttributesSection}
             {DescriptionSection}
             {/* 更多来源信息（默认收起）：商品信息 / 关键属性原始 / 证书 / 贸易信息 / 评价 */}
