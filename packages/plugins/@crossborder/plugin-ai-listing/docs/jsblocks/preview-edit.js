@@ -1112,11 +1112,9 @@ function ReviewApp() {
     }
     const ladderOverLimit = ladderDraft.length > 4;
     const LadderEditor = (
-      <div style={{ marginTop: 10, padding: '8px 10px', border: '1px dashed #d9d9d9', borderRadius: 6 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Typography.Text strong style={{ fontSize: 13 }}>
-            发布阶梯价
-          </Typography.Text>
+      <div className="ladbox">
+        <div className="lh" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 13 }}>发布阶梯价</b>
           <Tooltip title="档数跟随源站，可自由增删改（起订量递增、价格随数量不升，¥ 自动折 USD）。设了阶梯，草稿走「按数量阶梯价」；清空则回固定价（SKU 全有售价时走规格价）。目标平台有档数上限时（Alibaba.com 为 4 档）发布时截断并标注。">
             <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
               ⓘ
@@ -1199,314 +1197,294 @@ function ReviewApp() {
     );
 
     const SkuSection = skus.length ? (
-      <div style={{ padding: '12px 14px', background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <Typography.Text strong>销售信息（SKU 定价）</Typography.Text>
-          <Tooltip title="通用发布范式：规格维度（颜色×尺寸）组合出 SKU，每个组合独立售价与库存；发布到 1688 国际站 / 抖店 / 拼多多等平台时按各平台规格结构自动映射。">
-            <Typography.Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>
-              ⓘ
-            </Typography.Text>
-          </Tooltip>
-          {isDirty('skus') ? <PendingTag /> : null}
-          <span style={{ flex: 1 }} />
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {skus.length} 个 SKU
-          </Typography.Text>
-        </div>
-        {ladderShared ? (
-          <div style={{ marginBottom: 10 }}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              源站采购阶梯（点选你的预计采购档，作为定价成本）
-            </Typography.Text>
+      <div className="aic-scope" style={{ marginTop: 12 }}>
+        <div className="card" style={{ margin: 0 }}>
+          <div className="shead">
+            <span className="eyebrow">SALES</span>
+            <span className="zh">销售信息（SKU 定价）</span>
+            <Tooltip title="通用发布范式：规格维度（颜色×尺寸）组合出 SKU，每个组合独立售价与库存；发布到 1688 国际站 / 抖店 / 拼多多等平台时按各平台规格结构自动映射。">
+              <span className="i" style={{ cursor: 'help' }}>
+                ⓘ
+              </span>
+            </Tooltip>
+            {isDirty('skus') ? <PendingTag /> : null}
+            <span className="sp" />
+            <span className="meta">{skus.length} 个 SKU</span>
+          </div>
+          <div className="cbody">
+            {ladderShared ? (
+              <div style={{ marginBottom: 4 }}>
+                <div className="glabel">
+                  源站采购阶梯 <span style={{ color: 'var(--text-3)' }}>（点选你的预计采购档，作为定价成本）</span>
+                </div>
+                <div className="plad">
+                  {firstLadder.map((t, i) => {
+                    const rng =
+                      t.maxQuantity == null || t.maxQuantity === -1
+                        ? `≥${t.minQuantity}`
+                        : `${t.minQuantity}-${t.maxQuantity}`;
+                    const active = i === costTierIdx;
+                    return (
+                      <div key={i} className={`pt-tier${active ? ' on' : ''}`} onClick={() => setCostTierIdx(i)}>
+                        <span className="pick">成本档</span>
+                        <div className="pv">
+                          {curSym(t.currency)}
+                          {t.price}
+                        </div>
+                        <div className="pq">
+                          {rng} {unitLabel}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            {primaryDim ? (
+              <div style={{ marginBottom: 8 }}>
+                <Typography.Text strong style={{ fontSize: 13 }}>
+                  {primaryDim.name}：{primarySel}
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
+                  {primaryDim.values.length} 种 · 点选切换（绿色角标=该{primaryDim.name}下已定价规格数）
+                </Typography.Text>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+                  {primaryDim.values.map((v) => {
+                    const active = v.value === primarySel;
+                    const priced = skus.filter(
+                      (s) => skuAttr(s, primaryDim.name) === v.value && draftSku(s.id).priceTarget != null,
+                    ).length;
+                    return (
+                      <span
+                        key={v.value}
+                        onClick={() => setSelPrimary(v.value)}
+                        style={{
+                          position: 'relative',
+                          cursor: 'pointer',
+                          display: 'inline-block',
+                          border: active ? '2px solid #222' : '1px solid #d9d9d9',
+                          borderRadius: 8,
+                          padding: 2,
+                          lineHeight: 0,
+                        }}
+                      >
+                        {v.image ? (
+                          <Image
+                            width={48}
+                            height={48}
+                            preview={false}
+                            src={v.image}
+                            fallback={IMG_FALLBACK}
+                            style={{ borderRadius: 6, objectFit: 'cover', pointerEvents: 'none' }}
+                          />
+                        ) : (
+                          <span
+                            style={{ display: 'inline-block', lineHeight: '20px', padding: '4px 12px', fontSize: 12 }}
+                          >
+                            {v.value}
+                          </span>
+                        )}
+                        {priced > 0 ? (
+                          <span
+                            style={{
+                              position: 'absolute',
+                              top: -8,
+                              right: -8,
+                              background: '#52c41a',
+                              color: '#fff',
+                              fontSize: 11,
+                              borderRadius: 10,
+                              padding: '0 6px',
+                              lineHeight: '16px',
+                              zIndex: 1,
+                            }}
+                          >
+                            {priced}
+                          </span>
+                        ) : null}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            {rowSkus.length ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {otherDims.length ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {otherDims.map((d) => d.name).join(' / ')}
+                  </Typography.Text>
+                ) : null}
+                {rowSkus.map((s) => {
+                  const d = draftSku(s.id);
+                  const skuCost =
+                    Array.isArray(s.ladderPrice) && s.ladderPrice[costTierIdx]
+                      ? s.ladderPrice[costTierIdx].price
+                      : costPrice;
+                  const cur =
+                    (Array.isArray(s.ladderPrice) && s.ladderPrice[0] && s.ladderPrice[0].currency) ||
+                    detail.currencyOriginal;
+                  const mg =
+                    d.priceTarget != null && skuCost != null && d.priceTarget > 0
+                      ? Math.round(((d.priceTarget - skuCost) / d.priceTarget) * 100)
+                      : null;
+                  return (
+                    <div key={s.id} className="skurow">
+                      <span className="tag2">
+                        {otherDims.length
+                          ? otherDims
+                              .map((dm) => skuAttr(s, dm.name))
+                              .filter(Boolean)
+                              .join(' / ')
+                          : s.specValue || s.sku}
+                      </span>
+                      <div className="cost">
+                        成本 <b>{skuCost != null ? `${curSym(cur)}${skuCost}` : '-'}</b>
+                      </div>
+                      <div className="field">
+                        <span className="fl">售价</span>
+                        <InputNumber
+                          size="small"
+                          disabled={locked}
+                          min={0}
+                          step={0.01}
+                          value={d.priceTarget}
+                          onChange={(v) => setSkuField(s.id, 'priceTarget', v)}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      <div
+                        className="margin"
+                        style={{ color: mg == null ? 'var(--text-3)' : mg < 0 ? 'var(--coral)' : 'var(--jade)' }}
+                      >
+                        {mg == null ? '毛利 -' : `毛利 ${mg}%`}
+                      </div>
+                      <div className="field">
+                        <span className="fl">库存</span>
+                        <InputNumber
+                          size="small"
+                          disabled={locked}
+                          min={0}
+                          value={d.stock}
+                          onChange={(v) => setSkuField(s.id, 'stock', v)}
+                          style={{ width: '100%' }}
+                          placeholder="必填"
+                          status={!locked && d.priceTarget != null && !(d.stock > 0) ? 'error' : undefined}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            {!locked && ladderShared ? (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  marginTop: 10,
+                  padding: '6px 8px',
+                  background: '#fafafa',
+                  borderRadius: 6,
+                }}
+              >
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  批量定价：成本 {costTier ? `${curSym(costTier.currency)}${costTier.price}` : '-'} × (1 + 利润率
+                </Typography.Text>
+                <InputNumber
+                  size="small"
+                  min={0}
+                  max={500}
+                  value={marginPct}
+                  onChange={(v) => setMarginPct(v || 0)}
+                  style={{ width: 72 }}
+                  suffix="%"
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  )
+                </Typography.Text>
+                <Button size="small" onClick={() => fillPrices(false)}>
+                  应用到全部 SKU
+                </Button>
+                {primaryDim ? (
+                  <Button size="small" onClick={() => fillPrices(true)}>
+                    仅当前{primaryDim.name}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {LadderEditor}
             <div
               style={{
                 display: 'flex',
-                gap: 20,
+                alignItems: 'center',
+                gap: 12,
                 flexWrap: 'wrap',
-                marginTop: 4,
-                paddingBottom: 8,
-                borderBottom: '1px solid #f5f5f5',
+                marginTop: 10,
+                paddingTop: 8,
+                borderTop: '1px solid #f5f5f5',
               }}
             >
-              {firstLadder.map((t, i) => {
-                const rng =
-                  t.maxQuantity == null || t.maxQuantity === -1
-                    ? `≥${t.minQuantity}`
-                    : `${t.minQuantity}-${t.maxQuantity}`;
-                const active = i === costTierIdx;
-                return (
-                  <div
-                    key={i}
-                    onClick={() => setCostTierIdx(i)}
-                    style={{
-                      cursor: 'pointer',
-                      padding: '2px 8px',
-                      borderRadius: 6,
-                      background: active ? '#fff1f0' : 'transparent',
-                    }}
-                  >
-                    <div style={{ fontSize: 20, fontWeight: 700, color: active ? '#ff4d4f' : '#222' }}>
-                      {curSym(t.currency)}
-                      {t.price}
-                    </div>
-                    <div style={{ fontSize: 12, color: active ? '#ff4d4f' : '#888' }}>
-                      {rng} {unitLabel}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-        {primaryDim ? (
-          <div style={{ marginBottom: 8 }}>
-            <Typography.Text strong style={{ fontSize: 13 }}>
-              {primaryDim.name}：{primarySel}
-            </Typography.Text>
-            <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
-              {primaryDim.values.length} 种 · 点选切换（绿色角标=该{primaryDim.name}下已定价规格数）
-            </Typography.Text>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
-              {primaryDim.values.map((v) => {
-                const active = v.value === primarySel;
-                const priced = skus.filter(
-                  (s) => skuAttr(s, primaryDim.name) === v.value && draftSku(s.id).priceTarget != null,
-                ).length;
-                return (
-                  <span
-                    key={v.value}
-                    onClick={() => setSelPrimary(v.value)}
-                    style={{
-                      position: 'relative',
-                      cursor: 'pointer',
-                      display: 'inline-block',
-                      border: active ? '2px solid #222' : '1px solid #d9d9d9',
-                      borderRadius: 8,
-                      padding: 2,
-                      lineHeight: 0,
-                    }}
-                  >
-                    {v.image ? (
-                      <Image
-                        width={48}
-                        height={48}
-                        preview={false}
-                        src={v.image}
-                        fallback={IMG_FALLBACK}
-                        style={{ borderRadius: 6, objectFit: 'cover', pointerEvents: 'none' }}
-                      />
-                    ) : (
-                      <span style={{ display: 'inline-block', lineHeight: '20px', padding: '4px 12px', fontSize: 12 }}>
-                        {v.value}
-                      </span>
-                    )}
-                    {priced > 0 ? (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          top: -8,
-                          right: -8,
-                          background: '#52c41a',
-                          color: '#fff',
-                          fontSize: 11,
-                          borderRadius: 10,
-                          padding: '0 6px',
-                          lineHeight: '16px',
-                          zIndex: 1,
-                        }}
-                      >
-                        {priced}
-                      </span>
-                    ) : null}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-        {rowSkus.length ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {otherDims.length ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {otherDims.map((d) => d.name).join(' / ')}
+              <Typography.Text style={{ fontSize: 13 }}>
+                发布展示价：
+                <Typography.Text strong style={{ fontSize: 15, color: '#ff4d4f' }}>
+                  {autoPrice != null ? `${autoPrice} 起` : '未定价'}
+                </Typography.Text>
               </Typography.Text>
-            ) : null}
-            {rowSkus.map((s) => {
-              const d = draftSku(s.id);
-              const skuCost =
-                Array.isArray(s.ladderPrice) && s.ladderPrice[costTierIdx]
-                  ? s.ladderPrice[costTierIdx].price
-                  : costPrice;
-              const cur =
-                (Array.isArray(s.ladderPrice) && s.ladderPrice[0] && s.ladderPrice[0].currency) ||
-                detail.currencyOriginal;
-              const mg =
-                d.priceTarget != null && skuCost != null && d.priceTarget > 0
-                  ? Math.round(((d.priceTarget - skuCost) / d.priceTarget) * 100)
-                  : null;
-              return (
-                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span
-                    style={{
-                      border: '1px solid #d9d9d9',
-                      borderRadius: 6,
-                      padding: '3px 10px',
-                      fontSize: 12,
-                      minWidth: 96,
-                      textAlign: 'center',
-                    }}
-                  >
-                    {otherDims.length
-                      ? otherDims
-                          .map((dm) => skuAttr(s, dm.name))
-                          .filter(Boolean)
-                          .join(' / ')
-                      : s.specValue || s.sku}
-                  </span>
-                  <Typography.Text type="secondary" style={{ fontSize: 12, width: 84 }}>
-                    成本 {skuCost != null ? `${curSym(cur)}${skuCost}` : '-'}
-                  </Typography.Text>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    售价
-                  </Typography.Text>
-                  <InputNumber
-                    size="small"
-                    disabled={locked}
-                    min={0}
-                    step={0.01}
-                    value={d.priceTarget}
-                    onChange={(v) => setSkuField(s.id, 'priceTarget', v)}
-                    style={{ width: 92 }}
-                  />
-                  <Typography.Text
-                    style={{ fontSize: 12, width: 64, color: mg == null ? '#bbb' : mg < 0 ? '#ff4d4f' : '#52c41a' }}
-                  >
-                    {mg == null ? '毛利 -' : `毛利 ${mg}%`}
-                  </Typography.Text>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    库存
-                  </Typography.Text>
-                  <InputNumber
-                    size="small"
-                    disabled={locked}
-                    min={0}
-                    value={d.stock}
-                    onChange={(v) => setSkuField(s.id, 'stock', v)}
-                    style={{ width: 84 }}
-                    placeholder="必填"
-                    status={!locked && d.priceTarget != null && !(d.stock > 0) ? 'error' : undefined}
-                  />
-                </div>
-              );
-            })}
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                （自动=最低 SKU 售价）
+              </Typography.Text>
+              <span style={{ flex: 1 }} />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                划线价
+              </Typography.Text>
+              <InputNumber
+                size="small"
+                disabled={locked}
+                min={0}
+                step={0.01}
+                value={draft.listPriceTarget}
+                onChange={(v) => setDraftField('listPriceTarget', v)}
+                style={{ width: 92 }}
+              />
+              <Typography.Text style={{ fontSize: 13 }}>
+                总库存：
+                {autoStock > 0 ? (
+                  <Typography.Text strong>{autoStock}</Typography.Text>
+                ) : (
+                  <Typography.Text type="danger">未填</Typography.Text>
+                )}
+              </Typography.Text>
+              {autoStock > 0 ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  （自动=各 SKU 之和）
+                </Typography.Text>
+              ) : (
+                <InputNumber
+                  size="small"
+                  disabled={locked}
+                  min={0}
+                  value={draft.stock}
+                  onChange={(v) => setDraftField('stock', v)}
+                  style={{ width: 92 }}
+                  placeholder="必填"
+                  status={!locked ? 'error' : undefined}
+                />
+              )}
+              {!locked && (draft.skus || []).some((s) => !(s.stock > 0)) ? (
+                <Button
+                  size="small"
+                  onClick={() =>
+                    setDraft((d) => ({ ...d, skus: d.skus.map((s) => (s.stock > 0 ? s : { ...s, stock: 1000 })) }))
+                  }
+                >
+                  空库存全部填 1000
+                </Button>
+              ) : null}
+            </div>
           </div>
-        ) : null}
-        {!locked && ladderShared ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              flexWrap: 'wrap',
-              marginTop: 10,
-              padding: '6px 8px',
-              background: '#fafafa',
-              borderRadius: 6,
-            }}
-          >
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              批量定价：成本 {costTier ? `${curSym(costTier.currency)}${costTier.price}` : '-'} × (1 + 利润率
-            </Typography.Text>
-            <InputNumber
-              size="small"
-              min={0}
-              max={500}
-              value={marginPct}
-              onChange={(v) => setMarginPct(v || 0)}
-              style={{ width: 72 }}
-              suffix="%"
-            />
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              )
-            </Typography.Text>
-            <Button size="small" onClick={() => fillPrices(false)}>
-              应用到全部 SKU
-            </Button>
-            {primaryDim ? (
-              <Button size="small" onClick={() => fillPrices(true)}>
-                仅当前{primaryDim.name}
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        {LadderEditor}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            flexWrap: 'wrap',
-            marginTop: 10,
-            paddingTop: 8,
-            borderTop: '1px solid #f5f5f5',
-          }}
-        >
-          <Typography.Text style={{ fontSize: 13 }}>
-            发布展示价：
-            <Typography.Text strong style={{ fontSize: 15, color: '#ff4d4f' }}>
-              {autoPrice != null ? `${autoPrice} 起` : '未定价'}
-            </Typography.Text>
-          </Typography.Text>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            （自动=最低 SKU 售价）
-          </Typography.Text>
-          <span style={{ flex: 1 }} />
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            划线价
-          </Typography.Text>
-          <InputNumber
-            size="small"
-            disabled={locked}
-            min={0}
-            step={0.01}
-            value={draft.listPriceTarget}
-            onChange={(v) => setDraftField('listPriceTarget', v)}
-            style={{ width: 92 }}
-          />
-          <Typography.Text style={{ fontSize: 13 }}>
-            总库存：
-            {autoStock > 0 ? (
-              <Typography.Text strong>{autoStock}</Typography.Text>
-            ) : (
-              <Typography.Text type="danger">未填</Typography.Text>
-            )}
-          </Typography.Text>
-          {autoStock > 0 ? (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              （自动=各 SKU 之和）
-            </Typography.Text>
-          ) : (
-            <InputNumber
-              size="small"
-              disabled={locked}
-              min={0}
-              value={draft.stock}
-              onChange={(v) => setDraftField('stock', v)}
-              style={{ width: 92 }}
-              placeholder="必填"
-              status={!locked ? 'error' : undefined}
-            />
-          )}
-          {!locked && (draft.skus || []).some((s) => !(s.stock > 0)) ? (
-            <Button
-              size="small"
-              onClick={() =>
-                setDraft((d) => ({ ...d, skus: d.skus.map((s) => (s.stock > 0 ? s : { ...s, stock: 1000 })) }))
-              }
-            >
-              空库存全部填 1000
-            </Button>
-          ) : null}
         </div>
       </div>
     ) : (
