@@ -427,5 +427,9 @@
   "Adopted (appended)": "Adopted — appended to the gallery",
   "Undo": "Undo",
   "Adoption reverted": "Adoption reverted — back in candidates",
-  "Revert failed": "Revert failed"
+  "Revert failed": "Revert failed",
+  "Added to queue": "Added to the generation queue",
+  "Retry failed": "Retry failed",
+  "Clear finished": "Clear finished",
+  "Generation queue": "Generation queue"
 }

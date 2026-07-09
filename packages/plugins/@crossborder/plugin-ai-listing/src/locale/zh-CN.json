@@ -427,5 +427,9 @@
   "Adopted (appended)": "已采纳，已追加到图集",
   "Undo": "撤销",
   "Adoption reverted": "已撤销采纳，候选已回到候选区",
-  "Revert failed": "撤销失败"
+  "Revert failed": "撤销失败",
+  "Added to queue": "已加入生成队列",
+  "Retry failed": "重试失败任务",
+  "Clear finished": "清空已结束",
+  "Generation queue": "生成队列"
 }

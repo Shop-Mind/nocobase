@@ -301,6 +301,9 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .mc{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2)}
 
+/* 生成队列 chip(工具栏右侧):⏳排队+进行 ✓完成 ✕失败,点开 Popover 看逐条状态/重试 */
+.aic-scope .genq{font-weight:700;color:var(--violet);background:var(--violet-soft);border:1px solid var(--violet-line);border-radius:20px;padding:3px 10px;cursor:pointer;white-space:nowrap}
+
 .aic-scope .mc .box{background:#fff;border:1px solid var(--line);border-radius:7px;padding:4px 9px;font-weight:600;color:var(--text)}
 
 .aic-scope .studio-body{display:grid;grid-template-columns:220px 1fr;gap:15px;padding:15px 16px}

@@ -15,12 +15,13 @@
 // 安全铁律:生成只产候选(不进发布);采纳/弃用是用户显式动作,走受控 action + 审计。AI 改图重活交给原生抽屉。
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { App as AntdApp, Empty, InputNumber, Modal, Select, Spin, Typography } from 'antd';
+import { App as AntdApp, Empty, InputNumber, Modal, Popover, Select, Spin, Typography } from 'antd';
 import { CompareView } from './CompareModal';
 import { AdoptModal, type AdoptChoice } from './AdoptModal';
 import { CreativeWorkshop } from '../CreativeWorkshop/CreativeWorkshop';
 import { AIC_SCOPE_CLASS } from '../shared/creative-console';
 import { QUICK_SCENES, sceneLabel, sceneMeta, relTime, isRecent } from './scenes-meta';
+import { clearSettledGenerate, enqueueGenerate, retryFailedGenerate, useGenQueue } from './gen-queue';
 import {
   callMediaApi,
   makeT,
@@ -145,7 +146,6 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   const [curtainPct, setCurtainPct] = useState(50); // 对比拉帘:候选层从左侧裁切的百分比
   const stageRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
-  const [busy, setBusy] = useState<{ done: number; total: number } | null>(null);
   const [adoptTarget, setAdoptTarget] = useState<MediaAsset | null>(null);
   const [adopting, setAdopting] = useState(false);
   // 找美工改图后,员工在原生抽屉里产候选;这里轮询刷新让候选回流页面(双端同步)。设一个观察截止点。
@@ -240,50 +240,45 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   }, [picked, currentId]);
 
   // 快捷直连:对目标逐张生成候选(受服务端日限额保护)
+  // 快捷场景改图 → 进生成队列(模块级,跨商品切换存活):工具栏不再锁死,可连续给多张图/多个场景派活。
   const quickGenerate = useCallback(
-    async (sceneKey: string, instruction?: string) => {
+    (sceneKey: string, instruction?: string) => {
       const targets = genTargets();
       if (!targets.length) {
         message.warning(t('Select a source image first'));
         return;
       }
-      setBusy({ done: 0, total: targets.length * count });
       const [llmService, model] = modelKey ? modelKey.split(/:(.+)/) : [undefined, undefined];
-      let firstAssetId: number | undefined;
-      let failed = 0;
-      let done = 0;
-      for (let i = 0; i < targets.length; i++) {
-        const res = await callMediaApi<{ assets: Array<{ assetId: number; url: string }> }>(
-          app,
-          'aiListingMedia:generate',
-          {
-            productId,
-            assetId: targets[i],
-            scene: sceneKey,
-            instruction: instruction || '',
-            n: count,
-            llmService,
-            model,
-          },
-        );
-        if (res.ok) {
-          if (!firstAssetId) firstAssetId = res.data?.assets?.[0]?.assetId;
-        } else {
-          failed++;
-          message.error(res.message || t('Generation failed'));
-        }
-        done += count;
-        setBusy({ done, total: targets.length * count });
-      }
-      setBusy(null);
-      if (failed < targets.length) {
-        message.success(t('Candidates generated'));
-        await refresh(firstAssetId ? { focusCandidateId: firstAssetId } : undefined);
-        onChange?.();
-      }
+      const sm = sceneMeta(sceneKey);
+      enqueueGenerate(
+        app,
+        targets.map((assetId) => ({
+          productId,
+          assetId,
+          scene: sceneKey,
+          label: `${sm.label} · #${assetId}`,
+          instruction,
+          n: count,
+          llmService,
+          model,
+        })),
+      );
+      message.success(t('Added to queue'));
     },
-    [app, productId, genTargets, refresh, onChange, message, t, modelKey, count],
+    [app, productId, genTargets, message, t, modelKey, count],
   );
+
+  // 队列有任务完成(本商品)→ 刷新候选区,新候选带 NEW 角标自然浮现;失败不打扰,队列 chip 里可见可重试。
+  const genq = useGenQueue();
+  const doneForProduct = genq.tasks.filter((tk) => tk.productId === productId && tk.status === 'done').length;
+  const prevDoneRef = useRef(doneForProduct);
+  useEffect(() => {
+    if (doneForProduct > prevDoneRef.current) {
+      refresh();
+      onChange?.();
+    }
+    prevDoneRef.current = doneForProduct;
+  }, [doneForProduct, refresh, onChange]);
 
   const doAdopt = useCallback(
     async (choice: AdoptChoice) => {
@@ -683,14 +678,9 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
             💬 {t('Ask the design AI')}
           </button>
         ) : null}
+        {/* 队列化后场景按钮不再随生成锁死:点了就进队列,可连续派活 */}
         {QUICK_SCENES.map((q) => (
-          <button
-            type="button"
-            key={q.key}
-            className="tbtn"
-            disabled={Boolean(busy)}
-            onClick={() => quickGenerate(q.key, q.instruction)}
-          >
+          <button type="button" key={q.key} className="tbtn" onClick={() => quickGenerate(q.key, q.instruction)}>
             {q.icon} {q.label}
           </button>
         ))}
@@ -721,10 +711,58 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
             title={t('Number of candidates per image')}
             style={{ width: 52 }}
           />
-          {busy ? (
-            <span style={{ color: 'var(--violet)', fontWeight: 600 }}>
-              {t('Generating')} {busy.done}/{busy.total}…
-            </span>
+          {/* 生成队列 chip:排队/进行中/完成/失败一眼可见,Popover 里逐条状态 + 重试失败/清空 */}
+          {genq.tasks.length ? (
+            <Popover
+              trigger="click"
+              placement="bottomRight"
+              content={
+                <div style={{ width: 300 }}>
+                  <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                    {genq.tasks.map((tk) => (
+                      <div
+                        key={tk.id}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 12 }}
+                      >
+                        <span style={{ width: 16, textAlign: 'center' }}>
+                          {tk.status === 'done'
+                            ? '✅'
+                            : tk.status === 'failed'
+                              ? '❌'
+                              : tk.status === 'running'
+                                ? '⏳'
+                                : '·'}
+                        </span>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {tk.label}
+                        </span>
+                        {tk.status === 'failed' && tk.error ? (
+                          <Typography.Text
+                            type="danger"
+                            style={{ fontSize: 11, maxWidth: 110 }}
+                            ellipsis={{ tooltip: tk.error }}
+                          >
+                            {tk.error}
+                          </Typography.Text>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 8, fontSize: 12 }}>
+                    {genq.failed ? <a onClick={() => retryFailedGenerate(app)}>{t('Retry failed')}</a> : null}
+                    {genq.done || genq.failed ? (
+                      <a onClick={() => clearSettledGenerate()}>{t('Clear finished')}</a>
+                    ) : null}
+                  </div>
+                </div>
+              }
+            >
+              <span className="genq" role="button" tabIndex={0} title={t('Generation queue')}>
+                {genq.queued + genq.running ? `⏳${genq.queued + genq.running}` : ''}
+                {genq.done ? ` ✓${genq.done}` : ''}
+                {genq.failed ? ` ✕${genq.failed}` : ''}
+              </span>
+            </Popover>
           ) : null}
           {picked.size ? (
             <span>
