@@ -471,6 +471,19 @@
 
 **回退**：estimate 失败前端回退静态 cost 展示，生成不受影响。
 
+**✅ 验收记录（2026-07-09 完成）**
+- 后端:`pricing.ts` 价目 14 场景×两档 + default(t2i/未知场景) + video(锚点=调研数据:白底 4、场景 10/17);
+  env `AI_LISTING_MEDIA_PRICING`(JSON)按场景/档浅合并覆盖,非法 JSON 静默回默认;`estimateCost` =
+  单价×每源图张数×源图数,含 breakdown,count/sources 夹取(≤12/≤9)。action `estimateCost`(只读+acl)。
+  记账:editImage 每张候选 genParams.estimatedBeans(单张价)+ job metadata(总额);generateVideo 提交时
+  job metadata 记预估,poll 成功落资产时透传进 genParams。只记不扣,日限额继续兜底。`pricing.test.ts` 5/5,
+  edit-adopt 28/28 零回归。
+- 前端:生成栏消耗改调 estimateCost(防抖 350ms;依赖 功能/档位/张数/源图数/换色色数——换色多色时张数=色数),
+  失败回退静态 cost;ⓘ 从 Tooltip 升级 Popover 明细(「N i豆/张 × 每源图 X 张 × Y 张源图 = Z i豆」+
+  记账说明)。创作历史条目 meta 行显示当次消耗(旧数据无该字段不显示,属预期)。
+- 测试:单测 5/5;E2E `verify-w6-pricing.js` 6/6(档位 20 vs 34、白底×3 源图=12、生成后候选与历史都带
+  estimatedBeans、净零清理);浏览器探针:切基础/进阶 34↔20 实时变、Popover 算式、历史消耗(新记录)。
+
 ---
 
 ## WB · Backlog（另排期，不阻塞本轮）

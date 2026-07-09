@@ -20,6 +20,7 @@ import type { MediaProvider } from './providers/types';
 import { downloadToStorage } from './download';
 import { buildScenePrompt, getMediaScene, listMediaScenes, type MediaScene } from './scenes';
 import { toPublicUrl } from './public-url';
+import { estimateCost } from './pricing';
 import { writeAudit as writeAuditEntries, type AuditEntry } from '../processing/audit';
 import { EDITABLE_STATUS } from '../shared/product-status';
 
@@ -611,6 +612,8 @@ export async function editImage(
       const size = ratioToSize(input.aspect);
       if (size) parameters.size = size;
     }
+    // i豆记账(W6):单张价按 场景×档位;每张候选记单价,任务记总额。只记不扣(无余额体系)。
+    const beanUnit = estimateCost({ scene: input.scene, tier: input.tier, count: 1, sources: 1 }).beans;
     const images = srcInfo ? (refInfo ? [srcInfo.dataUri, refInfo.dataUri] : [srcInfo.dataUri]) : [];
     const output = await provider.invokeMediaTask({
       task: 'image_gen',
@@ -665,6 +668,7 @@ export async function editImage(
             n,
             sourceAssetId: (sourceAsset?.get('id') as number | undefined) ?? null,
             sourceImageUrl: sourceUrl || null,
+            estimatedBeans: beanUnit,
           },
           meta: { storedUrl: finalUrl, prompt, model: target.model },
         },
@@ -683,6 +687,7 @@ export async function editImage(
           parameters,
           sourceUrl,
           assets,
+          estimatedBeans: beanUnit * assets.length,
         },
       },
     });
@@ -786,6 +791,7 @@ export async function generateVideo(
         sourceUrl,
         publicImgUrl: pub.url,
         parentAssetId: (sourceAsset?.get('id') as number | undefined) ?? null,
+        estimatedBeans: estimateCost({ scene: 'video', count: 1, sources: 1 }).beans,
       },
     },
   });
@@ -857,6 +863,7 @@ export async function pollVideoJob(
         model: metadata.model,
         sourceImageUrl: metadata.sourceUrl,
         sourceAssetId: (metadata.parentAssetId as number | undefined) ?? null,
+        estimatedBeans: (metadata.estimatedBeans as number | undefined) ?? null,
       },
       meta: { storedUrl: finalUrl, prompt: metadata.prompt, model: metadata.model },
     },

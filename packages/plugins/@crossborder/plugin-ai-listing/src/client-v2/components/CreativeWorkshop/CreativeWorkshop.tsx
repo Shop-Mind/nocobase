@@ -21,6 +21,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Popover,
   Progress,
   Segmented,
   Select,
@@ -506,6 +507,11 @@ function WorkshopBody({
   const [hdScale, setHdScale] = useState<2 | 4>(2); // 高清放大倍数
   const [eraseTargets, setEraseTargets] = useState<string[]>([]); // 擦除元素勾选
   const [sceneRelayout, setSceneRelayout] = useState(false); // 场景图:允许重新摆放商品
+  // W6 i豆动态估算(服务端价目;失败回退 functions.ts 静态 cost)
+  const [est, setEst] = useState<{
+    beans: number;
+    breakdown: { scene: string; tier: string; unit: number; count: number; sources: number; images: number };
+  } | null>(null);
   const [pickedPoints, setPickedPoints] = useState<string[]>([]); // 营销卖点图:勾选的 AI 卖点
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -614,6 +620,24 @@ function WorkshopBody({
     if (!activeFunc.templateTabs) return;
     loadTpls();
   }, [activeFunc.templateTabs, loadTpls]);
+
+  // W6:预计消耗动态估算(防抖 350ms):功能/档位/张数/源图数/换色色数任一变化即重估;失败保持上次或回退静态
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const colorCount = activeFunc.key === 'recolor' ? recolorColors.length + (customColor ? 1 : 0) : 0;
+      const res = await callMediaApi<{
+        beans: number;
+        breakdown: { scene: string; tier: string; unit: number; count: number; sources: number; images: number };
+      }>(app, 'aiListingMedia:estimateCost', {
+        scene: activeKey,
+        tier,
+        count: colorCount || count,
+        sources: Math.max(picked.size, 1),
+      });
+      if (res.ok && res.data) setEst(res.data);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [app, activeKey, activeFunc.key, tier, count, picked, recolorColors, customColor]);
 
   // 候选回流轮询(生成/找美工后 3 分钟内每 5s 刷新)
   useEffect(() => {
@@ -2129,14 +2153,38 @@ function WorkshopBody({
                 />
               ) : null}
               <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
-                <span style={{ fontSize: 11, color: '#6b7280' }}>
+                <span style={{ fontSize: 11, color: '#6b7280' }} data-testid="ws-est-cost">
                   {t('Est. cost')}{' '}
                   <Typography.Text strong style={{ color: '#faad14', fontSize: 13 }}>
-                    {activeFunc.cost * count} {t('beans')}
+                    {est ? est.beans : activeFunc.cost * count} {t('beans')}
                   </Typography.Text>{' '}
-                  <Tooltip title={t('Reference price: function base cost × count. Dynamic pricing arrives later.')}>
+                  <Popover
+                    title={t('Cost breakdown')}
+                    content={
+                      est ? (
+                        <div style={{ fontSize: 12, lineHeight: '20px' }}>
+                          <div>
+                            {t(
+                              '{{unit}} beans/image × {{count}} per source × {{sources}} source(s) = {{beans}} beans',
+                              {
+                                unit: est.breakdown.unit,
+                                count: est.breakdown.count,
+                                sources: est.breakdown.sources,
+                                beans: est.beans,
+                              },
+                            )}
+                          </div>
+                          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                            {t('Priced by function × tier; recorded per generation, no balance deduction yet.')}
+                          </Typography.Text>
+                        </div>
+                      ) : (
+                        t('Reference price: function base cost × count. Dynamic pricing arrives later.')
+                      )
+                    }
+                  >
                     <span style={{ cursor: 'help' }}>ⓘ</span>
-                  </Tooltip>
+                  </Popover>
                 </span>
                 <Button
                   type="primary"

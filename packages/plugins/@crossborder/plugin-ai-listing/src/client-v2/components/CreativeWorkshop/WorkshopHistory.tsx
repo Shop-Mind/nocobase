@@ -222,6 +222,12 @@ export function WorkshopHistory({
                       <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
                         {relTime(it.createdAt, t)}
                       </Typography.Text>
+                      {/* W6:当次消耗(记账值;失败任务无消耗) */}
+                      {it.genParams?.estimatedBeans ? (
+                        <Typography.Text style={{ fontSize: 11.5, color: '#faad14' }}>
+                          {it.genParams.estimatedBeans} {t('beans')}
+                        </Typography.Text>
+                      ) : null}
                     </div>
                     {instr ? (
                       <Typography.Paragraph

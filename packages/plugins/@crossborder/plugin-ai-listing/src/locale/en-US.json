@@ -561,5 +561,8 @@
   "Elements to erase": "Elements to erase",
   "multi-select; add specifics below": "multi-select; add specifics below",
   "Allow re-arranging the product": "Allow re-arranging the product",
-  "off = keep the original placement strictly": "off = keep the original placement strictly"
+  "off = keep the original placement strictly": "off = keep the original placement strictly",
+  "Cost breakdown": "Cost breakdown",
+  "{{unit}} beans/image × {{count}} per source × {{sources}} source(s) = {{beans}} beans": "{{unit}} beans/image × {{count}} per source × {{sources}} source(s) = {{beans}} beans",
+  "Priced by function × tier; recorded per generation, no balance deduction yet.": "Priced by function × tier; recorded per generation, no balance deduction yet."
 }

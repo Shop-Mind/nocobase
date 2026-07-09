@@ -31,6 +31,7 @@ import { suggestPrompts } from './suggest';
 import { toPublicUrl } from './public-url';
 import { deleteStyleTemplate, listStyleTemplates, saveStyleTemplate } from './style-templates';
 import { listMediaHistory } from './history';
+import { estimateCost } from './pricing';
 
 const MEDIA_ACTIONS = [
   'scenes',
@@ -49,6 +50,7 @@ const MEDIA_ACTIONS = [
   'saveStyleTemplate',
   'deleteStyleTemplate',
   'history',
+  'estimateCost',
 ] as const;
 
 // 服务层错误码 → HTTP 状态:限额 429、找不到 404、越权 403、状态锁 409,其余按参数/配置错误 400
@@ -401,6 +403,25 @@ export function setupMedia(plugin: Plugin): void {
         } catch (e) {
           handleError(ctx, e, traceId);
         }
+        await next();
+      },
+
+      // i豆估价(W6,只读):功能×档位×张数×源图数 → {beans, breakdown};价目 env AI_LISTING_MEDIA_PRICING 可覆盖
+      estimateCost: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as {
+          scene?: string;
+          tier?: 'basic' | 'advanced';
+          count?: number;
+          sources?: number;
+        };
+        ctx.body = {
+          ok: true,
+          data: estimateCost({ scene: v.scene, tier: v.tier, count: v.count, sources: v.sources }),
+          warnings: [],
+          errors: [],
+          traceId,
+        };
         await next();
       },
 

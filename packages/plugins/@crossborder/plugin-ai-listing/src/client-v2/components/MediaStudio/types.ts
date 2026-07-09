@@ -43,6 +43,8 @@ export interface MediaAsset {
     style?: string | null;
     // 请求参数快照(W5:换色批量的 targetColor、高清倍数 upscale_factor 等在此)
     parameters?: Record<string, unknown> | null;
+    // 当次消耗(W6 记账,单张价;只记不扣)
+    estimatedBeans?: number | null;
   } | null;
   createdAt?: string;
 }
