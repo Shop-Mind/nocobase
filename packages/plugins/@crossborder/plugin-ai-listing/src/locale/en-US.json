@@ -439,5 +439,8 @@
   "Adopted candidates": "Adopted candidates",
   "Undo all": "Undo all",
   "←→ switch · A adopt · X discard": "←→ switch · A adopt · X discard",
-  "Drag to pan · double-click to reset": "Drag to pan · double-click to reset"
+  "Drag to pan · double-click to reset": "Drag to pan · double-click to reset",
+  "Describe an edit — Enter generates (applies to the selected image)": "Describe an edit — Enter generates (applies to the selected image)",
+  "Custom edit": "Custom edit",
+  "Generate": "Generate"
 }

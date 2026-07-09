@@ -21,7 +21,8 @@ export interface GenTask {
   id: number;
   productId: number;
   assetId: number;
-  scene: string;
+  /** 快捷场景 key;缺省 = 纯指令自定义改图(promptbar) */
+  scene?: string;
   /** 展示用:场景名 + 源图短标识(入列时生成,模块内不做 i18n) */
   label: string;
   instruction?: string;

@@ -474,6 +474,14 @@ export const CREATIVE_CONSOLE_CSS = `
 .aic-scope .zoomtag{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);font-size:10.5px;font-weight:700;color:#fff;background:rgba(20,18,30,.62);backdrop-filter:blur(3px);padding:3px 11px;border-radius:20px;pointer-events:none;white-space:nowrap}
 .aic-scope .stage.duo .duocell img{transition:transform .08s linear}
 
+/* ── 常驻 prompt 行(A6):舞台下方轻量自定义改图,回车进生成队列 ── */
+.aic-scope .promptbar{display:flex;gap:8px;margin:12px auto 0;max-width:560px}
+.aic-scope .promptbar input{flex:1;min-width:0;font:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;outline:0;background:#fff;box-shadow:var(--shadow-sm);color:var(--text)}
+.aic-scope .promptbar input:focus{border-color:var(--violet);box-shadow:0 0 0 3px rgba(106,92,255,.13)}
+.aic-scope .promptbar input::placeholder{color:var(--text-3)}
+.aic-scope .promptbar .pbgo{font:inherit;font-size:12px;font-weight:600;border:0;border-radius:10px;padding:0 15px;background:var(--violet);color:#fff;cursor:pointer;white-space:nowrap}
+.aic-scope .promptbar .pbgo:disabled{opacity:.45;cursor:not-allowed}
+
 .aic-scope .vslot{margin-bottom:13px}
 
 .aic-scope .vthumb{position:relative;width:100%;aspect-ratio:16/10;border-radius:10px;overflow:hidden;box-shadow:var(--shadow-sm);cursor:pointer;background:#15121e;border:1.5px solid transparent}

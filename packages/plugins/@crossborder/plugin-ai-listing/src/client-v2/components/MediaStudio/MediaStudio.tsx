@@ -271,6 +271,33 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     [app, productId, genTargets, message, t, modelKey, count],
   );
 
+  // 常驻 prompt(A6):轻量自定义改图(「背景换成大理石」)回车即进队列,不用开创意工坊弹窗。
+  const [promptText, setPromptText] = useState('');
+  const submitPrompt = useCallback(() => {
+    const instruction = promptText.trim();
+    if (!instruction) return;
+    const targets = genTargets();
+    if (!targets.length) {
+      message.warning(t('Select a source image first'));
+      return;
+    }
+    const [llmService, model] = modelKey ? modelKey.split(/:(.+)/) : [undefined, undefined];
+    enqueueGenerate(
+      app,
+      targets.map((assetId) => ({
+        productId,
+        assetId,
+        label: `${t('Custom edit')} · #${assetId}`,
+        instruction,
+        n: count,
+        llmService,
+        model,
+      })),
+    );
+    setPromptText('');
+    message.success(t('Added to queue'));
+  }, [app, productId, promptText, genTargets, message, t, modelKey, count]);
+
   // 队列有任务完成(本商品)→ 刷新候选区,新候选带 NEW 角标自然浮现;失败不打扰,队列 chip 里可见可重试。
   const genq = useGenQueue();
   const doneForProduct = genq.tasks.filter((tk) => tk.productId === productId && tk.status === 'done').length;
@@ -1099,6 +1126,28 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
                 </span>
               ) : null}
             </div>
+
+            {/* 常驻 prompt 行:自定义改图需求回车即生成(进队列),重编辑仍走创意工坊 */}
+            {data.gallery.length ? (
+              <form
+                className="promptbar"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitPrompt();
+                }}
+              >
+                <input
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  placeholder={t('Describe an edit — Enter generates (applies to the selected image)')}
+                  maxLength={300}
+                  aria-label={t('Custom edit')}
+                />
+                <button type="submit" className="pbgo" disabled={!promptText.trim()}>
+                  ↵ {t('Generate')}
+                </button>
+              </form>
+            ) : null}
 
             {/* 候选条:横滑 + 每张场景/时间角标 + 新出 NEW,点谁比谁 */}
             {data.candidates.length ? (

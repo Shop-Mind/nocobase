@@ -439,5 +439,8 @@
   "Adopted candidates": "已采纳候选",
   "Undo all": "撤销全部",
   "←→ switch · A adopt · X discard": "←→ 切换 · A 采纳 · X 弃用",
-  "Drag to pan · double-click to reset": "拖动平移 · 双击复位"
+  "Drag to pan · double-click to reset": "拖动平移 · 双击复位",
+  "Describe an edit — Enter generates (applies to the selected image)": "描述改图需求，回车生成（作用于当前选中图）",
+  "Custom edit": "自定义改图",
+  "Generate": "生成"
 }
