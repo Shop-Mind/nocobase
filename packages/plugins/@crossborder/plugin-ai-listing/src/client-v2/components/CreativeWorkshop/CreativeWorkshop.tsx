@@ -472,7 +472,8 @@ function WorkshopBody({
   const [recos, setRecos] = useState<string[]>([]); // 推荐提示词(看图出)
   const [recosLoading, setRecosLoading] = useState(false);
   const [recosFallback, setRecosFallback] = useState(false); // true=静态兜底(无视觉模型)
-  const [recosModel, setRecosModel] = useState<string | null>(null); // 实际看图的视觉模型名(兜底时 null)
+  const [recosModel, setRecosModel] = useState<string | null>(null); // 实际产词的模型名(兜底时 null)
+  const [recosBasis, setRecosBasis] = useState<'image' | 'title' | 'static'>('static'); // 产词依据(三级链)
   const [refImage, setRefImage] = useState<{ url: string; name: string } | null>(null); // 第二张图(Logo/材质参考)
   const [refUploading, setRefUploading] = useState(false);
   const [craft, setCraft] = useState<string>(''); // Logo 工艺
@@ -920,21 +921,23 @@ function WorkshopBody({
     const src = carryImages.find((c) => picked.has(c.key));
     if (!src) return;
     setRecosLoading(true);
-    const res = await callMediaApi<{ prompts: string[]; fallback: boolean; model: string | null }>(
-      app,
-      'aiListingMedia:suggestPrompts',
-      {
-        assetId: src.assetId,
-        sourceImageUrl: src.assetId ? undefined : src.url || undefined,
-        scene: activeFunc.key,
-        n: 3,
-      },
-    );
+    const res = await callMediaApi<{
+      prompts: string[];
+      fallback: boolean;
+      model: string | null;
+      basis?: 'image' | 'title' | 'static';
+    }>(app, 'aiListingMedia:suggestPrompts', {
+      assetId: src.assetId,
+      sourceImageUrl: src.assetId ? undefined : src.url || undefined,
+      scene: activeFunc.key,
+      n: 3,
+    });
     setRecosLoading(false);
     if (res.ok && res.data) {
       setRecos(res.data.prompts || []);
       setRecosFallback(Boolean(res.data.fallback));
       setRecosModel(res.data.model || null);
+      setRecosBasis(res.data.basis || (res.data.fallback ? 'static' : 'image'));
     } else {
       setRecos([]);
     }
@@ -1003,9 +1006,11 @@ function WorkshopBody({
             ? ''
             : recosFallback
               ? t('vision model unavailable — static examples, editable')
-              : recosModel
-                ? `${t('based on this product image')} · ${recosModel}`
-                : t('based on this product image')}
+              : recosBasis === 'title'
+                ? `${t('based on the product title (image not analyzed)')} · ${recosModel || ''}`
+                : recosModel
+                  ? `${t('based on this product image')} · ${recosModel}`
+                  : t('based on this product image')}
         </Typography.Text>
         <a onClick={() => fetchRecos()} style={{ marginLeft: 'auto', fontSize: 11.5, color: '#722ed1' }}>
           🔄 {t('Refresh')}

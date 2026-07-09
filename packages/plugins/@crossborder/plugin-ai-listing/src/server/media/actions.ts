@@ -206,6 +206,7 @@ export function setupMedia(plugin: Plugin): void {
           refImageUrl?: string;
           targetLanguage?: string;
           style?: string;
+          textToImage?: boolean;
         };
         try {
           const result = await editImage(plugin, {
@@ -224,6 +225,7 @@ export function setupMedia(plugin: Plugin): void {
             refImageUrl: v.refImageUrl || undefined,
             targetLanguage: v.targetLanguage || undefined,
             style: v.style || undefined,
+            textToImage: v.textToImage === true,
           });
           ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
         } catch (e) {

@@ -7,10 +7,12 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
-// 推荐提示词(对标创意工坊「点图自动出 3 条」):看商品图 → 视觉 chat 模型(qwen-vl/gpt-5.5 等,capability
-// task='chat' 且 input 含 'image')→ 产出 N 条场景/卖点描述。不是生图端点自带的 prompt_extend(文改文)。
-// 铁律:只读、只产候选提示词不写库;无视觉模型/失败/超时 → 返回静态兜底并标 fallback=true,绝不报错阻塞前端;
-// 商品图与 Key 只在服务端流转,出入参不含 Key。
+// 推荐提示词(对标创意工坊「点图自动出 3 条」):三级链依次尝试,每级短超时快速失败——
+//   ① 看图:视觉 chat 模型(qwen-vl/gpt-5.5 等,capability task='chat' 且 input 含 'image')看商品图产词;
+//   ② 看标题:纯文本 chat 模型(DeepSeek/grok 等)按商品标题产词(视觉线路全挂时的真 AI 降级);
+//   ③ 静态示例:全部失败时的固定词,前端明确标注。
+// env AI_LISTING_SUGGEST_MODEL("svc:model" 或裸模型名)可锁定只用某一个模型。
+// 铁律:只读、只产候选提示词不写库;任何失败绝不报错阻塞前端;商品图与 Key 只在服务端流转,出入参不含 Key。
 
 import type { Application } from '@nocobase/server';
 import { MediaServiceError, sourceImageInfo } from './service';
@@ -25,10 +27,12 @@ export interface SuggestPromptsInput {
 
 export interface SuggestPromptsResult {
   prompts: string[];
-  // 实际所用视觉模型;走兜底时为 null
+  // 实际产词的模型;静态兜底时为 null
   model: string | null;
-  // true = 未用真实模型(无视觉模型/失败/超时),prompts 为静态兜底
+  // true = 静态兜底(basis='static');保留字段兼容旧前端
   fallback: boolean;
+  // 产词依据:image=看图 / title=看商品标题(未看图) / static=固定示例
+  basis: 'image' | 'title' | 'static';
 }
 
 interface VisionProvider {
@@ -53,8 +57,16 @@ function getVisionAiManager(app: Application): VisionAiManager | undefined {
 // 重启后目录未加载时 gpt-5/gpt-4o 等会被暂判为纯文本;按名兜底避免头几次调用误降级。
 const VISION_MODEL_NAME = /(^|-)vl(-|\d|$)|vision|qvq|omni|gpt-5|gpt-4o|gpt-4\.|gpt-4-turbo/i;
 
-// 选一个视觉 chat 模型:① capability.task='chat' 且 input 含 'image';② 冷 catalog 兜底按已知视觉家族名匹配。无则 null。
-async function resolveVisionModel(aiManager: VisionAiManager): Promise<{ llmService: string; model: string } | null> {
+interface SuggestTarget {
+  llmService: string;
+  model: string;
+  // true=视觉模型(带图调用);false=纯文本模型(按商品标题调用)
+  vision: boolean;
+}
+
+// 组装尝试序列:env 锁定则只有一个;否则视觉模型(capability input 含 image / 已知视觉家族名)在前,
+// 纯文本 chat 模型在后(DeepSeek 官方直连最稳,排文本级第一),最多试 4 个。
+async function resolveSuggestTargets(aiManager: VisionAiManager): Promise<SuggestTarget[]> {
   const services = await aiManager.listAllEnabledModels();
   const chatModels: Array<{ llmService: string; model: string; input: string[] }> = [];
   for (const s of services) {
@@ -64,11 +76,24 @@ async function resolveVisionModel(aiManager: VisionAiManager): Promise<{ llmServ
       }
     }
   }
-  const byCap = chatModels.find((m) => m.input.includes('image'));
-  if (byCap) return { llmService: byCap.llmService, model: byCap.model };
-  const byName = chatModels.find((m) => VISION_MODEL_NAME.test(m.model));
-  if (byName) return { llmService: byName.llmService, model: byName.model };
-  return null;
+  const isVision = (m: { model: string; input: string[] }) =>
+    m.input.includes('image') || VISION_MODEL_NAME.test(m.model);
+  const env = (process.env.AI_LISTING_SUGGEST_MODEL || '').trim();
+  if (env) {
+    if (env.includes(':')) {
+      const i = env.indexOf(':');
+      const model = env.slice(i + 1);
+      return [{ llmService: env.slice(0, i), model, vision: VISION_MODEL_NAME.test(model) }];
+    }
+    const hit = chatModels.find((m) => m.model === env);
+    if (hit) return [{ llmService: hit.llmService, model: hit.model, vision: isVision(hit) }];
+  }
+  const vision = chatModels.filter(isVision).map((m) => ({ llmService: m.llmService, model: m.model, vision: true }));
+  const text = chatModels
+    .filter((m) => !isVision(m))
+    .sort((a, b) => Number(/deepseek/i.test(b.model)) - Number(/deepseek/i.test(a.model)))
+    .map((m) => ({ llmService: m.llmService, model: m.model, vision: false }));
+  return [...vision, ...text].slice(0, 4);
 }
 
 function contentToText(content: unknown): string {
@@ -93,6 +118,20 @@ function buildSpec(scene: string | undefined, n: number): { system: string; ask:
   return {
     system: '你是资深电商视觉运营,擅长为商品设计有代入感的使用场景。',
     ask: `请仔细观察这张商品图,产出 ${n} 条不同的「使用场景」描述,用于 AI 生成商品场景图。每条 15-40 个汉字,中文,具体到环境/材质/光线/氛围,画面真实可信,不要出现具体品牌名。只返回一个 JSON 字符串数组,例如 ["场景一","场景二"],不要任何多余文字。`,
+  };
+}
+
+// 文本级(看不了图时):按商品标题产词。约束与看图版一致,只是依据换成标题。
+function buildTextSpec(scene: string | undefined, n: number, title: string): { system: string; ask: string } {
+  if (scene === 'selling_point') {
+    return {
+      system: '你是资深电商营销文案专家,擅长从商品信息提炼有冲击力的卖点。',
+      ask: `商品标题是「${title}」。请提炼 ${n} 条不同的营销卖点文案,用于生成营销卖点主图。每条 6-16 个汉字,中文,突出材质/功能/适用场景/差异化,不要出现具体品牌名。只返回一个 JSON 字符串数组,例如 ["卖点一","卖点二"],不要任何多余文字。`,
+    };
+  }
+  return {
+    system: '你是资深电商视觉运营,擅长为商品设计有代入感的使用场景。',
+    ask: `商品标题是「${title}」。请为该商品产出 ${n} 条不同的「使用场景」描述,用于 AI 生成商品场景图。每条 15-40 个汉字,中文,具体到环境/材质/光线/氛围,画面真实可信,不要出现具体品牌名。只返回一个 JSON 字符串数组,例如 ["场景一","场景二"],不要任何多余文字。`,
   };
 }
 
@@ -149,59 +188,103 @@ function fallbackPrompts(scene: string | undefined, n: number): string[] {
   return (scene === 'selling_point' ? spPool : scenePool).slice(0, n);
 }
 
-// 看图出词主流程。抛错仅限「缺源图」等参数问题;模型侧问题一律降级为 fallback(不阻塞前端)。
+// 单次模型调用(带每级短超时):视觉级带图,文本级带标题;成功返回提示词数组,失败抛给上层换下一级。
+const ATTEMPT_TIMEOUT_MS = 15000;
+async function attemptTarget(
+  aiManager: VisionAiManager,
+  target: SuggestTarget,
+  opts: { scene?: string; n: number; imageUrl?: string; title?: string },
+): Promise<string[]> {
+  const { provider } = await aiManager.getLLMService({ llmService: target.llmService, model: target.model });
+  if (!provider?.invoke) throw new Error('provider 不支持 invoke');
+  const spec = target.vision ? buildSpec(opts.scene, opts.n) : buildTextSpec(opts.scene, opts.n, opts.title || '');
+  const content: unknown = target.vision
+    ? [
+        { type: 'text', text: spec.ask },
+        { type: 'image_url', image_url: { url: opts.imageUrl } },
+      ]
+    : spec.ask;
+  const invocation = provider.invoke({
+    messages: [
+      { role: 'system', content: spec.system },
+      { role: 'user', content },
+    ],
+  });
+  const timeout = new Promise<never>((_resolve, reject) =>
+    setTimeout(() => reject(new Error('SUGGEST_TIMEOUT')), ATTEMPT_TIMEOUT_MS),
+  );
+  const res = await Promise.race([invocation, timeout]);
+  const prompts = parsePrompts(contentToText(res?.content), opts.n);
+  if (!prompts.length) throw new Error('模型未返回可用提示词');
+  return prompts;
+}
+
+// 出词主流程:看图 → 看标题 → 静态,逐级降。抛错仅限「缺源图」等参数问题;模型侧问题一律降级(不阻塞前端)。
 export async function suggestPrompts(app: Application, input: SuggestPromptsInput): Promise<SuggestPromptsResult> {
   const n = Math.min(Math.max(Number(input.n) || 3, 1), 5);
 
   let sourceUrl = (input.sourceImageUrl || '').trim();
   let remoteUrl = ''; // 原始远端 URL(通常是公网可访问的抓取源图,如 alicdn)
+  let productTitle = ''; // 文本级依据:源图所属商品的标题
   if (input.assetId) {
     const asset = await app.db.getRepository('aiListingMediaAssets').findOne({ filterByTk: input.assetId });
     if (!asset) throw new MediaServiceError('MEDIA_SOURCE_NOT_FOUND', `源图资产 ${input.assetId} 不存在`);
     const meta = (asset.get('meta') as Record<string, unknown>) || {};
     remoteUrl = (asset.get('sourceUrl') as string) || '';
     sourceUrl = (meta.storedUrl as string) || remoteUrl || '';
+    const productId = Number(asset.get('productId')) || 0;
+    if (productId) {
+      const product = await app.db.getRepository('aiListingProducts').findOne({ filterByTk: productId });
+      productTitle = String(
+        product?.get('titleFinal') || product?.get('titleProcessed') || product?.get('titleOriginal') || '',
+      ).trim();
+    }
   }
   if (!sourceUrl && !remoteUrl)
     throw new MediaServiceError('MEDIA_SOURCE_NOT_FOUND', '缺少源图(assetId 或 sourceImageUrl)');
 
+  const staticResult = (): SuggestPromptsResult => ({
+    prompts: fallbackPrompts(input.scene, n),
+    model: null,
+    fallback: true,
+    basis: 'static',
+  });
+
   const aiManager = getVisionAiManager(app);
-  const target = aiManager ? await resolveVisionModel(aiManager) : null;
-  if (!aiManager || !target) {
-    return { prompts: fallbackPrompts(input.scene, n), model: null, fallback: true };
+  if (!aiManager) return staticResult();
+  const targets = await resolveSuggestTargets(aiManager);
+
+  // 视觉输入图:优先公网 http(s) URL(载荷小、模型直接取图,更快更稳);否则退回本地图 base64 data URI。
+  let imageUrl = [remoteUrl, sourceUrl].find((u) => /^https?:\/\//i.test(u)) || '';
+  if (!imageUrl && targets.some((t) => t.vision)) {
+    try {
+      imageUrl = (await sourceImageInfo(sourceUrl)).dataUri;
+    } catch {
+      imageUrl = '';
+    }
   }
 
-  try {
-    // 视觉输入图:优先公网 http(s) URL(载荷小、模型直接取图,更快更稳);否则退回本地图 base64 data URI。
-    const publicUrl = [remoteUrl, sourceUrl].find((u) => /^https?:\/\//i.test(u));
-    const imageUrl = publicUrl || (await sourceImageInfo(sourceUrl)).dataUri;
-    const { provider } = await aiManager.getLLMService(target);
-    if (!provider?.invoke) return { prompts: fallbackPrompts(input.scene, n), model: null, fallback: true };
-    const { system, ask } = buildSpec(input.scene, n);
-    const invocation = provider.invoke({
-      messages: [
-        { role: 'system', content: system },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: ask },
-            { type: 'image_url', image_url: { url: imageUrl } },
-          ],
-        },
-      ],
-    });
-    const timeout = new Promise<never>((_resolve, reject) =>
-      setTimeout(() => reject(new Error('SUGGEST_TIMEOUT')), 35000),
-    );
-    const res = await Promise.race([invocation, timeout]);
-    const prompts = parsePrompts(contentToText(res?.content), n);
-    if (prompts.length) return { prompts, model: target.model, fallback: false };
-    return { prompts: fallbackPrompts(input.scene, n), model: null, fallback: true };
-  } catch (e) {
-    (app as unknown as { logger?: { warn?: (m: string, meta?: unknown) => void } }).logger?.warn?.(
-      '[ai-listing] suggestPrompts failed, fallback',
-      { message: (e as Error)?.message },
-    );
-    return { prompts: fallbackPrompts(input.scene, n), model: null, fallback: true };
+  const warn = (msg: string, meta?: unknown) =>
+    (app as unknown as { logger?: { warn?: (m: string, x?: unknown) => void } }).logger?.warn?.(msg, meta);
+
+  for (const target of targets) {
+    // 视觉级没图跳过;文本级没标题跳过(自由模式上传图无商品归属)
+    if (target.vision && !imageUrl) continue;
+    if (!target.vision && !productTitle) continue;
+    try {
+      const prompts = await attemptTarget(aiManager, target, {
+        scene: input.scene,
+        n,
+        imageUrl,
+        title: productTitle,
+      });
+      return { prompts, model: target.model, fallback: false, basis: target.vision ? 'image' : 'title' };
+    } catch (e) {
+      warn('[ai-listing] suggestPrompts attempt failed, trying next', {
+        model: target.model,
+        message: (e as Error)?.message,
+      });
+    }
   }
+  return staticResult();
 }

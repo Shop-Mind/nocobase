@@ -496,6 +496,9 @@ export interface EditImageInput {
   // 模型档语义:'basic'≈标准/flash,'advanced'≈pro/plus/max。显式 llmService+model 优先;否则 tier 经
   // resolveModelByTier(env AI_LISTING_MODEL_TIERS)映射到具体模型,无映射回退自动解析
   tier?: 'basic' | 'advanced';
+  // 纯文生图(t2i):显式置 true 时允许不带源图,images 传空 → 服务商走 images/generations 端点
+  // (grok-imagine-image 等仅支持 t2i 的模型;模版缩略图批产用)。产物仍只落候选,铁律不变。
+  textToImage?: boolean;
 }
 
 // 指令式改图:源图(资产或 URL)→ data URI → plugin-ai invokeMediaTask(产物已转存 File Manager)→
@@ -540,7 +543,9 @@ export async function editImage(
     const meta = (sourceAsset.get('meta') as Record<string, unknown>) || {};
     sourceUrl = (meta.storedUrl as string) || (sourceAsset.get('sourceUrl') as string) || '';
   }
-  if (!sourceUrl) throw new MediaServiceError('MEDIA_SOURCE_NOT_FOUND', '缺少源图(assetId 或 sourceImageUrl)');
+  if (!sourceUrl && !input.textToImage) {
+    throw new MediaServiceError('MEDIA_SOURCE_NOT_FOUND', '缺少源图(assetId 或 sourceImageUrl)');
+  }
   const productId = input.productId ?? (sourceAsset?.get('productId') as number | undefined) ?? null;
 
   const editFunction = input.editFunction ?? (sceneDef?.route === 'function' ? sceneDef.editFunction : undefined);
@@ -581,7 +586,8 @@ export async function editImage(
   const startedAt = Date.now();
   const refUrl = (input.refImageUrl || '').trim();
   try {
-    const srcInfo = await sourceImageInfo(sourceUrl);
+    // t2i 模式无源图:images 传空,media-task 基类据此路由到 images/generations(纯文生图)
+    const srcInfo = sourceUrl ? await sourceImageInfo(sourceUrl) : null;
     // 第二张图(Logo/材质参考):解析为 data URI,与源图一起作为多图输入(image[]);失败不阻断,退化为单图
     let refInfo: { dataUri: string } | undefined;
     if (refUrl) {
@@ -595,7 +601,7 @@ export async function editImage(
     if (sceneDef?.sizeStrategy === 'upscale') {
       const factor = Math.min(Math.max(Number(parameters.upscale_factor) || 2, 1), 4);
       delete parameters.upscale_factor;
-      if (srcInfo.width && srcInfo.height && !parameters.size) {
+      if (srcInfo?.width && srcInfo?.height && !parameters.size) {
         const size = upscaleSize(srcInfo.width, srcInfo.height, factor);
         if (size) parameters.size = size;
       }
@@ -605,11 +611,12 @@ export async function editImage(
       const size = ratioToSize(input.aspect);
       if (size) parameters.size = size;
     }
+    const images = srcInfo ? (refInfo ? [srcInfo.dataUri, refInfo.dataUri] : [srcInfo.dataUri]) : [];
     const output = await provider.invokeMediaTask({
       task: 'image_gen',
       model: target.model,
       prompt,
-      images: refInfo ? [srcInfo.dataUri, refInfo.dataUri] : [srcInfo.dataUri],
+      images,
       audios: [],
       options: { ...(editFunction ? { function: editFunction } : {}), parameters },
     });
@@ -657,7 +664,7 @@ export async function editImage(
             llmService: target.llmService,
             n,
             sourceAssetId: (sourceAsset?.get('id') as number | undefined) ?? null,
-            sourceImageUrl: sourceUrl,
+            sourceImageUrl: sourceUrl || null,
           },
           meta: { storedUrl: finalUrl, prompt, model: target.model },
         },

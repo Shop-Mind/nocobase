@@ -244,6 +244,21 @@ describe('editImage', () => {
     await expect(editImage(plugin, { instruction: '白底' })).rejects.toMatchObject({ code: 'MEDIA_SOURCE_NOT_FOUND' });
   });
 
+  it('textToImage: allows no source, sends empty images and creates an unparented candidate', async () => {
+    const { plugin, tables, invokeCalls } = makePlugin();
+    const result = await editImage(plugin, {
+      instruction: '深色木板桌面上一只米色帆布包,暖光',
+      textToImage: true,
+      n: 1,
+    });
+    expect(result.assets).toHaveLength(1);
+    // t2i:images 空数组 → 通用层据此走 images/generations(纯文生图)
+    expect(invokeCalls[0]).toMatchObject({ task: 'image_gen', images: [] });
+    const candidate = tables['aiListingMediaAssets'].find((r) => r.origin === 'ai_candidate');
+    expect(candidate).toMatchObject({ productId: null, parentAssetId: null, processType: 'ai_edit' });
+    expect(candidate?.genParams).toMatchObject({ sourceAssetId: null, sourceImageUrl: null });
+  });
+
   it('scene: builds the prompt from the template and records scene genParams', async () => {
     const { plugin, tables, repo, invokeCalls } = makePlugin();
     const { productId, assetId } = await seedProductWithImage(repo);
