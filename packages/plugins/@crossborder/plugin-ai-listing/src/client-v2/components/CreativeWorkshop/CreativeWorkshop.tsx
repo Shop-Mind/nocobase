@@ -12,7 +12,7 @@
 // 产候选并回流该商品候选区,复用 CompareView / AdoptModal 采纳/弃用。铁律不变:生成只产候选,采纳=用户显式动作。
 // 复用候选区(MediaStudio)的数据契约与基元:callMediaApi / makeT / 类型 / CompareView / AdoptModal。
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   App as AntdApp,
   Button,
@@ -45,6 +45,8 @@ interface CarryImage {
   role?: string | null;
   finalSelected?: boolean;
   uploaded?: boolean;
+  // W3 再次编辑:AI 生成的候选被拉回带入区作源图(角标显示 AI)
+  ai?: boolean;
 }
 
 // 对标官方创意工坊的 10 档常用比例;'' = 原图/默认(不透传 size)。服务端 ratioToSize 换算成「宽*高」。
@@ -500,7 +502,9 @@ function WorkshopBody({
   const [tplLoading, setTplLoading] = useState(false);
   const [tplMoreOpen, setTplMoreOpen] = useState(false); // 「更多 >」全量浏览弹层
   const [newTplOpen, setNewTplOpen] = useState(false); // 新建模版弹层
-  const [newTpl, setNewTpl] = useState<{ title: string; category: string; prompt: string }>({
+  // W3 保存为模版:thumbUrl 预填结果图,让自定义模版也是图文卡
+  const promptRef = useRef<HTMLDivElement>(null); // 再次编辑回填后滚到提示词
+  const [newTpl, setNewTpl] = useState<{ title: string; category: string; prompt: string; thumbUrl?: string }>({
     title: '',
     category: 'general',
     prompt: '',
@@ -715,6 +719,7 @@ function WorkshopBody({
       category: newTpl.category,
       scene: activeKey,
       prompt,
+      thumbUrl: newTpl.thumbUrl || undefined,
     });
     setNewTplSaving(false);
     if (res.ok) {
@@ -911,6 +916,110 @@ function WorkshopBody({
       }
     },
     [app, viewCandidateId, refresh, message, t],
+  );
+
+  // —— W3 结果画布操作闭环:下载 / 再次编辑 / 重新生成 / 保存为模版(对齐阿里,加上我们的采纳/弃用)——
+
+  // 下载:取本地落库原图(meta.storedUrl 即 url),blob + a.download 命名「商品ID_功能_序号.扩展名」;
+  // 跨域或取流失败时退化为新窗口打开
+  const doDownload = useCallback(
+    async (cand: MediaAsset) => {
+      const url = cand.url;
+      if (!url) return;
+      const fnKey = cand.genParams?.scene || 'image';
+      const ext = url.match(/\.(png|jpe?g|webp|gif)(?:$|\?)/i)?.[1] || 'png';
+      const name = `${productId || 'free'}_${fnKey}_${cand.id}.${ext}`;
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(String(resp.status));
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch {
+        window.open(url, '_blank');
+      }
+    },
+    [productId],
+  );
+
+  // 再次编辑:候选拉回带入区作源图(AI 角标)+ 回填该次 genParams(功能/指令/比例/档位)→ 滚到提示词,
+  // 用户微调后再生成,parentAssetId 自然形成迭代链
+  const doEditAgain = useCallback(
+    (cand: MediaAsset) => {
+      const gp = cand.genParams || {};
+      const key = `c${cand.id}`;
+      setUploaded((prev) =>
+        prev.some((u) => u.key === key) ? prev : [...prev, { key, assetId: cand.id, url: cand.url, ai: true }],
+      );
+      const fn = typeof gp.scene === 'string' ? getWorkshopFunction(gp.scene) : undefined;
+      if (fn && fn.key !== activeKey) selectFunc(fn);
+      // selectFunc 会重置表单,以下覆盖必须排在其后(同一批 state 更新,后写胜出)
+      setPicked(new Set([key]));
+      setInstruction(String(gp.instruction || ''));
+      setAspect(String(gp.aspect || ''));
+      if (gp.tier === 'basic' || gp.tier === 'advanced') setTier(gp.tier);
+      setViewCandidateId(null);
+      promptRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      message.success(t('Loaded as source — tweak the settings and generate again'));
+    },
+    [activeKey, selectFunc, message, t],
+  );
+
+  // 重新生成:原源图 + 原参数(genParams 快照)原样再跑一次,产出新候选(与被重生成者同源同参)
+  const doRegenerate = useCallback(
+    async (cand: MediaAsset) => {
+      const gp = cand.genParams || {};
+      const sourceAssetId = gp.sourceAssetId || cand.parentAssetId || undefined;
+      const sourceImageUrl = !sourceAssetId ? gp.sourceImageUrl || undefined : undefined;
+      setBusy({ done: 0, total: 1 });
+      setWatchUntil(Date.now() + 240000);
+      const res = await callMediaApi<{ assets: Array<{ assetId: number; url: string }> }>(
+        app,
+        'aiListingMedia:generate',
+        {
+          productId: productId || undefined,
+          assetId: sourceAssetId,
+          sourceImageUrl,
+          // 无任何源图的候选(t2i 产物)按原样走纯文生图
+          textToImage: !sourceAssetId && !sourceImageUrl ? true : undefined,
+          scene: gp.scene || undefined,
+          instruction: gp.instruction || '',
+          n: 1,
+          aspect: gp.aspect || undefined,
+          tier: gp.tier || undefined,
+          llmService: gp.llmService || undefined,
+          model: gp.model || undefined,
+          refImageUrl: gp.refImageUrl || undefined,
+          targetLanguage: gp.targetLanguage || undefined,
+          style: gp.style || undefined,
+        },
+      );
+      setBusy(null);
+      if (res.ok) {
+        message.success(t('Candidates generated'));
+        await refresh({ focusCandidateId: res.data?.assets?.[0]?.assetId });
+      } else {
+        message.error(res.message || t('Generation failed'));
+      }
+    },
+    [app, productId, refresh, message, t],
+  );
+
+  // 保存为模版:复用 W2 新建模版弹层,prompt 预填该次 instruction、缩略图 = 该结果图;仅有 instruction 时显示
+  const saveCandidateAsTemplate = useCallback(
+    (cand: MediaAsset) => {
+      setNewTpl({
+        title: '',
+        category: tplData?.recommended || tplCat || 'general',
+        prompt: String(cand.genParams?.instruction || ''),
+        thumbUrl: cand.url || undefined,
+      });
+      setNewTplOpen(true);
+    },
+    [tplData, tplCat],
   );
 
   // 推荐提示词(点图出 3 条):仅场景图/卖点图支持
@@ -1423,6 +1532,24 @@ function WorkshopBody({
                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                               />
                             ) : null}
+                            {/* W3 再次编辑:AI 候选回带入区时,迷你缩略位也标 AI 来源 */}
+                            {c.ai ? (
+                              <span
+                                style={{
+                                  position: 'absolute',
+                                  left: 2,
+                                  top: 2,
+                                  fontSize: 8,
+                                  color: '#fff',
+                                  borderRadius: 3,
+                                  padding: '0 3px',
+                                  lineHeight: '12px',
+                                  background: '#722ed1',
+                                }}
+                              >
+                                AI
+                              </span>
+                            ) : null}
                             <span
                               aria-hidden
                               style={{
@@ -1683,9 +1810,9 @@ function WorkshopBody({
                 <div style={{ marginBottom: 18 }}>{recoBox}</div>
               ) : null}
 
-              {/* 专属表单:P1 只渲染提示词(其余字段 P2+) */}
+              {/* 专属表单:P1 只渲染提示词(其余字段 P2+);ref 供「再次编辑」回填后滚动定位 */}
               {activeFunc.fields.some((f) => f.type === 'prompt' && !f.planned) || activeFunc.promptPlaceholder ? (
-                <div style={{ marginBottom: 18 }}>
+                <div style={{ marginBottom: 18 }} ref={promptRef}>
                   <Typography.Text strong style={{ fontSize: 13 }}>
                     ✏️ {t('Prompt')}{' '}
                     {activeFunc.instructionRequired ? (
@@ -1858,18 +1985,20 @@ function WorkshopBody({
                       marginBottom: 18,
                     }}
                   >
-                    {/* 对比模式:拉帘(默认,原图/候选同位滑动细查)/ 并排 */}
-                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
-                      <Segmented
-                        size="small"
-                        value={cmpMode}
-                        onChange={(v) => setCmpMode(v as 'slider' | 'side')}
-                        options={[
-                          { value: 'slider', label: `🪟 ${t('Curtain')}` },
-                          { value: 'side', label: `◫ ${t('Side by side')}` },
-                        ]}
-                      />
-                    </div>
+                    {/* 对比模式:拉帘(默认,原图/候选同位滑动细查)/ 并排;t2i 候选无源图无从对比,隐藏切换 */}
+                    {compareOriginalUrl ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+                        <Segmented
+                          size="small"
+                          value={cmpMode}
+                          onChange={(v) => setCmpMode(v as 'slider' | 'side')}
+                          options={[
+                            { value: 'slider', label: `🪟 ${t('Curtain')}` },
+                            { value: 'side', label: `◫ ${t('Side by side')}` },
+                          ]}
+                        />
+                      </div>
+                    ) : null}
                     <CompareView
                       originalUrl={compareOriginalUrl}
                       candidateUrl={viewCandidate.url || null}
@@ -1879,15 +2008,23 @@ function WorkshopBody({
                       maxHeight="max(280px, calc(100vh - 500px))"
                       t={t}
                     />
-                    <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 12 }}>
+                    {/* 操作一字排开(对齐阿里):下载/再次编辑/重新生成/保存为模版 + 我们的采纳/弃用 */}
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12, flexWrap: 'wrap' }}>
                       {!freeMode ? (
                         <Button type="primary" onClick={() => setAdoptTarget(viewCandidate)}>
                           ✓ {t('Adopt')}
                         </Button>
                       ) : null}
                       {viewCandidate.url ? (
-                        <Button onClick={() => window.open(viewCandidate.url || '', '_blank')}>
-                          ⬇ {t('Download')}
+                        <Button onClick={() => doDownload(viewCandidate)}>⬇ {t('Download')}</Button>
+                      ) : null}
+                      <Button onClick={() => doEditAgain(viewCandidate)}>✏️ {t('Edit again')}</Button>
+                      <Button disabled={!!busy} onClick={() => doRegenerate(viewCandidate)}>
+                        🔄 {t('Regenerate')}
+                      </Button>
+                      {viewCandidate.genParams?.instruction ? (
+                        <Button onClick={() => saveCandidateAsTemplate(viewCandidate)}>
+                          ⭐ {t('Save as template')}
                         </Button>
                       ) : null}
                       <Button danger onClick={() => doDiscard(viewCandidate)}>
@@ -2058,10 +2195,10 @@ function WorkshopBody({
                         borderRadius: 3,
                         padding: '0 4px',
                         lineHeight: '15px',
-                        background: c.uploaded ? '#722ed1' : c.role === 'main' ? '#faad14' : '#40a9ff',
+                        background: c.ai || c.uploaded ? '#722ed1' : c.role === 'main' ? '#faad14' : '#40a9ff',
                       }}
                     >
-                      {c.uploaded ? t('Uploaded') : c.role === 'main' ? t('Main') : t('Detail')}
+                      {c.ai ? 'AI' : c.uploaded ? t('Uploaded') : c.role === 'main' ? t('Main') : t('Detail')}
                     </span>
                     <span
                       aria-hidden
@@ -2188,6 +2325,19 @@ function WorkshopBody({
         width={460}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+          {/* W3 保存为模版:结果图作缩略图(图文卡);手动新建无图则文字卡 */}
+          {newTpl.thumbUrl ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <img
+                src={newTpl.thumbUrl}
+                alt={t('Template thumbnail')}
+                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '1px solid #e5e7eb' }}
+              />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {t('This result image will be the template thumbnail.')}
+              </Typography.Text>
+            </div>
+          ) : null}
           <div>
             <Typography.Text strong style={{ fontSize: 12.5 }}>
               {t('Template title')} <span style={{ color: '#ff4d4f' }}>*</span>

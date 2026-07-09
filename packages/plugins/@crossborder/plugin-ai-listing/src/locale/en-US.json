@@ -525,5 +525,11 @@
   "General": "General",
   "Examples": "Examples",
   "vision model unavailable — static examples, editable": "vision model unavailable — static examples, editable",
-  "based on the product title (image not analyzed)": "based on the product title (image not analyzed)"
+  "based on the product title (image not analyzed)": "based on the product title (image not analyzed)",
+  "Edit again": "Edit again",
+  "Regenerate": "Regenerate",
+  "Save as template": "Save as template",
+  "Loaded as source — tweak the settings and generate again": "Loaded as source — tweak the settings and generate again",
+  "Template thumbnail": "Template thumbnail",
+  "This result image will be the template thumbnail.": "This result image will be the template thumbnail."
 }

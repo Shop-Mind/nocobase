@@ -32,8 +32,15 @@ export interface MediaAsset {
     prompt?: string;
     compareMode?: string;
     model?: string;
+    llmService?: string;
     sourceAssetId?: number | null;
-    sourceImageUrl?: string;
+    sourceImageUrl?: string | null;
+    // W3 再次编辑/重新生成回填所需的完整参数快照(服务端 editImage 落库时已写)
+    aspect?: string | null;
+    tier?: 'basic' | 'advanced' | null;
+    refImageUrl?: string | null;
+    targetLanguage?: string | null;
+    style?: string | null;
   } | null;
   createdAt?: string;
 }

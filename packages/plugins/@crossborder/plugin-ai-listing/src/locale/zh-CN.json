@@ -525,5 +525,11 @@
   "General": "通用",
   "Examples": "示例",
   "vision model unavailable — static examples, editable": "视觉模型暂不可用·以下为静态示例,可直接手改",
-  "based on the product title (image not analyzed)": "基于商品标题(未看图)"
+  "based on the product title (image not analyzed)": "基于商品标题(未看图)",
+  "Edit again": "再次编辑",
+  "Regenerate": "重新生成",
+  "Save as template": "保存为模版",
+  "Loaded as source — tweak the settings and generate again": "已把该结果设为源图,微调参数后可再次生成",
+  "Template thumbnail": "模版缩略图",
+  "This result image will be the template thumbnail.": "将用这张结果图作为模版缩略图。"
 }

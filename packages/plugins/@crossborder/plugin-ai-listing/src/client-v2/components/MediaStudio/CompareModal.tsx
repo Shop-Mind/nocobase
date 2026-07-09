@@ -211,6 +211,18 @@ export function CompareView({
       <SideBySide originalUrl={originalUrl} candidateUrl={candidateUrl} maxHeight={maxHeight} t={t} />
     );
   }
+  // 只有候选(t2i 纯文生图产物没有源图,W3):直接展示结果大图,不显示「选源图」占位
+  if (candidateUrl) {
+    return (
+      <div style={{ textAlign: 'center' }}>
+        <img
+          src={candidateUrl}
+          alt={t('Candidate')}
+          style={{ maxWidth: '100%', maxHeight: maxHeight ?? 320, borderRadius: 8, background: '#f5f5f5' }}
+        />
+      </div>
+    );
+  }
   // 只有原图:展示原图 + 提示
   if (originalUrl) {
     return (

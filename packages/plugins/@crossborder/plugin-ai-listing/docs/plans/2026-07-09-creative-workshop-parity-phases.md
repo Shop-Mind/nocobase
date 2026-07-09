@@ -315,6 +315,23 @@
 
 **回退**：操作条按钮级增量；示例图是静态资源，可单独摘除。
 
+**✅ 验收记录（2026-07-09 完成,条目 5 顺延）**
+- 操作条一字排开(对齐阿里):采纳(非自由模式)/ **下载**(blob+a.download,文件名 `商品ID_功能_序号.扩展名`,
+  失败退化新窗口)/ **再次编辑**(候选拉回带入区作源图 + 紫 AI 角标(横排缩略条与管理图片网格两处)+ 回填
+  genParams 的功能/指令/比例/档位 + 滚到提示词 + toast)/ **重新生成**(genParams 快照原样再跑,t2i 候选自动走
+  textToImage)/ **保存为模版**(复用 W2 弹层,prompt 预填 instruction、缩略图=结果图,仅有 instruction 时显示,
+  自定义模版从此也是图文卡)/ 弃用 / 收起大图。
+- 类型补全:MediaAsset.genParams 增 aspect/tier/llmService/refImageUrl/targetLanguage/style(服务端本就落库,
+  前端类型跟上)。
+- 顺手修复:CompareView 增 candidate-only 分支——t2i 候选无源图时直接展示结果大图(此前落到「请先选中一张
+  源图」空占位,结果图不可见);无源图时隐藏拉帘/并排切换(无从对比)。MediaStudio interaction 4/4 不回归。
+- 测试:E2E `verify-w3-result-ops.js` 7/7(t2i 生成→下载 200→genParams 快照→重新生成参数一致→保存为模版
+  mine+1 带缩略图→净零清理);浏览器探针:四按钮齐全、自由模式无采纳、保存为模版弹层 prompt 预填+缩略图预览、
+  再次编辑回填+AI 角标、candidate-only 大图直显。注意:E2E 走 t2i 链路(编辑线路仍不可用),
+  parentAssetId 迭代链的断言随编辑线路恢复后的回归一并补。
+- **条目 5(hero 静态示例前后图)顺延**:前后对需要带源图编辑(gpt-image-2 401 / grok edit 上游 403),
+  线路恢复后写 `gen-hero-samples.js` 批产;hero 暂维持 W1 的「源图+最近同场景候选」实时对。
+
 ---
 
 ## W4 · 创作历史（~1d）【前后端】
