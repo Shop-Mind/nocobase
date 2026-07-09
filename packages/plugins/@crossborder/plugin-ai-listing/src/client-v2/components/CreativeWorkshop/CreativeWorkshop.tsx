@@ -1510,6 +1510,8 @@ function WorkshopBody({
                       candidateUrl={viewCandidate.url || null}
                       mode={cmpMode}
                       emptyHint={t('Select a source image first')}
+                      // 限高:对比图 + 操作条要在画布视口内放得下,不许整屏都是图
+                      maxHeight="max(280px, calc(100vh - 500px))"
                       t={t}
                     />
                     <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 12 }}>
