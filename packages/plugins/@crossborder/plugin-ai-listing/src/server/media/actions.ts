@@ -30,6 +30,7 @@ import { listMediaScenes } from './scenes';
 import { suggestPrompts } from './suggest';
 import { toPublicUrl } from './public-url';
 import { deleteStyleTemplate, listStyleTemplates, saveStyleTemplate } from './style-templates';
+import { listMediaHistory } from './history';
 
 const MEDIA_ACTIONS = [
   'scenes',
@@ -47,6 +48,7 @@ const MEDIA_ACTIONS = [
   'styleTemplates',
   'saveStyleTemplate',
   'deleteStyleTemplate',
+  'history',
 ] as const;
 
 // 服务层错误码 → HTTP 状态:限额 429、找不到 404、越权 403、状态锁 409,其余按参数/配置错误 400
@@ -395,6 +397,31 @@ export function setupMedia(plugin: Plugin): void {
         }
         try {
           const result = await revertAdoptAsset(plugin, { assetId, actorId: currentUserId(ctx), traceId });
+          ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
+        } catch (e) {
+          handleError(ctx, e, traceId);
+        }
+        await next();
+      },
+
+      // 创作历史(W4):候选资产(含已弃用/已采纳)+ 失败任务合并时间倒序流,分页;productId=0 为自由模式
+      history: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as {
+          productId?: number;
+          scene?: string;
+          assetType?: 'image' | 'video';
+          page?: number;
+          pageSize?: number;
+        };
+        try {
+          const result = await listMediaHistory(app, {
+            productId: Number(v.productId) || 0,
+            scene: v.scene || undefined,
+            assetType: v.assetType === 'image' || v.assetType === 'video' ? v.assetType : undefined,
+            page: v.page,
+            pageSize: v.pageSize,
+          });
           ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
         } catch (e) {
           handleError(ctx, e, traceId);

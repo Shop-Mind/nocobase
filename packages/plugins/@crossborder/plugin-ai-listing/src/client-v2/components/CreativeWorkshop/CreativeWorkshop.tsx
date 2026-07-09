@@ -36,6 +36,7 @@ import { sceneLabel } from '../MediaStudio/scenes-meta';
 import { callMediaApi, makeT, type MediaAsset, type MediaPanelData, type MediaStudioApp } from '../MediaStudio/types';
 import { WORKSHOP_FUNCTIONS, getWorkshopFunction, type WorkshopFunction } from './functions';
 import { VideoPane } from './VideoPane';
+import { WorkshopHistory } from './WorkshopHistory';
 
 // 带入区的一张图:来自商品图集(assetId)或用户新上传(sourceImageUrl)
 interface CarryImage {
@@ -510,6 +511,7 @@ function WorkshopBody({
     prompt: '',
   });
   const [newTplSaving, setNewTplSaving] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false); // W4 创作历史抽屉
 
   const activeFunc = useMemo<WorkshopFunction>(
     () => getWorkshopFunction(activeKey) || WORKSHOP_FUNCTIONS[0],
@@ -905,7 +907,7 @@ function WorkshopBody({
   );
 
   const doDiscard = useCallback(
-    async (asset: MediaAsset) => {
+    async (asset: Pick<MediaAsset, 'id'>) => {
       const res = await callMediaApi(app, 'aiListingMedia:discard', { assetId: asset.id });
       if (res.ok) {
         message.success(t('Discarded'));
@@ -923,7 +925,7 @@ function WorkshopBody({
   // 下载:取本地落库原图(meta.storedUrl 即 url),blob + a.download 命名「商品ID_功能_序号.扩展名」;
   // 跨域或取流失败时退化为新窗口打开
   const doDownload = useCallback(
-    async (cand: MediaAsset) => {
+    async (cand: Pick<MediaAsset, 'id' | 'url' | 'genParams'>) => {
       const url = cand.url;
       if (!url) return;
       const fnKey = cand.genParams?.scene || 'image';
@@ -948,7 +950,7 @@ function WorkshopBody({
   // 再次编辑:候选拉回带入区作源图(AI 角标)+ 回填该次 genParams(功能/指令/比例/档位)→ 滚到提示词,
   // 用户微调后再生成,parentAssetId 自然形成迭代链
   const doEditAgain = useCallback(
-    (cand: MediaAsset) => {
+    (cand: Pick<MediaAsset, 'id' | 'url' | 'genParams'>) => {
       const gp = cand.genParams || {};
       const key = `c${cand.id}`;
       setUploaded((prev) =>
@@ -970,7 +972,7 @@ function WorkshopBody({
 
   // 重新生成:原源图 + 原参数(genParams 快照)原样再跑一次,产出新候选(与被重生成者同源同参)
   const doRegenerate = useCallback(
-    async (cand: MediaAsset) => {
+    async (cand: Pick<MediaAsset, 'genParams' | 'parentAssetId'>) => {
       const gp = cand.genParams || {};
       const sourceAssetId = gp.sourceAssetId || cand.parentAssetId || undefined;
       const sourceImageUrl = !sourceAssetId ? gp.sourceImageUrl || undefined : undefined;
@@ -1343,12 +1345,10 @@ function WorkshopBody({
               ⇄ {t('Switch product')}
             </Button>
           ) : null}
-          {/* 创作历史:W4 点亮;先占位与阿里同位 */}
-          <Tooltip title={t('Coming soon')}>
-            <Button size="small" ghost disabled style={{ color: '#8ea0c0', borderColor: 'rgba(255,255,255,.25)' }}>
-              🕘 {t('Creation history')}
-            </Button>
-          </Tooltip>
+          {/* 创作历史(W4):跨会话回看全部生成记录 */}
+          <Button size="small" ghost onClick={() => setHistoryOpen(true)} data-testid="ws-history-btn">
+            🕘 {t('Creation history')}
+          </Button>
           {onBack ? (
             <Button size="small" ghost onClick={onBack}>
               ← {t('Back to candidates')}
@@ -2376,6 +2376,31 @@ function WorkshopBody({
           </div>
         </div>
       </Modal>
+
+      {/* W4 创作历史:跨会话回看全部生成记录(候选/已采纳/已弃用/失败);操作复用工坊回调 */}
+      <WorkshopHistory
+        app={app}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        productId={productId}
+        t={t}
+        funcLabel={(key) => {
+          const fn = getWorkshopFunction(key);
+          return fn ? funcLabel(fn) : key;
+        }}
+        onEditAgain={(it) => {
+          setHistoryOpen(false);
+          doEditAgain(it);
+        }}
+        onRetry={(it) => {
+          setHistoryOpen(false);
+          doRegenerate(it);
+        }}
+        onDownload={(it) => doDownload(it)}
+        onDiscard={async (it) => {
+          await doDiscard(it);
+        }}
+      />
 
       <AdoptModal
         candidate={adoptTarget}

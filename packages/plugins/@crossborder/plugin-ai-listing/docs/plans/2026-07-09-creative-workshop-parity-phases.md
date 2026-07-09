@@ -368,6 +368,21 @@
 
 **回退**：只读 action + 独立抽屉组件，摘除入口即回。
 
+**✅ 验收记录（2026-07-09 完成）**
+- 后端:`aiListingMedia:history`(acl loggedIn)——候选资产(origin=ai_candidate,**不过滤**已弃用/已采纳)+
+  失败任务(aiListingMediaJobs status=failed,三种媒体 jobType)合并时间倒序流;失败条目从 job
+  metadata+model/provider 拼出**可重试 genParams**;scene/assetType 过滤;内存合并分页(单侧 cap 500);
+  productId=0=自由模式(IS NULL 语义与 candidates 一致)。`history.test.ts` 4/4(状态映射/过滤/分页/自由模式)。
+- 前端:`WorkshopHistory.tsx` Drawer 720——图片/视频 tab+功能 chips+「共 N 条」+加载更多;卡片=缩略图
+  (已弃用降饱和置灰)/状态 tag(候选中蓝·已采纳绿·已弃用灰·生成失败红)/功能名/相对时间/参数摘要(2 行截断)/
+  失败红字错误;操作:下载/再次编辑(关抽屉回填,复用 W3 doEditAgain)/弃用(仅候选中,弃后自刷)/
+  **按原参数重试**(复用 doRegenerate,失败 job 的拼装参数直接可跑)。顶部 🕘 按钮点亮(占位删除)。
+  handler 参数放宽为 Pick<MediaAsset,…>,历史条目与画布候选共用同一组操作回调,零复制。
+- 测试:E2E `verify-w4-history.js` 6/6(t2i 候选→history candidate→弃用后留档 discarded→死线路造失败 job→
+  failed 条目含错误+重试参数→分页游标);浏览器探针(商品 120 真实历史 8 条):抽屉/状态 tag/tab/chips/
+  重试按钮全在,再次编辑=关抽屉+回填+AI 角标。截图确认:用户当天的 401/403/503 失败记录全部留档、
+  错误原因可读、一键重试就位——历史抽屉顺带成了生图线路的「体检面板」。
+
 ---
 
 ## W5 · 功能表单深化（~1.5d）【前后端】

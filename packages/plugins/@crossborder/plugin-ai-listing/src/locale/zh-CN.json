@@ -531,5 +531,16 @@
   "Save as template": "保存为模版",
   "Loaded as source — tweak the settings and generate again": "已把该结果设为源图,微调参数后可再次生成",
   "Template thumbnail": "模版缩略图",
-  "This result image will be the template thumbnail.": "将用这张结果图作为模版缩略图。"
+  "This result image will be the template thumbnail.": "将用这张结果图作为模版缩略图。",
+  "just now": "刚刚",
+  "{{n}} min ago": "{{n}} 分钟前",
+  "{{n}} h ago": "{{n}} 小时前",
+  "{{n}} d ago": "{{n}} 天前",
+  "Pending candidate": "候选中",
+  "Discarded (history)": "已弃用",
+  "Retry with same settings": "按原参数重试",
+  "Images": "图片",
+  "{{n}} records": "共 {{n}} 条",
+  "Freeform": "自由生成",
+  "No generation records yet": "还没有生成记录——生成的每一张图(含已弃用/失败)都会在这里留档"
 }

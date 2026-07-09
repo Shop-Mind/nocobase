@@ -531,5 +531,16 @@
   "Save as template": "Save as template",
   "Loaded as source — tweak the settings and generate again": "Loaded as source — tweak the settings and generate again",
   "Template thumbnail": "Template thumbnail",
-  "This result image will be the template thumbnail.": "This result image will be the template thumbnail."
+  "This result image will be the template thumbnail.": "This result image will be the template thumbnail.",
+  "just now": "just now",
+  "{{n}} min ago": "{{n}} min ago",
+  "{{n}} h ago": "{{n}} h ago",
+  "{{n}} d ago": "{{n}} d ago",
+  "Pending candidate": "Pending candidate",
+  "Discarded (history)": "Discarded",
+  "Retry with same settings": "Retry with same settings",
+  "Images": "Images",
+  "{{n}} records": "{{n}} records",
+  "Freeform": "Freeform",
+  "No generation records yet": "No generation records yet"
 }
