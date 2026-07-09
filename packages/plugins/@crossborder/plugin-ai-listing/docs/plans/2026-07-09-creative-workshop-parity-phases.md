@@ -265,13 +265,24 @@
   显式指定线路），等任一生图线路恢复后跑（用户反馈 #64：模版卡要像阿里一样图文卡），当前 UI 文字卡兜底；
   ②「模版 prompt 直接生成出图」回归被生图线路阻塞；③第二批 selling_point/model_shot 开 templateTabs +
   各自种子，随 W5 表单深化一起做。
-- **AI 线路状态（2026-07-09 实测，全灭）**：OpenAI 中转（120.76.157.51:8317，gpt-5.5 视觉 + gpt-image-2 生图）
-  `503 auth_unavailable`；xAI 中转（:8001，grok imagine）`401 session 失效`；**DashScope 官方 Key 被封**
-  （`401 API-key is blocked`，wan/qwen 全不可用）；DeepSeek 仅纯文本。→ 推荐提示词因此走静态兜底
-  （35s 超时后回落）。已做透明化（用户反馈）：兜底时灰「示例」标 +「视觉模型暂不可用·静态示例可手改」，
-  真看图时紫 AI 标 +「基于本商品图 · <模型名>」（suggestPrompts 的 model 字段透出）。恢复路径任选其一：
-  修 codex 中转 auth / 刷 grok cookie / 换新 DashScope API Key（AI 员工 → LLM 服务,换 Key 后视觉+生图+缩略图
-  三件事全部解锁）。
+- **AI 线路状态（2026-07-09 二次实测，grok 已复活）**：xAI 中转（:8001）恢复——`grok-imagine-image`
+  **t2i 实测可用（21s/张）**，但其 image-edit 上游 403（`grok-imagine-image-edit` 不可带源图编辑）;
+  OpenAI 中转（:8317）仍 `401 token invalidated`（gpt-5.5 视觉 + gpt-image-2 编辑不可用）；DashScope 官方
+  Key 被封（`401 API-key is blocked`）；DeepSeek 官方可用（纯文本）。
+- **推荐提示词三级链（用户拍板方向后实现）**：看图（视觉模型,gpt-5.5 等）→ 看商品标题（文本 chat,
+  DeepSeek 优先,grok-4.20 备选）→ 静态示例;每级 15s 快速失败,`AI_LISTING_SUGGEST_MODEL` 可锁定模型。
+  UI 分级标注:「基于本商品图 · 模型」/「基于商品标题(未看图) · 模型」/ 灰「示例」标。实测:gpt-5.5 快速失败
+  → deepseek-v4-pro 7s 按标题产出真 AI 词（针对性明显好于静态词）。单测 suggest-chain 5/5。
+- **t2i 支持（模版缩略图解锁）**：editImage 增 `textToImage` 显式模式（无源图 → images 空 → 服务商
+  images/generations 端点）,edit-adopt 28/28;`gen-template-thumbs.js` 改纯文生图（每类目配代表性主体物,
+  如节日=红色礼品盒）。**37/37 缩略图已批产回写完成**（grok-imagine-image,21-40s/张;首轮 23 张后中转
+  504 饱和,冷却后续跑 14 张全成;脚本断点续跑设计生效）。UI 图卡探针:builtin/更多弹层图卡 6/6 有图。
+- **grok imagine edit 403 结论（2026-07-09,双形状实测）**:标准 `/v1/images/edits` 与 chat/completions
+  带图两种调用形状都能到达中转并被转发,上游一律 `Image-edit upstream returned 403`(首次 403 在批产
+  之前,排除限流)。→ 问题在中转的 grok 会话对 imagine **edit** 接口的权限/实现,需中转侧排查;t2i 同会话
+  正常。曾在 XAIProvider 加 chat 形状路由验证后已回滚(无收益的特判)。
+- 遗留:**编辑类真实出图回归**（白底/场景带源图）仍需 gpt-image-2（codex 中转修复）或 grok edit 上游
+  403 解决——t2i 已验证但编辑闭环主链路未回归。
 
 ---
 
