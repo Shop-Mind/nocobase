@@ -431,5 +431,11 @@
   "Added to queue": "Added to the generation queue",
   "Retry failed": "Retry failed",
   "Clear finished": "Clear finished",
-  "Generation queue": "Generation queue"
+  "Generation queue": "Generation queue",
+  "Strip": "Strip",
+  "Grid": "Grid",
+  "Tick candidates to adopt in bulk": "Tick candidates to adopt in bulk",
+  "Adopt selected": "Adopt selected",
+  "Adopted candidates": "Adopted candidates",
+  "Undo all": "Undo all"
 }

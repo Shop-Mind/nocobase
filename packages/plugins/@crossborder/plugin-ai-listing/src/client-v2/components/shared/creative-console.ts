@@ -453,6 +453,20 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .ccard.newgen .cimg::after{content:"NEW";position:absolute;right:3px;bottom:3px;font-size:7.5px;font-weight:800;color:#fff;background:var(--jade);padding:0 4px;border-radius:4px;letter-spacing:.3px}
 
+/* ── 候选网格视图 + 批量采纳(A2):大图同屏对比,左下角复选,candhead 里 采纳选中 N 张 ── */
+.aic-scope .candbar.wide{max-width:none}
+.aic-scope .candgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;padding:2px}
+.aic-scope .ccard.big{width:auto}
+.aic-scope .ccard.big .cimg{width:100%;height:auto;aspect-ratio:1}
+.aic-scope .ccard.big .cscene{font-size:10px;padding:2px 8px}
+.aic-scope .ccard .cpk{position:absolute;left:4px;bottom:4px;width:16px;height:16px;border-radius:5px;border:1.5px solid #fff;background:rgba(20,18,30,.28);color:#fff;font-size:10px;display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .12s}
+.aic-scope .ccard:hover .cpk,.aic-scope .ccard .cpk.on,.aic-scope .ccard.big .cpk{opacity:1}
+.aic-scope .ccard .cpk.on{background:var(--violet);border-color:var(--violet)}
+.aic-scope .candhead .modes{margin-left:auto;display:flex;background:var(--canvas-2);border-radius:8px;padding:2px}
+.aic-scope .candhead .modes button{border:0;background:transparent;font:inherit;font-size:11px;font-weight:600;color:var(--text-2);padding:3px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.aic-scope .candhead .modes button.on{background:#fff;color:var(--violet);box-shadow:var(--shadow-sm)}
+.aic-scope .act.slim{font-size:11px;padding:4px 11px;border-radius:8px}
+
 .aic-scope .vslot{margin-bottom:13px}
 
 .aic-scope .vthumb{position:relative;width:100%;aspect-ratio:16/10;border-radius:10px;overflow:hidden;box-shadow:var(--shadow-sm);cursor:pointer;background:#15121e;border:1.5px solid transparent}

@@ -22,6 +22,7 @@ import { CreativeWorkshop } from '../CreativeWorkshop/CreativeWorkshop';
 import { AIC_SCOPE_CLASS } from '../shared/creative-console';
 import { QUICK_SCENES, sceneLabel, sceneMeta, relTime, isRecent } from './scenes-meta';
 import { clearSettledGenerate, enqueueGenerate, retryFailedGenerate, useGenQueue } from './gen-queue';
+import { planBatchAdopt } from './adopt-plan';
 import {
   callMediaApi,
   makeT,
@@ -141,6 +142,8 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   const [picked, setPicked] = useState<Set<number>>(new Set()); // 多选批量
   const [batchIndex, setBatchIndex] = useState(0); // 批量逐张:当前在已选集中的位置
   const [viewCandidateId, setViewCandidateId] = useState<number | null>(null); // 对比展示的候选
+  const [candView, setCandView] = useState<'strip' | 'grid'>('strip'); // 候选视图:条带横滑 / 网格同屏对比
+  const [candPicked, setCandPicked] = useState<Set<number>>(new Set()); // 批量采纳复选
   const [compareMode, setCompareMode] = useState<'side' | 'slider' | null>(null); // null=跟随候选场景
   const [stageMode, setStageMode] = useState<StageMode>('preview'); // 舞台:预览 / 对比
   const [curtainPct, setCurtainPct] = useState(50); // 对比拉帘:候选层从左侧裁切的百分比
@@ -364,6 +367,64 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     },
     [app, quickReplaceTarget, refresh, onChange, message, t, undoAdopt],
   );
+
+  // 撤销整批采纳:逐张 revertAdopt(每张各自恢复被替换图),一条 toast 收尾。
+  const undoBatch = useCallback(
+    async (assetIds: number[], msgKey: string) => {
+      message.destroy(msgKey);
+      let ok = 0;
+      for (const id of assetIds) {
+        const r = await callMediaApi(app, 'aiListingMedia:revertAdopt', { assetId: id });
+        if (r.ok) ok++;
+      }
+      message.info(`${t('Adoption reverted')} (${ok}/${assetIds.length})`);
+      await refresh();
+      onChange?.();
+    },
+    [app, refresh, onChange, message, t],
+  );
+
+  // 批量采纳:planBatchAdopt 规划(同源冲突第一张替换、其余追加)后逐张执行,toast 可「撤销全部」。
+  const batchAdopt = useCallback(async () => {
+    const chosen = data.candidates.filter((c) => candPicked.has(c.id));
+    if (!chosen.length) return;
+    const plan = planBatchAdopt(chosen, data.gallery);
+    setAdopting(true);
+    const adopted: number[] = [];
+    let failedCount = 0;
+    for (const item of plan) {
+      const res = await callMediaApi(app, 'aiListingMedia:adopt', {
+        assetId: item.assetId,
+        mode: item.mode,
+        replaceAssetId: item.replaceAssetId,
+      });
+      if (res.ok) adopted.push(item.assetId);
+      else failedCount++;
+    }
+    setAdopting(false);
+    setCandPicked(new Set());
+    setViewCandidateId(null);
+    setStageMode('preview');
+    if (adopted.length) {
+      await refresh();
+      onChange?.();
+      const msgKey = 'batch-adopt';
+      message.open({
+        key: msgKey,
+        type: failedCount ? 'warning' : 'success',
+        duration: 10,
+        content: (
+          <span>
+            {t('Adopted candidates')} {adopted.length}
+            {failedCount ? ` · ${t('Failed')} ${failedCount}` : ''}{' '}
+            <a onClick={() => undoBatch(adopted, msgKey)}>{t('Undo all')}</a>
+          </span>
+        ),
+      });
+    } else if (failedCount) {
+      message.error(t('Adopt failed'));
+    }
+  }, [app, data.candidates, data.gallery, candPicked, refresh, onChange, message, t, undoBatch]);
 
   // 采纳视频为主视频:视频采纳无 replace 语义,直接受控 action(服务端只保留一条 finalSelected 视频)。
   const doAdoptVideo = useCallback(
@@ -920,20 +981,52 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
 
             {/* 候选条:横滑 + 每张场景/时间角标 + 新出 NEW,点谁比谁 */}
             {data.candidates.length ? (
-              <div className="candbar">
+              <div className={`candbar${candView === 'grid' ? ' wide' : ''}`}>
                 <div className="candhead">
                   <span className="cl">
                     {t('Candidates')} <b>{data.candidates.length}</b>
                   </span>
-                  <span className="candhint">{t('Click a candidate → original / candidate compare')}</span>
+                  <span className="candhint">
+                    {candView === 'grid'
+                      ? t('Tick candidates to adopt in bulk')
+                      : t('Click a candidate → original / candidate compare')}
+                  </span>
+                  {candPicked.size ? (
+                    <>
+                      <button type="button" className="act adopt slim" disabled={adopting} onClick={batchAdopt}>
+                        ✓ {t('Adopt selected')} ({candPicked.size})
+                      </button>
+                      <a style={{ fontSize: 12 }} onClick={() => setCandPicked(new Set())}>
+                        {t('Clear')}
+                      </a>
+                    </>
+                  ) : null}
+                  {/* 条带=横滑省空间;网格=同屏大图对比+批量勾选(一次生成多张时挑图快) */}
+                  <span className="modes">
+                    <button
+                      type="button"
+                      className={candView === 'strip' ? 'on' : undefined}
+                      onClick={() => setCandView('strip')}
+                    >
+                      ― {t('Strip')}
+                    </button>
+                    <button
+                      type="button"
+                      className={candView === 'grid' ? 'on' : undefined}
+                      onClick={() => setCandView('grid')}
+                    >
+                      ▤ {t('Grid')}
+                    </button>
+                  </span>
                 </div>
-                <div className="candstrip">
+                <div className={candView === 'grid' ? 'candgrid' : 'candstrip'}>
                   {data.candidates.map((c) => {
                     const sm = sceneMeta(c.genParams?.scene);
+                    const pickedThis = candPicked.has(c.id);
                     return (
                       <div
                         key={c.id}
-                        className={`ccard${c.id === viewCandidateId ? ' on' : ''}${
+                        className={`ccard${candView === 'grid' ? ' big' : ''}${c.id === viewCandidateId ? ' on' : ''}${
                           isRecent(c.createdAt) ? ' newgen' : ''
                         }`}
                         role="button"
@@ -948,6 +1041,24 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
                             {sm.icon} {sm.label}
                           </span>
                           <span className="cchk">✓</span>
+                          <span
+                            role="checkbox"
+                            aria-checked={pickedThis}
+                            aria-label={t('Select')}
+                            tabIndex={-1}
+                            className={`cpk${pickedThis ? ' on' : ''}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCandPicked((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(c.id)) next.delete(c.id);
+                                else next.add(c.id);
+                                return next;
+                              });
+                            }}
+                          >
+                            {pickedThis ? '✓' : ''}
+                          </span>
                         </div>
                         <span className="ctime">{relTime(c.createdAt) || sm.label}</span>
                       </div>

@@ -431,5 +431,11 @@
   "Added to queue": "已加入生成队列",
   "Retry failed": "重试失败任务",
   "Clear finished": "清空已结束",
-  "Generation queue": "生成队列"
+  "Generation queue": "生成队列",
+  "Strip": "条带",
+  "Grid": "网格",
+  "Tick candidates to adopt in bulk": "勾选候选可批量采纳",
+  "Adopt selected": "采纳选中",
+  "Adopted candidates": "已采纳候选",
+  "Undo all": "撤销全部"
 }
