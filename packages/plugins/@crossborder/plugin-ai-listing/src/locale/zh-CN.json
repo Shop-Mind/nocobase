@@ -438,5 +438,6 @@
   "Adopt selected": "采纳选中",
   "Adopted candidates": "已采纳候选",
   "Undo all": "撤销全部",
-  "←→ switch · A adopt · X discard": "←→ 切换 · A 采纳 · X 弃用"
+  "←→ switch · A adopt · X discard": "←→ 切换 · A 采纳 · X 弃用",
+  "Drag to pan · double-click to reset": "拖动平移 · 双击复位"
 }

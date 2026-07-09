@@ -630,6 +630,74 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     const r = el.getBoundingClientRect();
     setCurtainPct(Math.max(0, Math.min(100, ((clientX - r.left) / r.width) * 100)));
   }, []);
+
+  // —— 缩放细查(A5):滚轮 100–400% 放大、放大后拖动=平移、双击复位。去 logo/水印的验收要看细节。
+  // 拉帘模式用 background-size/position 缩放(不用 transform:clip-path 会随 transform 走导致帘线错位;
+  // 背景缩放让两层图像素级同步、帘线始终对齐);并排模式用 transform + transform-origin。
+  const [zoomPct, setZoomPct] = useState(100);
+  const [panPos, setPanPos] = useState({ x: 50, y: 50 }); // background-position / transform-origin 百分比
+  const zoomHostRef = useRef<HTMLDivElement>(null);
+  const panDragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+  const resetZoom = useCallback(() => {
+    setZoomPct(100);
+    setPanPos({ x: 50, y: 50 });
+  }, []);
+  // 切候选/切图/切模式即复位(看的是另一张图,残留缩放会误导)
+  useEffect(() => {
+    resetZoom();
+  }, [viewCandidateId, currentId, stageMode, previewVideoId, resetZoom]);
+  // 滚轮缩放:React 的 onWheel 是 passive,preventDefault 需要手挂非 passive 监听
+  useEffect(() => {
+    const host = zoomHostRef.current;
+    if (!host) return;
+    const onWheel = (e: WheelEvent) => {
+      // 只有图片舞台才劫持滚轮(视频/空态让页面正常滚动)
+      if (!host.querySelector('.stage .layer, .stage.duo img')) return;
+      e.preventDefault();
+      setZoomPct((z) => {
+        const next = Math.min(400, Math.max(100, z + (e.deltaY < 0 ? 25 : -25)));
+        if (next === 100) setPanPos({ x: 50, y: 50 });
+        return next;
+      });
+    };
+    host.addEventListener('wheel', onWheel, { passive: false });
+    return () => host.removeEventListener('wheel', onWheel);
+  }, []);
+  const beginPan = useCallback(
+    (clientX: number, clientY: number) => {
+      panDragRef.current = { startX: clientX, startY: clientY, baseX: panPos.x, baseY: panPos.y };
+    },
+    [panPos.x, panPos.y],
+  );
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = panDragRef.current;
+      if (!d) return;
+      const rect = zoomHostRef.current?.querySelector('.stage')?.getBoundingClientRect();
+      if (!rect) return;
+      const overflow = zoomPct / 100 - 1 || 1;
+      const nx = d.baseX - ((e.clientX - d.startX) / (rect.width * overflow)) * 100;
+      const ny = d.baseY - ((e.clientY - d.startY) / (rect.height * overflow)) * 100;
+      setPanPos({ x: Math.min(100, Math.max(0, nx)), y: Math.min(100, Math.max(0, ny)) });
+    };
+    const onUp = () => {
+      panDragRef.current = null;
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [zoomPct]);
+  const zoomed = zoomPct > 100;
+  // 拉帘/预览层的背景缩放样式(两层同 style = 像素级同步)
+  const zoomBgStyle = zoomed
+    ? { backgroundSize: `${zoomPct}%`, backgroundPosition: `${panPos.x}% ${panPos.y}%` }
+    : undefined;
+  const zoomImgStyle = zoomed
+    ? { transform: `scale(${zoomPct / 100})`, transformOrigin: `${panPos.x}% ${panPos.y}%` }
+    : undefined;
   useEffect(() => {
     const onMove = (e: MouseEvent | TouchEvent) => {
       if (!draggingRef.current) return;
@@ -660,24 +728,28 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
         const candLabel = scene ? `${t('Candidate')} · ${sceneLabel(scene)}` : t('Candidate');
         if (effectiveMode === 'side') {
           return (
-            <div className="stage duo">
+            <div className="stage duo" onMouseDown={(e) => (zoomed ? beginPan(e.clientX, e.clientY) : undefined)}>
               <div className="duocell">
-                <img src={orig} alt={t('Original')} />
+                <img src={orig} alt={t('Original')} style={zoomImgStyle} />
                 <span className="tag l">{t('Original')}</span>
               </div>
               <div className="duocell">
-                <img src={cand} alt={candLabel} />
+                <img src={cand} alt={candLabel} style={zoomImgStyle} />
                 <span className="tag r">{candLabel}</span>
               </div>
             </div>
           );
         }
         return (
-          <div className="stage" ref={stageRef} onMouseDown={(e) => moveCurtain(e.clientX)}>
-            <div className="layer full" style={{ backgroundImage: `url("${orig}")` }} />
+          <div
+            className="stage"
+            ref={stageRef}
+            onMouseDown={(e) => (zoomed ? beginPan(e.clientX, e.clientY) : moveCurtain(e.clientX))}
+          >
+            <div className="layer full" style={{ backgroundImage: `url("${orig}")`, ...zoomBgStyle }} />
             <div
               className="layer full"
-              style={{ backgroundImage: `url("${cand}")`, clipPath: `inset(0 0 0 ${curtainPct}%)` }}
+              style={{ backgroundImage: `url("${cand}")`, clipPath: `inset(0 0 0 ${curtainPct}%)`, ...zoomBgStyle }}
             />
             <span className="tag l">{t('Original')}</span>
             <span className="tag r">{candLabel}</span>
@@ -744,8 +816,8 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     }
     if (previewAsset?.url) {
       return (
-        <div className="stage">
-          <div className="layer full" style={{ backgroundImage: `url("${previewAsset.url}")` }} />
+        <div className="stage" onMouseDown={(e) => (zoomed ? beginPan(e.clientX, e.clientY) : undefined)}>
+          <div className="layer full" style={{ backgroundImage: `url("${previewAsset.url}")`, ...zoomBgStyle }} />
           {previewLabel ? <span className="plabel">{previewLabel}</span> : null}
         </div>
       );
@@ -1014,7 +1086,19 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
               ) : null}
             </div>
 
-            {renderStage()}
+            {/* 缩放宿主:滚轮放大(非 passive 监听挂这里)、双击复位、放大时角标提示 */}
+            <div
+              className={`stagezoom${zoomed ? ' zooming' : ''}`}
+              ref={zoomHostRef}
+              onDoubleClick={zoomed ? resetZoom : undefined}
+            >
+              {renderStage()}
+              {zoomed ? (
+                <span className="zoomtag">
+                  {zoomPct}% · {t('Drag to pan · double-click to reset')}
+                </span>
+              ) : null}
+            </div>
 
             {/* 候选条:横滑 + 每张场景/时间角标 + 新出 NEW,点谁比谁 */}
             {data.candidates.length ? (
