@@ -51,7 +51,8 @@ export interface WorkshopFunction {
   enabled: boolean;
   // 「新」角标(对齐阿里功能轨)
   isNew?: boolean;
-  // 单图功能=只处理一张(带入区单选切换);多图功能=可勾选多张逐张出候选
+  // 单图功能=只处理一张(带入区单选切换);多图功能=可勾选多张(≤9)逐张出候选。
+  // 2026-07-09 用户拍板:全部功能放开批量(与阿里「上传图片 (n/9)」一致),字段保留供未来真单图能力使用。
   single: boolean;
   // 是否必须填提示词(与服务端 scene.instructionRequired 对齐)
   instructionRequired: boolean;
@@ -96,7 +97,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroSub: '上传商品图,即可快速更换场景',
     heroValue: '一键生成商品场景,大幅降低真实拍摄成本,轻松打造专业级产品展示效果',
     enabled: true,
-    single: true,
+    single: false,
     instructionRequired: true,
     promptPlaceholder: '描述你想要的场景,如:北欧风木桌 + 晨光 + 咖啡杯',
     tier: 'advanced',
@@ -135,7 +136,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroSub: '一张图快速产出多色 SKU 展示',
     heroValue: '精准只改目标部位颜色,其余像素完全保留',
     enabled: true,
-    single: true,
+    single: false,
     instructionRequired: true,
     promptPlaceholder: '填要换色的部位,如:红色的酒瓶套(下方勾选目标色可一次出多色;也可直接写"换成藏青色")',
     tier: 'advanced',
@@ -150,7 +151,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroSub: '把你的 Logo 印上商品',
     heroValue: '丝网印 / 烫金 / 刺绣等 10 种工艺,轻定制效果图即刻呈现',
     enabled: true,
-    single: true,
+    single: false,
     instructionRequired: false,
     tier: 'advanced',
     cost: 17,
@@ -164,7 +165,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroSub: 'AI 模特实拍级上身效果',
     heroValue: '免拍摄免模特费,多风格模特随选,商品保持完全不变',
     enabled: true,
-    single: true,
+    single: false,
     instructionRequired: false,
     promptDefault: '',
     tier: 'advanced',
@@ -194,7 +195,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroValue: '材质与工艺看得清,详情页信任感直接拉满',
     enabled: true,
     isNew: true,
-    single: true,
+    single: false,
     instructionRequired: true,
     promptPlaceholder: '填要突出的局部,如:雪人娃娃的针织纹理与纽扣',
     tier: 'advanced',
@@ -244,7 +245,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroValue: '木纹 / 金属 / 皮革随心切换,快速验证设计方向',
     enabled: true,
     isNew: true,
-    single: true,
+    single: false,
     instructionRequired: true,
     promptPlaceholder: '填目标材质,如:拉丝铝金属质感',
     tier: 'advanced',
@@ -260,7 +261,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroValue: '图文并茂展示工厂实力,B2B 建立信任的利器',
     enabled: true,
     isNew: true,
-    single: true,
+    single: false,
     instructionRequired: true,
     promptPlaceholder: '一行一个步骤,如:\n1. 精选原料裁剪\n2. 高温压制成型\n3. 手工缝合封边\n4. 质检包装出厂',
     tier: 'advanced',
@@ -276,7 +277,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroValue: '醒目文案排版直出,打造点击率更高的首图',
     enabled: true,
     isNew: true,
-    single: true,
+    single: false,
     instructionRequired: true,
     promptPlaceholder: '勾选上方 AI 卖点,或直接填卖点文案,如:大容量 · 环保帆布 · 定制印花',
     tier: 'advanced',
@@ -291,7 +292,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     heroSub: '外扩画布到目标比例',
     heroValue: 'AI 补全新增区域,主体不裁切即适配平台规格',
     enabled: true,
-    single: true,
+    single: false,
     instructionRequired: false,
     promptPlaceholder: '可选:描述新增区域内容',
     tier: 'basic',

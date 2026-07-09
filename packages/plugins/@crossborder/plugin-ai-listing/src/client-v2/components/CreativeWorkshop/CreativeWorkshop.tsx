@@ -873,6 +873,10 @@ function WorkshopBody({
     const colorInstrs = allColors.length ? recolorInstructions(instr, allColors) : null;
     const perImage = colorInstrs ? colorInstrs.length : Math.min(Math.max(count, 1), 4);
     const total = targets.length * perImage;
+    // 全功能放开批量后源图×张数(或×色数)可能到几十张:大批量给一次性提示(网关单张 20s-3min),不拦截
+    if (total >= 10) {
+      message.info(t('This batch will generate {{n}} images — it may take a while.', { n: total }));
+    }
     setBusy({ done: 0, total });
     // 带图编辑经 codex 上游偏慢(单张 ~2–3 分钟),放宽候选回流轮询窗口以兜住 apiClient 可能的提前超时
     setWatchUntil(Date.now() + 240000);

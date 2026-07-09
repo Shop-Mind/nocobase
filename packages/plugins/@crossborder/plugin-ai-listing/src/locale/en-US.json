@@ -564,5 +564,6 @@
   "off = keep the original placement strictly": "off = keep the original placement strictly",
   "Cost breakdown": "Cost breakdown",
   "{{unit}} beans/image × {{count}} per source × {{sources}} source(s) = {{beans}} beans": "{{unit}} beans/image × {{count}} per source × {{sources}} source(s) = {{beans}} beans",
-  "Priced by function × tier; recorded per generation, no balance deduction yet.": "Priced by function × tier; recorded per generation, no balance deduction yet."
+  "Priced by function × tier; recorded per generation, no balance deduction yet.": "Priced by function × tier; recorded per generation, no balance deduction yet.",
+  "This batch will generate {{n}} images — it may take a while.": "This batch will generate {{n}} images — it may take a while."
 }
