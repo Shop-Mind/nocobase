@@ -384,6 +384,15 @@
 
 ---
 
+## 验收记录
+
+- **W0** ✅ 2026-07-09：`docs/plans/scripts/shot-workshop.js` 固化并自测通过（登录→开 Modal→诊断 JSON→
+  6 张分功能截图）。基线实测与 §二 差距表逐项互证：三区 `92 / 872 / 326`（宽表单+窄右栏，待 W1 反转为
+  窄配置列+大画布）；左轨 14 功能、无「素材生成」分组、无「新」角标、排序非阿里序；顶部 tab 齐、无创作历史
+  入口；选图计数「已选 1」无 `/9`；张数=InputNumber；提示词计数器已有（B6 ✅）；预计消耗静态「7 i豆」；
+  无模版三 tab。console 无错误（仅 antd Tooltip `overlayStyle` deprecation 警告一条，W1 顺手清）。
+  截图输出走 `SHOT_OUT` 环境变量（默认 cwd），不进仓库。
+
 ## 贯穿性测试与验收基线（每 Phase 都要过）
 
 1. 单测：改到 `src/server/**` 跑对应 `__tests__`（服务端串行，`yarn test <file>`）。
