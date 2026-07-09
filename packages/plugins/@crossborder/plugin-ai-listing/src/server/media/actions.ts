@@ -137,23 +137,30 @@ export function setupMedia(plugin: Plugin): void {
       candidates: async (ctx: Context, next: Next) => {
         const traceId = ctx.reqId || `srv-${Date.now()}`;
         const v = (ctx.action?.params?.values || {}) as { productId?: number };
-        const productId = Number(v.productId);
-        if (!productId) {
-          ctx.status = 400;
-          ctx.body = fail('NO_PRODUCT_ID', '缺少商品 id', false, traceId);
-          return await next();
-        }
-        const rows = await app.db.getRepository('aiListingMediaAssets').find({
-          filter: { productId, assetType: 'image' },
-          sort: ['sort', 'id'],
-        });
+        const productId = Number(v.productId) || 0;
+        // 自由改图模式(不选商品直接上传改图):productId 缺省 → 列无商品归属的候选。
+        // 走 model.findAll 的 IS NULL(仓库 filter 对 null 的语义不稳);此模式无图集/无采纳位,只有候选。
+        const rows = productId
+          ? await app.db.getRepository('aiListingMediaAssets').find({
+              filter: { productId, assetType: 'image' },
+              sort: ['sort', 'id'],
+            })
+          : ((await app.db.getCollection('aiListingMediaAssets').model.findAll({
+              where: { productId: null, assetType: 'image' },
+              order: [
+                ['sort', 'ASC'],
+                ['id', 'ASC'],
+              ],
+            })) as unknown as Array<{ get: (k: string) => unknown }>);
         const mapped = rows.map(mapAsset);
         const byIdDesc = [...mapped].sort((a, b) => Number(b.id) - Number(a.id));
-        // 视频候选/采纳(P8 智能视频):独立数组,不与图片面板混用
-        const videoRows = await app.db.getRepository('aiListingMediaAssets').find({
-          filter: { productId, assetType: 'video' },
-          sort: ['id'],
-        });
+        // 视频候选/采纳(P8 智能视频):独立数组,不与图片面板混用;自由模式无视频位
+        const videoRows = productId
+          ? await app.db.getRepository('aiListingMediaAssets').find({
+              filter: { productId, assetType: 'video' },
+              sort: ['id'],
+            })
+          : [];
         const videos = videoRows.map(mapAsset).sort((a, b) => Number(b.id) - Number(a.id));
         ctx.body = {
           ok: true,

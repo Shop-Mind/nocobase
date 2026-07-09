@@ -489,5 +489,11 @@
   "workshop.func.selling_point.heroSub": "AI extracts selling points and builds marketing images",
   "workshop.func.selling_point.heroValue": "Bold copy layouts out of the box — craft higher-CTR hero images",
   "workshop.func.expand.heroSub": "Outpaint the canvas to a target ratio",
-  "workshop.func.expand.heroValue": "AI fills the new area — fit platform specs without cropping the subject"
+  "workshop.func.expand.heroValue": "AI fills the new area — fit platform specs without cropping the subject",
+  "Edit images without a product": "Edit images without a product",
+  "Free editing · not linked to a product": "Free editing · not linked to a product",
+  "Upload the images you want to edit — results appear on the canvas.": "Upload the images you want to edit — results appear on the canvas.",
+  "Free-mode results are not linked to a product — download to use them; pick a product to adopt.": "Free-mode results are not linked to a product — download to use them; pick a product to adopt.",
+  "Upload images on the left to get started.": "Upload images on the left to get started.",
+  "Download": "Download"
 }

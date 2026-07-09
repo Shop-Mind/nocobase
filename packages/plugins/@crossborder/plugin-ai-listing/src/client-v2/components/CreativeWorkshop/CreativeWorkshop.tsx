@@ -107,11 +107,13 @@ interface PickerProduct {
 }
 
 // 外层:持有「当前商品」;裸进入(独立菜单页)先走商品选择器,选定后主体按 key=pid 重挂载(天然重置全部状态)。
+// 自由改图模式(W1.5 用户反馈):不选商品也能进工坊 —— 只上传图/生成/对比/下载,产物不归属任何商品。
 export function CreativeWorkshop(props: CreativeWorkshopProps) {
   const t = useMemo(() => makeT(props.app), [props.app]);
   const [pid, setPid] = useState<number | undefined>(props.productId || undefined);
   const [pidTitle, setPidTitle] = useState<string | undefined>(props.productTitle);
-  if (!pid) {
+  const [freeMode, setFreeMode] = useState(false);
+  if (!pid && !freeMode) {
     return (
       <ProductPicker
         app={props.app}
@@ -121,29 +123,40 @@ export function CreativeWorkshop(props: CreativeWorkshopProps) {
           setPidTitle(p.title);
           props.onProductChange?.(p.id, p.title);
         }}
+        onFree={() => setFreeMode(true)}
       />
     );
   }
   return (
     <WorkshopBody
       {...props}
-      key={pid}
-      productId={pid}
-      productTitle={pidTitle}
-      onSwitchProduct={props.allowSwitch ? () => setPid(undefined) : undefined}
+      key={pid ?? 'free'}
+      productId={pid ?? 0}
+      freeMode={!pid}
+      productTitle={pid ? pidTitle : undefined}
+      onSwitchProduct={
+        props.allowSwitch
+          ? () => {
+              setFreeMode(false);
+              setPid(undefined);
+            }
+          : undefined
+      }
     />
   );
 }
 
-// 独立页裸进入时的商品选择器:搜索 + 卡片网格,选一个进工坊
+// 独立页裸进入时的商品选择器:搜索 + 卡片网格,选一个进工坊;也可不选商品直接上传改图
 function ProductPicker({
   app,
   t,
   onPick,
+  onFree,
 }: {
   app: MediaStudioApp;
   t: (key: string, options?: Record<string, unknown>) => string;
   onPick: (p: PickerProduct) => void;
+  onFree: () => void;
 }) {
   const [items, setItems] = useState<PickerProduct[]>([]);
   const [total, setTotal] = useState(0);
@@ -187,16 +200,19 @@ function ProductPicker({
         <span style={{ fontSize: 12, color: '#c7d2e5' }}>{t('Pick a product to start')}</span>
       </div>
       <div style={{ padding: 20, maxWidth: 1200, margin: '0 auto' }} data-testid="ws-picker">
-        <Input.Search
-          allowClear
-          placeholder={t('Search product title')}
-          style={{ maxWidth: 380, marginBottom: 16 }}
-          onSearch={(v) => {
-            setKeyword(v);
-            setPage(1);
-            load(1, v, false);
-          }}
-        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+          <Input.Search
+            allowClear
+            placeholder={t('Search product title')}
+            style={{ maxWidth: 380 }}
+            onSearch={(v) => {
+              setKeyword(v);
+              setPage(1);
+              load(1, v, false);
+            }}
+          />
+          <Button onClick={onFree}>🖼️ {t('Edit images without a product')} →</Button>
+        </div>
         <Spin spinning={loading}>
           {items.length ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
@@ -267,11 +283,21 @@ function ProductPicker({
 }
 
 interface WorkshopBodyProps extends CreativeWorkshopProps {
+  // 0 = 自由改图模式(不绑定商品:只上传/生成/对比/下载,无图集无采纳位)
   productId: number;
+  freeMode?: boolean;
   onSwitchProduct?: () => void;
 }
 
-function WorkshopBody({ app, productId, productTitle, initialAssetIds, onBack, onSwitchProduct }: WorkshopBodyProps) {
+function WorkshopBody({
+  app,
+  productId,
+  productTitle,
+  initialAssetIds,
+  onBack,
+  onSwitchProduct,
+  freeMode,
+}: WorkshopBodyProps) {
   const { message } = AntdApp.useApp();
   const t = useMemo(() => makeT(app), [app]);
 
@@ -308,6 +334,7 @@ function WorkshopBody({ app, productId, productTitle, initialAssetIds, onBack, o
   const [watchUntil, setWatchUntil] = useState(0);
   const [manageOpen, setManageOpen] = useState(false); // 管理图片弹层(完整网格)
   const [advOpen, setAdvOpen] = useState(false); // 高级:显式指定模型(默认收起)
+  const [cmpMode, setCmpMode] = useState<'slider' | 'side'>('slider'); // 画布大图对比:拉帘(默认)/并排
 
   const activeFunc = useMemo<WorkshopFunction>(
     () => getWorkshopFunction(activeKey) || WORKSHOP_FUNCTIONS[0],
@@ -745,14 +772,19 @@ function WorkshopBody({ app, productId, productTitle, initialAssetIds, onBack, o
             onChange={(v) => setTab(v as 'image' | 'video')}
             options={[
               { value: 'image', label: `🖼️ ${t('Smart image')}` },
-              { value: 'video', label: `🎬 ${t('Smart video')}` },
+              // 自由改图不绑定商品,视频产物必须归属商品(视频位/发布),故禁用
+              { value: 'video', label: `🎬 ${t('Smart video')}`, disabled: freeMode },
             ]}
           />
         </div>
         <div
           style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#c7d2e5' }}
         >
-          {productTitle ? (
+          {freeMode ? (
+            <span style={{ background: 'rgba(255,255,255,.1)', padding: '4px 10px', borderRadius: 16 }}>
+              🖼️ {t('Free editing · not linked to a product')}
+            </span>
+          ) : productTitle ? (
             <span
               style={{
                 background: 'rgba(255,255,255,.1)',
@@ -927,7 +959,9 @@ function WorkshopBody({ app, productId, productTitle, initialAssetIds, onBack, o
                   </a>
                 </div>
                 <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', margin: '4px 0 8px' }}>
-                  ✅ {t('Product images auto-loaded — tick to pick, or manage to upload more.')}
+                  {freeMode
+                    ? `📤 ${t('Upload the images you want to edit — results appear on the canvas.')}`
+                    : `✅ ${t('Product images auto-loaded — tick to pick, or manage to upload more.')}`}
                 </Typography.Text>
                 <Spin spinning={loading}>
                   {carryImages.length ? (
@@ -1459,17 +1493,36 @@ function WorkshopBody({ app, productId, productTitle, initialAssetIds, onBack, o
                       marginBottom: 18,
                     }}
                   >
+                    {/* 对比模式:拉帘(默认,原图/候选同位滑动细查)/ 并排 */}
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+                      <Segmented
+                        size="small"
+                        value={cmpMode}
+                        onChange={(v) => setCmpMode(v as 'slider' | 'side')}
+                        options={[
+                          { value: 'slider', label: `🪟 ${t('Curtain')}` },
+                          { value: 'side', label: `◫ ${t('Side by side')}` },
+                        ]}
+                      />
+                    </div>
                     <CompareView
                       originalUrl={compareOriginalUrl}
                       candidateUrl={viewCandidate.url || null}
-                      mode="side"
+                      mode={cmpMode}
                       emptyHint={t('Select a source image first')}
                       t={t}
                     />
                     <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 12 }}>
-                      <Button type="primary" onClick={() => setAdoptTarget(viewCandidate)}>
-                        ✓ {t('Adopt')}
-                      </Button>
+                      {!freeMode ? (
+                        <Button type="primary" onClick={() => setAdoptTarget(viewCandidate)}>
+                          ✓ {t('Adopt')}
+                        </Button>
+                      ) : null}
+                      {viewCandidate.url ? (
+                        <Button onClick={() => window.open(viewCandidate.url || '', '_blank')}>
+                          ⬇ {t('Download')}
+                        </Button>
+                      ) : null}
                       <Button danger onClick={() => doDiscard(viewCandidate)}>
                         {t('Discard')}
                       </Button>
@@ -1531,7 +1584,11 @@ function WorkshopBody({ app, productId, productTitle, initialAssetIds, onBack, o
                   ))}
                 </div>
                 <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: 12 }}>
-                  {t('Adopting writes the product final image (audit as user); publish prefers the adopted set.')}
+                  {freeMode
+                    ? t(
+                        'Free-mode results are not linked to a product — download to use them; pick a product to adopt.',
+                      )
+                    : t('Adopting writes the product final image (audit as user); publish prefers the adopted set.')}
                 </Typography.Paragraph>
               </div>
             ) : (
@@ -1568,6 +1625,11 @@ function WorkshopBody({ app, productId, productTitle, initialAssetIds, onBack, o
                 <div style={{ fontSize: 12.5, color: '#9ca3af', marginTop: 20, maxWidth: 460 }}>
                   {funcHeroValue(activeFunc)}
                 </div>
+                {freeMode && !currentSrc ? (
+                  <Typography.Text type="secondary" style={{ fontSize: 12.5, marginTop: 16 }}>
+                    📤 {t('Upload images on the left to get started.')}
+                  </Typography.Text>
+                ) : null}
               </div>
             )}
           </div>

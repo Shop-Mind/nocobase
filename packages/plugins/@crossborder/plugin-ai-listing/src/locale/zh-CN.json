@@ -489,5 +489,11 @@
   "workshop.func.selling_point.heroSub": "AI 提炼卖点,生成营销主图",
   "workshop.func.selling_point.heroValue": "醒目文案排版直出,打造点击率更高的首图",
   "workshop.func.expand.heroSub": "外扩画布到目标比例",
-  "workshop.func.expand.heroValue": "AI 补全新增区域,主体不裁切即适配平台规格"
+  "workshop.func.expand.heroValue": "AI 补全新增区域,主体不裁切即适配平台规格",
+  "Edit images without a product": "不选商品,直接上传改图",
+  "Free editing · not linked to a product": "自由改图 · 未绑定商品",
+  "Upload the images you want to edit — results appear on the canvas.": "上传要处理的图片,生成结果出现在右侧画布。",
+  "Free-mode results are not linked to a product — download to use them; pick a product to adopt.": "自由改图的结果不归属商品:满意可直接下载使用;要采纳进商品请先选择商品。",
+  "Upload images on the left to get started.": "先在左侧上传图片,再开始生成。",
+  "Download": "下载"
 }
