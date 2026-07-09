@@ -14,6 +14,7 @@ import {
   MediaTaskInput,
   MediaTaskInvoker,
   openAICompatibleMediaGeneration,
+  openAIImagesEdit,
   openAIImagesGeneration,
   openAIMediaTaskInvoker,
   openAISpeech,
@@ -85,6 +86,20 @@ describe('shape 2a: OpenAI images/generations', () => {
   it('throws a readable error on failure', async () => {
     mockFetch(() => jsonResp({ error: { message: 'billing hard limit' } }, 400));
     await expect(openAIImagesGeneration(OPTS, taskInput({}))).rejects.toThrow(/billing hard limit/);
+  });
+});
+
+describe('shape 2a-edit: OpenAI images/edits', () => {
+  it('uses image[] for grok2api image edit even with one source image', async () => {
+    mockFetch(() => jsonResp({ data: [{ url: 'https://x/edit.png' }] }));
+    const result = await openAIImagesEdit(
+      { apiKey: 'sk-test', baseURL: 'http://120.76.157.51:8001/v1' },
+      taskInput({ model: 'grok-imagine-image-edit', images: ['data:image/png;base64,QUJD'] }),
+    );
+    const body = calls[0].init.body as FormData;
+    expect(Array.from(body.keys())).toContain('image[]');
+    expect(Array.from(body.keys())).not.toContain('image');
+    expect(result.urls).toEqual(['https://x/edit.png']);
   });
 });
 

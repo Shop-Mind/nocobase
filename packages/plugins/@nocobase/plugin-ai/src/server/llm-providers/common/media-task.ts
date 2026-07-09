@@ -186,6 +186,11 @@ export function parseImageDataURI(uri: string): { base64: string; mime: string }
   return { mime: m[1], base64: m[2] };
 }
 
+function shouldUseArrayImageField(opts: MediaTaskEndpointOptions, input: MediaTaskInput): boolean {
+  const baseURL = opts.baseURL || '';
+  return /grok-imagine/i.test(input.model) || /grok2api|120\.76\.157\.51:8001/.test(baseURL);
+}
+
 // 形状②a-edit:OpenAI images/edits(带源图编辑)。**有源图时必须走它而非 images/generations**——
 // generations 不接收 image,源图会被丢弃、退化成纯文生图(与原图无关)。gpt-image 系支持 image[] 多图输入
 // 与可选 mask(局部重绘)。上游偶发 TLS(bad record MAC)/500 抖动,对这类瞬时错误做少量重试。
@@ -202,11 +207,12 @@ export async function openAIImagesEdit(
     if (params.size) form.append('size', String(params.size));
     form.append('n', String(Math.max(1, Math.min(Number(params.n) || 1, 4))));
     const multi = input.images.length > 1;
+    const imageFieldName = multi || shouldUseArrayImageField(opts, input) ? 'image[]' : 'image';
     input.images.forEach((uri, i) => {
       const p = parseImageDataURI(uri);
       if (!p) return;
       const blob = new Blob([Buffer.from(p.base64, 'base64')], { type: p.mime });
-      form.append(multi ? 'image[]' : 'image', blob, `image${i}.${p.mime.split('/')[1] || 'png'}`);
+      form.append(imageFieldName, blob, `image${i}.${p.mime.split('/')[1] || 'png'}`);
     });
     if (maskUrl) {
       const mr = await fetch(maskUrl, { signal: taskSignal(30000, input.signal) });
