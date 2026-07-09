@@ -403,11 +403,14 @@
     「管理图片」弹层（完整网格迁入）；张数 = Select 下拉（功能级默认张数，场景图 2）；档位 ⓘ 说明；模型
     Select 收进「高级:指定模型」折叠；消耗 ⓘ 算式提示；提示词计数/必填星保持；画布双态 hero/results
     （data-testid 断言 `ws-hero`/`ws-results`）。
-  - **独立页承载**：组件重构为 wrapper（选品态）+ WorkshopBody（key=pid 重挂载天然重置）;
-    裸进入选品器实测:24 张商品卡渲染 → 点选进工坊 → 「⇄ 切换商品」→ 回选品器,全链路通;
-    候选区入口改跳独立页(`?productId&assetIds&from=review`),页面未建时自动回退全屏 Modal(已验证)。
-    薄壳 jsBlock `docs/jsblocks/creative-workshop.js`(Babel parse OK)+ 幂等建页脚本
-    `create-workshop-page.js`(flowSurfaces:createMenu/addBlock + 代码同步 + 三角色授权)待用户 `!` 运行。
+  - **独立页承载 ✅ 已上线**（页面 `chj7f2yu59l`，jsBlock `ni2pn4j5yjf`，建页脚本已跑、admin/member/
+    r_store_admin 已授权）。组件重构为 wrapper（选品态）+ WorkshopBody（key=pid 重挂载天然重置）。
+    三条链路活体复测通过:①菜单裸进 → 选品器 24 卡;②带参 `?productId=120&from=review` → 工坊主体、
+    「返回候选区」「⇄ 切换商品」齐、三区 `76/320/1256`(独立页画布比弹窗更大);③候选区按钮 → 跳独立页不再开
+    Modal。console 仅剩预览编辑页 jsBlock 的 overlayStyle 警告(镜像已修待 apply)。
+    **jsBlock 沙箱坑 ×2(记录)**:hooks 非裸全局,须 `const { useEffect, useRef } = ctx.libs.React` 前导;
+    SES 沙箱无 `URLSearchParams` 构造器,查询串必须手写正则解析。
+    建页脚本坑:PG 对 `select $1,$2` 裸参数推导不出类型,需显式 `::bigint/::text`。
   - **出图回归 ⚠️ 外部阻塞**：白底图 UI 全链路(点生成→busy→错误提示→恢复)正常,但**两个图像网关当前都不可用**——
     gpt-image-2(:8317)`503 auth_unavailable: no auth available`(直连 API 复现,与 W1 无关;第一轮 P1 期间
     出现过同一错误码后恢复),grok(:8001)会话 401(既有问题)。网关恢复后补验真实出图。
