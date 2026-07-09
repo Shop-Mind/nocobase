@@ -81,10 +81,10 @@ export async function callMediaApi<T>(
   }
 }
 
-export function makeT(app: MediaStudioApp): (key: string) => string {
-  return (key: string) => {
+export function makeT(app: MediaStudioApp): (key: string, options?: Record<string, unknown>) => string {
+  return (key: string, options?: Record<string, unknown>) => {
     try {
-      return app.i18n?.t?.(key, { ns: ['@crossborder/plugin-ai-listing', 'client'] }) || key;
+      return app.i18n?.t?.(key, { ns: ['@crossborder/plugin-ai-listing', 'client'], ...options }) || key;
     } catch {
       return key;
     }

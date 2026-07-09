@@ -18,7 +18,7 @@ import {
   Button,
   Empty,
   Input,
-  InputNumber,
+  Modal,
   Progress,
   Segmented,
   Select,
@@ -86,15 +86,192 @@ function galleryToCarry(gallery: MediaAsset[]): CarryImage[] {
 
 export interface CreativeWorkshopProps {
   app: MediaStudioApp;
-  productId: number;
+  // W1:可缺省 —— 独立菜单页裸进入时组件内置商品选择器,选完再进工坊主体
+  productId?: number;
   productTitle?: string;
   // 从候选区跳入时预选的图(URL 带入)
   initialAssetIds?: number[];
   // 返回候选区/上一页;缺省不显示返回按钮
   onBack?: () => void;
+  // 独立页模式:允许顶部「切换商品」;每次切换回调(jsBlock 用它同步 URL ?productId=)
+  allowSwitch?: boolean;
+  onProductChange?: (id: number, title?: string) => void;
 }
 
-export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds, onBack }: CreativeWorkshopProps) {
+// 商品选择器里的一行(aiListingReview:list 返回)
+interface PickerProduct {
+  id: number;
+  title: string;
+  status: string;
+  mainImage: string | null;
+}
+
+// 外层:持有「当前商品」;裸进入(独立菜单页)先走商品选择器,选定后主体按 key=pid 重挂载(天然重置全部状态)。
+export function CreativeWorkshop(props: CreativeWorkshopProps) {
+  const t = useMemo(() => makeT(props.app), [props.app]);
+  const [pid, setPid] = useState<number | undefined>(props.productId || undefined);
+  const [pidTitle, setPidTitle] = useState<string | undefined>(props.productTitle);
+  if (!pid) {
+    return (
+      <ProductPicker
+        app={props.app}
+        t={t}
+        onPick={(p) => {
+          setPid(p.id);
+          setPidTitle(p.title);
+          props.onProductChange?.(p.id, p.title);
+        }}
+      />
+    );
+  }
+  return (
+    <WorkshopBody
+      {...props}
+      key={pid}
+      productId={pid}
+      productTitle={pidTitle}
+      onSwitchProduct={props.allowSwitch ? () => setPid(undefined) : undefined}
+    />
+  );
+}
+
+// 独立页裸进入时的商品选择器:搜索 + 卡片网格,选一个进工坊
+function ProductPicker({
+  app,
+  t,
+  onPick,
+}: {
+  app: MediaStudioApp;
+  t: (key: string, options?: Record<string, unknown>) => string;
+  onPick: (p: PickerProduct) => void;
+}) {
+  const [items, setItems] = useState<PickerProduct[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [keyword, setKeyword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(
+    async (p: number, kw: string, append: boolean) => {
+      setLoading(true);
+      const res = await callMediaApi<{ products: PickerProduct[]; total: number }>(app, 'aiListingReview:list', {
+        page: p,
+        pageSize: 24,
+        keyword: kw || undefined,
+      });
+      setLoading(false);
+      if (res.ok && res.data) {
+        setItems((prev) => (append ? [...prev, ...res.data.products] : res.data.products));
+        setTotal(res.data.total);
+      }
+    },
+    [app],
+  );
+  useEffect(() => {
+    load(1, '', false);
+  }, [load]);
+  return (
+    <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', minHeight: 560 }}>
+      <div
+        style={{
+          height: 52,
+          background: 'linear-gradient(90deg,#0f1f3d,#15264a)',
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '0 16px',
+          borderRadius: '12px 12px 0 0',
+        }}
+      >
+        <span style={{ fontWeight: 600, fontSize: 15 }}>🎨 {t('Creative Workshop')}</span>
+        <span style={{ fontSize: 12, color: '#c7d2e5' }}>{t('Pick a product to start')}</span>
+      </div>
+      <div style={{ padding: 20, maxWidth: 1200, margin: '0 auto' }} data-testid="ws-picker">
+        <Input.Search
+          allowClear
+          placeholder={t('Search product title')}
+          style={{ maxWidth: 380, marginBottom: 16 }}
+          onSearch={(v) => {
+            setKeyword(v);
+            setPage(1);
+            load(1, v, false);
+          }}
+        />
+        <Spin spinning={loading}>
+          {items.length ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
+              {items.map((p) => (
+                <div
+                  key={p.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onPick(p)}
+                  onKeyDown={(e) => (e.key === 'Enter' ? onPick(p) : undefined)}
+                  style={{
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 10,
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    background: '#fff',
+                  }}
+                >
+                  <div style={{ aspectRatio: '1 / 1', background: '#f4f5f7' }}>
+                    {p.mainImage ? (
+                      <img
+                        src={p.mainImage}
+                        alt={p.title}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    ) : null}
+                  </div>
+                  <div style={{ padding: '8px 10px' }}>
+                    <div
+                      style={{
+                        fontSize: 12.5,
+                        lineHeight: '17px',
+                        height: 34,
+                        overflow: 'hidden',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                      }}
+                      title={p.title}
+                    >
+                      {p.title}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Empty description={t('No products yet')} />
+          )}
+        </Spin>
+        {items.length < total ? (
+          <div style={{ textAlign: 'center', marginTop: 16 }}>
+            <Button
+              loading={loading}
+              onClick={() => {
+                const next = page + 1;
+                setPage(next);
+                load(next, keyword, true);
+              }}
+            >
+              {t('Load more')} ({items.length}/{total})
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+interface WorkshopBodyProps extends CreativeWorkshopProps {
+  productId: number;
+  onSwitchProduct?: () => void;
+}
+
+function WorkshopBody({ app, productId, productTitle, initialAssetIds, onBack, onSwitchProduct }: WorkshopBodyProps) {
   const { message } = AntdApp.useApp();
   const t = useMemo(() => makeT(app), [app]);
 
@@ -129,6 +306,8 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
   const [adoptTarget, setAdoptTarget] = useState<MediaAsset | null>(null);
   const [adopting, setAdopting] = useState(false);
   const [watchUntil, setWatchUntil] = useState(0);
+  const [manageOpen, setManageOpen] = useState(false); // 管理图片弹层(完整网格)
+  const [advOpen, setAdvOpen] = useState(false); // 高级:显式指定模型(默认收起)
 
   const activeFunc = useMemo<WorkshopFunction>(
     () => getWorkshopFunction(activeKey) || WORKSHOP_FUNCTIONS[0],
@@ -197,13 +376,14 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
     return () => clearInterval(iv);
   }, [watchUntil, refresh]);
 
-  // 切功能:预填默认指令;单图功能把多选收敛为一张
+  // 切功能:预填默认指令 + 该功能默认张数;单图功能把多选收敛为一张
   const selectFunc = useCallback((fn: WorkshopFunction) => {
     if (!fn.enabled) return;
     setActiveKey(fn.key);
     setInstruction(fn.promptDefault || '');
     setAspect('');
     setTier(fn.tier);
+    setCount(fn.defaultCount || 1);
     setRefImage(null);
     setCraft('');
     setLogoPos('正面中间');
@@ -230,12 +410,20 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
           next.add(key);
           return next;
         }
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
+        if (next.has(key)) {
+          next.delete(key);
+        } else {
+          // 对齐阿里「上传图片 (n/9)」:多图功能硬上限 9 张
+          if (next.size >= 9) {
+            message.warning(t('Up to 9 images per batch'));
+            return prev;
+          }
+          next.add(key);
+        }
         return next;
       });
     },
-    [activeFunc.single],
+    [activeFunc.single, message, t],
   );
 
   // 上传新图 → File Manager attachments → 加入带入区(sourceImageUrl)
@@ -256,6 +444,11 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
         setUploaded((prev) => [...prev, { key, url, uploaded: true }]);
         setPicked((prev) => {
           const next = activeFunc.single ? new Set<string>() : new Set(prev);
+          // 9 张硬上限:满了则只入库不自动勾选
+          if (next.size >= 9) {
+            message.warning(t('Up to 9 images per batch'));
+            return prev;
+          }
           next.add(key);
           return next;
         });
@@ -288,9 +481,9 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
     [app, message, t],
   );
 
-  // 生成:对每张选中图逐张出候选(受服务端日限额保护)
+  // 生成:对每张选中图逐张出候选(受服务端日限额保护);多图上限 9 张(与选图区一致)
   const doGenerate = useCallback(async () => {
-    const targets = carryImages.filter((c) => picked.has(c.key));
+    const targets = carryImages.filter((c) => picked.has(c.key)).slice(0, 9);
     if (!targets.length) {
       message.warning(t('Select a source image first'));
       return;
@@ -493,10 +686,30 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
     const r = t(k);
     return r && r !== k ? r : fn.sub;
   };
+  const funcHeroSub = (fn: WorkshopFunction) => {
+    const k = `workshop.func.${fn.key}.heroSub`;
+    const r = t(k);
+    return r && r !== k ? r : fn.heroSub;
+  };
+  const funcHeroValue = (fn: WorkshopFunction) => {
+    const k = `workshop.func.${fn.key}.heroValue`;
+    const r = t(k);
+    return r && r !== k ? r : fn.heroValue;
+  };
 
   return (
-    <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', border: '1px solid #e5e7eb' }}>
-      {/* 顶部栏 */}
+    <div
+      data-testid="ws-root"
+      style={{
+        background: '#fff',
+        borderRadius: 12,
+        overflow: 'hidden',
+        border: '1px solid #e5e7eb',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      {/* 顶部栏:标题居左 / tab 绝对居中(对齐阿里) / 右上 商品名 + 切换商品 + 创作历史 + 返回 */}
       <div
         style={{
           height: 52,
@@ -506,6 +719,8 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
           alignItems: 'center',
           gap: 14,
           padding: '0 16px',
+          position: 'relative',
+          flexShrink: 0,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontWeight: 600, fontSize: 15 }}>
@@ -523,23 +738,47 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
           </span>
           {t('Creative Workshop')}
         </div>
-        <Segmented
-          size="small"
-          value={tab}
-          onChange={(v) => setTab(v as 'image' | 'video')}
-          options={[
-            { value: 'image', label: `🖼️ ${t('Smart image')}` },
-            { value: 'video', label: `🎬 ${t('Smart video')}` },
-          ]}
-        />
+        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
+          <Segmented
+            size="small"
+            value={tab}
+            onChange={(v) => setTab(v as 'image' | 'video')}
+            options={[
+              { value: 'image', label: `🖼️ ${t('Smart image')}` },
+              { value: 'video', label: `🎬 ${t('Smart video')}` },
+            ]}
+          />
+        </div>
         <div
           style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#c7d2e5' }}
         >
           {productTitle ? (
-            <span style={{ background: 'rgba(255,255,255,.1)', padding: '4px 10px', borderRadius: 16 }}>
+            <span
+              style={{
+                background: 'rgba(255,255,255,.1)',
+                padding: '4px 10px',
+                borderRadius: 16,
+                maxWidth: 240,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={productTitle}
+            >
               {t('Current product')}: {productTitle}
             </span>
           ) : null}
+          {onSwitchProduct ? (
+            <Button size="small" ghost onClick={onSwitchProduct}>
+              ⇄ {t('Switch product')}
+            </Button>
+          ) : null}
+          {/* 创作历史:W4 点亮;先占位与阿里同位 */}
+          <Tooltip title={t('Coming soon')}>
+            <Button size="small" ghost disabled style={{ color: '#8ea0c0', borderColor: 'rgba(255,255,255,.25)' }}>
+              🕘 {t('Creation history')}
+            </Button>
+          </Tooltip>
           {onBack ? (
             <Button size="small" ghost onClick={onBack}>
               ← {t('Back to candidates')}
@@ -549,17 +788,23 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
       </div>
 
       {tab === 'image' ? (
-        <div style={{ display: 'flex', minHeight: 560 }}>
-          {/* 左:功能栏 */}
+        // 有界高度是配置列内滚 + 底部生成栏常驻的前提(独立页/Modal 两种承载都按视口扣顶部)
+        <div style={{ display: 'flex', alignItems: 'stretch', height: 'calc(100vh - 175px)', minHeight: 560 }}>
+          {/* 左:功能轨(素材生成分组 + 「新」角标,对齐阿里) */}
           <div
+            data-testid="ws-rail"
             style={{
-              width: 92,
+              width: 76,
+              flexShrink: 0,
               borderRight: '1px solid #f0f0f0',
               background: '#fafbfc',
-              padding: '8px 0',
+              padding: '10px 0 8px',
               overflowY: 'auto',
             }}
           >
+            <div style={{ fontSize: 10.5, color: '#9ca3af', textAlign: 'center', marginBottom: 4, letterSpacing: 1 }}>
+              {t('Material generation')}
+            </div>
             {WORKSHOP_FUNCTIONS.map((fn) => {
               const on = fn.key === activeKey;
               const inner = (
@@ -575,7 +820,7 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
                     flexDirection: 'column',
                     alignItems: 'center',
                     gap: 3,
-                    padding: '9px 4px',
+                    padding: '8px 2px',
                     cursor: fn.enabled ? 'pointer' : 'not-allowed',
                     opacity: fn.enabled ? 1 : 0.4,
                     color: on ? '#1677ff' : '#6b7280',
@@ -585,19 +830,36 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
                 >
                   <span
                     style={{
-                      width: 38,
-                      height: 38,
-                      borderRadius: 10,
+                      width: 34,
+                      height: 34,
+                      borderRadius: 9,
                       background: on ? '#e6f4ff' : '#fff',
                       border: `1px solid ${on ? '#1677ff' : '#e5e7eb'}`,
                       display: 'grid',
                       placeItems: 'center',
-                      fontSize: 19,
+                      fontSize: 17,
                     }}
                   >
                     {fn.icon}
                   </span>
-                  <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{funcLabel(fn)}</span>
+                  <span style={{ fontSize: 10.5, whiteSpace: 'nowrap' }}>{funcLabel(fn)}</span>
+                  {fn.isNew ? (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: 2,
+                        right: 5,
+                        fontSize: 9,
+                        background: '#52c41a',
+                        color: '#fff',
+                        borderRadius: 6,
+                        padding: '0 4px',
+                        lineHeight: '14px',
+                      }}
+                    >
+                      {t('New')}
+                    </span>
+                  ) : null}
                   {!fn.enabled ? (
                     <span
                       style={{
@@ -626,130 +888,189 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
             })}
           </div>
 
-          {/* 中:带入 + 专属表单 */}
+          {/* 中:窄配置列(对齐阿里 ~320px;内部自身滚动,底部生成栏固定) */}
           <div
-            style={{ flex: 1, minWidth: 0, padding: '18px 22px', borderRight: '1px solid #f0f0f0', overflowY: 'auto' }}
+            data-testid="ws-config"
+            style={{
+              width: 320,
+              flexShrink: 0,
+              borderRight: '1px solid #f0f0f0',
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+            }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-              <Typography.Title level={4} style={{ margin: 0 }}>
-                {activeFunc.icon} {funcLabel(activeFunc)}
-              </Typography.Title>
-              <Tag color={activeFunc.tier === 'advanced' ? 'purple' : 'blue'}>
-                {activeFunc.tier === 'advanced' ? t('Advanced tier') : t('Basic tier')}
-              </Tag>
-            </div>
-            <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 16 }}>
-              {funcSub(activeFunc)}
-            </Typography.Paragraph>
-
-            {/* 商品图带入 */}
-            <div style={{ marginBottom: 18 }}>
-              <Typography.Text strong style={{ fontSize: 13 }}>
-                🖼️ {t('Product images')}{' '}
-                <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
-                  {activeFunc.single ? t('single image · click to switch') : t('max 9 · multi-select')}
-                </Typography.Text>
-              </Typography.Text>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: '#f6ffed',
-                  border: '1px solid #b7eb8f',
-                  borderRadius: 9,
-                  padding: '8px 12px',
-                  margin: '8px 0 10px',
-                  fontSize: 12.5,
-                  color: '#389e0d',
-                }}
-              >
-                ✅ {t('Product images auto-loaded — no re-upload needed. Pick images to process, or upload extra.')}
-                <Tag color="green" style={{ marginLeft: 'auto' }}>
-                  {t('Selected')} {picked.size}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 16px 8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <Typography.Title level={5} style={{ margin: 0 }}>
+                  {activeFunc.icon} {funcLabel(activeFunc)}
+                </Typography.Title>
+                <Tag color={activeFunc.tier === 'advanced' ? 'purple' : 'blue'}>
+                  {activeFunc.tier === 'advanced' ? t('Advanced tier') : t('Basic tier')}
                 </Tag>
               </div>
-              <Spin spinning={loading}>
-                {carryImages.length ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
-                    {carryImages.map((c) => {
-                      const on = picked.has(c.key);
-                      return (
-                        <div
-                          key={c.key}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => togglePick(c.key)}
-                          onKeyDown={(e) => (e.key === 'Enter' ? togglePick(c.key) : undefined)}
-                          style={{
-                            position: 'relative',
-                            aspectRatio: '1 / 1',
-                            borderRadius: 8,
-                            overflow: 'hidden',
-                            border: on ? '2px solid #52c41a' : '1px solid #e5e7eb',
-                            boxShadow: on ? '0 0 0 2px rgba(82,196,26,.12)' : 'none',
-                            cursor: 'pointer',
-                            background: '#f4f5f7',
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 14 }}>
+                {funcSub(activeFunc)}
+              </Typography.Paragraph>
+
+              {/* 商品图带入(压缩条:「*上传图片 (n/9)」+ 横排缩略;完整网格在「管理图片」弹层) */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    🖼️ {t('Upload images')} <span style={{ color: '#ff4d4f' }}>*</span>{' '}
+                    <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
+                      {activeFunc.single ? t('single image · click to switch') : `(${picked.size}/9)`}
+                    </Typography.Text>
+                  </Typography.Text>
+                  <a style={{ marginLeft: 'auto', fontSize: 12 }} onClick={() => setManageOpen(true)}>
+                    {t('Manage images')}
+                  </a>
+                </div>
+                <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', margin: '4px 0 8px' }}>
+                  ✅ {t('Product images auto-loaded — tick to pick, or manage to upload more.')}
+                </Typography.Text>
+                <Spin spinning={loading}>
+                  {carryImages.length ? (
+                    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
+                      {carryImages.map((c) => {
+                        const on = picked.has(c.key);
+                        return (
+                          <div
+                            key={c.key}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => togglePick(c.key)}
+                            onKeyDown={(e) => (e.key === 'Enter' ? togglePick(c.key) : undefined)}
+                            style={{
+                              position: 'relative',
+                              width: 52,
+                              height: 52,
+                              flexShrink: 0,
+                              borderRadius: 8,
+                              overflow: 'hidden',
+                              border: on ? '2px solid #52c41a' : '1px solid #e5e7eb',
+                              cursor: 'pointer',
+                              background: '#f4f5f7',
+                            }}
+                          >
+                            {c.url ? (
+                              <img
+                                src={c.url}
+                                alt={String(c.role || c.key)}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              />
+                            ) : null}
+                            <span
+                              aria-hidden
+                              style={{
+                                position: 'absolute',
+                                right: 2,
+                                top: 2,
+                                width: 15,
+                                height: 15,
+                                borderRadius: 4,
+                                border: '1.5px solid #fff',
+                                background: on ? '#52c41a' : 'rgba(0,0,0,.28)',
+                                color: '#fff',
+                                fontSize: 10,
+                                lineHeight: '13px',
+                                textAlign: 'center',
+                              }}
+                            >
+                              {on ? '✓' : ''}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {/* 上传新图(迷你位;更多操作进「管理图片」) */}
+                      <label
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: 52,
+                          height: 52,
+                          flexShrink: 0,
+                          border: '1.5px dashed #e5e7eb',
+                          borderRadius: 8,
+                          color: '#9ca3af',
+                          cursor: 'pointer',
+                          background: '#fafbfc',
+                        }}
+                      >
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) onUpload(f);
+                            e.target.value = '';
                           }}
-                        >
-                          {c.url ? (
-                            <img
-                              src={c.url}
-                              alt={String(c.role || c.key)}
-                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            />
-                          ) : null}
-                          <span
-                            style={{
-                              position: 'absolute',
-                              left: 4,
-                              top: 4,
-                              fontSize: 9,
-                              color: '#fff',
-                              borderRadius: 3,
-                              padding: '0 4px',
-                              lineHeight: '15px',
-                              background: c.uploaded ? '#722ed1' : c.role === 'main' ? '#faad14' : '#40a9ff',
-                            }}
-                          >
-                            {c.uploaded ? t('Uploaded') : c.role === 'main' ? t('Main') : t('Detail')}
-                          </span>
-                          <span
-                            aria-hidden
-                            style={{
-                              position: 'absolute',
-                              right: 4,
-                              top: 4,
-                              width: 17,
-                              height: 17,
-                              borderRadius: 5,
-                              border: '1.5px solid #fff',
-                              background: on ? '#52c41a' : 'rgba(0,0,0,.28)',
-                              color: '#fff',
-                              fontSize: 11,
-                              lineHeight: '15px',
-                              textAlign: 'center',
-                            }}
-                          >
-                            {on ? '✓' : ''}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {/* 上传新图 */}
+                        />
+                        <span style={{ fontSize: 16 }}>{uploading ? '…' : '+'}</span>
+                      </label>
+                    </div>
+                  ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('No images yet')} />
+                  )}
+                </Spin>
+              </div>
+
+              {/* 第二张图(Logo定制的 Logo 图 / 换材质的材质参考图) */}
+              {activeFunc.fields.some((f) => f.type === 'secondImage') ? (
+                <div style={{ marginBottom: 18 }}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    ➕{' '}
+                    {activeKey === 'logo'
+                      ? t('Upload logo image')
+                      : activeKey === 'model_shot'
+                        ? t('Model reference image')
+                        : t('Material reference image')}
+                    {activeKey === 'logo' ? (
+                      <span style={{ color: '#ff4d4f' }}> *</span>
+                    ) : (
+                      <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
+                        {' '}
+                        {t('optional')}
+                      </Typography.Text>
+                    )}
+                  </Typography.Text>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                    {refImage ? (
+                      <div
+                        style={{
+                          width: 72,
+                          height: 72,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: '1px solid #e5e7eb',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <img
+                          src={refImage.url}
+                          alt={refImage.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#f4f5f7' }}
+                        />
+                      </div>
+                    ) : null}
                     <label
                       style={{
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: 4,
+                        gap: 3,
+                        width: 72,
+                        height: 72,
                         border: '1.5px dashed #e5e7eb',
                         borderRadius: 8,
                         color: '#9ca3af',
                         cursor: 'pointer',
-                        aspectRatio: '1 / 1',
                         background: '#fafbfc',
+                        flexShrink: 0,
                       }}
                     >
                       <input
@@ -758,382 +1079,314 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
                         style={{ display: 'none' }}
                         onChange={(e) => {
                           const f = e.target.files?.[0];
-                          if (f) onUpload(f);
+                          if (f) onRefUpload(f);
                           e.target.value = '';
                         }}
                       />
-                      <span style={{ fontSize: 20 }}>{uploading ? '…' : '+'}</span>
-                      <span style={{ fontSize: 11 }}>{t('Upload')}</span>
+                      <span style={{ fontSize: 18 }}>{refUploading ? '…' : '+'}</span>
+                      <span style={{ fontSize: 11 }}>{refImage ? t('Replace') : t('Upload')}</span>
                     </label>
+                    {refImage ? (
+                      <a onClick={() => setRefImage(null)} style={{ fontSize: 12 }}>
+                        {t('Remove')}
+                      </a>
+                    ) : null}
                   </div>
-                ) : (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('No images yet')} />
-                )}
-              </Spin>
-            </div>
+                </div>
+              ) : null}
 
-            {/* 第二张图(Logo定制的 Logo 图 / 换材质的材质参考图) */}
-            {activeFunc.fields.some((f) => f.type === 'secondImage') ? (
-              <div style={{ marginBottom: 18 }}>
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  ➕{' '}
-                  {activeKey === 'logo'
-                    ? t('Upload logo image')
-                    : activeKey === 'model_shot'
-                      ? t('Model reference image')
-                      : t('Material reference image')}
-                  {activeKey === 'logo' ? (
-                    <span style={{ color: '#ff4d4f' }}> *</span>
-                  ) : (
-                    <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
-                      {' '}
-                      {t('optional')}
+              {/* Logo 工艺 + 位置 */}
+              {activeFunc.fields.some((f) => f.type === 'craft') ? (
+                <>
+                  <div style={{ marginBottom: 14 }}>
+                    <Typography.Text strong style={{ fontSize: 13 }}>
+                      🛠️ {t('Craft')}
                     </Typography.Text>
-                  )}
-                </Typography.Text>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
-                  {refImage ? (
-                    <div
-                      style={{
-                        width: 72,
-                        height: 72,
-                        borderRadius: 8,
-                        overflow: 'hidden',
-                        border: '1px solid #e5e7eb',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <img
-                        src={refImage.url}
-                        alt={refImage.name}
-                        style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#f4f5f7' }}
-                      />
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                      {CRAFTS.map((c) => (
+                        <Tag.CheckableTag key={c} checked={craft === c} onChange={(on) => setCraft(on ? c : '')}>
+                          {c}
+                        </Tag.CheckableTag>
+                      ))}
                     </div>
-                  ) : null}
-                  <label
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 3,
-                      width: 72,
-                      height: 72,
-                      border: '1.5px dashed #e5e7eb',
-                      borderRadius: 8,
-                      color: '#9ca3af',
-                      cursor: 'pointer',
-                      background: '#fafbfc',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <input
-                      type="file"
-                      accept="image/*"
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) onRefUpload(f);
-                        e.target.value = '';
-                      }}
-                    />
-                    <span style={{ fontSize: 18 }}>{refUploading ? '…' : '+'}</span>
-                    <span style={{ fontSize: 11 }}>{refImage ? t('Replace') : t('Upload')}</span>
-                  </label>
-                  {refImage ? (
-                    <a onClick={() => setRefImage(null)} style={{ fontSize: 12 }}>
-                      {t('Remove')}
-                    </a>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Logo 工艺 + 位置 */}
-            {activeFunc.fields.some((f) => f.type === 'craft') ? (
-              <>
-                <div style={{ marginBottom: 14 }}>
-                  <Typography.Text strong style={{ fontSize: 13 }}>
-                    🛠️ {t('Craft')}
-                  </Typography.Text>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                    {CRAFTS.map((c) => (
-                      <Tag.CheckableTag key={c} checked={craft === c} onChange={(on) => setCraft(on ? c : '')}>
-                        {c}
-                      </Tag.CheckableTag>
-                    ))}
                   </div>
-                </div>
+                  <div style={{ marginBottom: 18 }}>
+                    <Typography.Text strong style={{ fontSize: 13 }}>
+                      📍 {t('Logo position')}
+                    </Typography.Text>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                      {LOGO_POSITIONS.map((p) => (
+                        <Tag.CheckableTag key={p} checked={logoPos === p} onChange={() => setLogoPos(p)}>
+                          {p}
+                        </Tag.CheckableTag>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {/* 图片翻译:目标语种 + 当前为近似翻译模式的提示 */}
+              {activeFunc.fields.some((f) => f.type === 'lang') ? (
                 <div style={{ marginBottom: 18 }}>
                   <Typography.Text strong style={{ fontSize: 13 }}>
-                    📍 {t('Logo position')}
+                    🌐 {t('Target language')} <span style={{ color: '#ff4d4f' }}>*</span>
                   </Typography.Text>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                    {LOGO_POSITIONS.map((p) => (
-                      <Tag.CheckableTag key={p} checked={logoPos === p} onChange={() => setLogoPos(p)}>
-                        {p}
+                    {LANGS.map((l) => (
+                      <Tag.CheckableTag key={l.value} checked={lang === l.value} onChange={() => setLang(l.value)}>
+                        {l.label}
+                      </Tag.CheckableTag>
+                    ))}
+                  </div>
+                  <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 8 }}>
+                    ℹ️{' '}
+                    {t(
+                      'Translation is approximated by the general image model; a layout-locked production translation endpoint can be switched in later.',
+                    )}
+                  </Typography.Text>
+                </div>
+              ) : null}
+
+              {/* 模特图:预置模特库(选一;也可在上方上传自有模特图作第二张图,优先用自传图) */}
+              {activeFunc.fields.some((f) => f.type === 'modelGrid') ? (
+                <div style={{ marginBottom: 18 }}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    🧍 {t('Model library')}{' '}
+                    <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
+                      {refImage ? t('using your uploaded model image') : t('pick one, or upload your own above')}
+                    </Typography.Text>
+                  </Typography.Text>
+                  <div
+                    style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, opacity: refImage ? 0.45 : 1 }}
+                  >
+                    {MODEL_PRESETS.map((m) => (
+                      <Tag.CheckableTag
+                        key={m.key}
+                        checked={!refImage && modelPreset === m.desc}
+                        onChange={() => setModelPreset(m.desc)}
+                      >
+                        {m.label}
                       </Tag.CheckableTag>
                     ))}
                   </div>
                 </div>
-              </>
-            ) : null}
+              ) : null}
 
-            {/* 图片翻译:目标语种 + 当前为近似翻译模式的提示 */}
-            {activeFunc.fields.some((f) => f.type === 'lang') ? (
-              <div style={{ marginBottom: 18 }}>
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  🌐 {t('Target language')} <span style={{ color: '#ff4d4f' }}>*</span>
-                </Typography.Text>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                  {LANGS.map((l) => (
-                    <Tag.CheckableTag key={l.value} checked={lang === l.value} onChange={() => setLang(l.value)}>
-                      {l.label}
-                    </Tag.CheckableTag>
-                  ))}
-                </div>
-                <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 8 }}>
-                  ℹ️{' '}
-                  {t(
-                    'Translation is approximated by the general image model; a layout-locked production translation endpoint can be switched in later.',
-                  )}
-                </Typography.Text>
-              </div>
-            ) : null}
-
-            {/* 模特图:预置模特库(选一;也可在上方上传自有模特图作第二张图,优先用自传图) */}
-            {activeFunc.fields.some((f) => f.type === 'modelGrid') ? (
-              <div style={{ marginBottom: 18 }}>
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  🧍 {t('Model library')}{' '}
-                  <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
-                    {refImage ? t('using your uploaded model image') : t('pick one, or upload your own above')}
+              {/* 生产流程图:信息图风格 + 文字渲染提示 */}
+              {activeFunc.fields.some((f) => f.type === 'styleSeg') ? (
+                <div style={{ marginBottom: 18 }}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    🎨 {t('Infographic style')}
                   </Typography.Text>
-                </Typography.Text>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, opacity: refImage ? 0.45 : 1 }}>
-                  {MODEL_PRESETS.map((m) => (
-                    <Tag.CheckableTag
-                      key={m.key}
-                      checked={!refImage && modelPreset === m.desc}
-                      onChange={() => setModelPreset(m.desc)}
-                    >
-                      {m.label}
-                    </Tag.CheckableTag>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {/* 生产流程图:信息图风格 + 文字渲染提示 */}
-            {activeFunc.fields.some((f) => f.type === 'styleSeg') ? (
-              <div style={{ marginBottom: 18 }}>
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  🎨 {t('Infographic style')}
-                </Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  <Segmented
-                    value={procStyle}
-                    onChange={(v) => setProcStyle(v as string)}
-                    options={STYLES.map((s) => ({ value: s, label: s }))}
-                  />
-                </div>
-                <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 8 }}>
-                  ℹ️{' '}
-                  {t(
-                    'Text rendering depends on the image model; a strong-text production endpoint can be switched in later.',
-                  )}
-                </Typography.Text>
-              </div>
-            ) : null}
-
-            {/* 推荐提示词(点图出 3 条,看图生成;可填入/换一换) */}
-            {supportsReco(activeKey) ? (
-              <div
-                style={{
-                  marginBottom: 18,
-                  background: '#f9f0ff',
-                  border: '1px solid #efdbff',
-                  borderRadius: 10,
-                  padding: 12,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9 }}>
-                  <Tag color="purple" style={{ margin: 0 }}>
-                    AI
-                  </Tag>
-                  <Typography.Text strong style={{ fontSize: 12.5, color: '#722ed1' }}>
-                    {t('Recommended prompts')}
-                  </Typography.Text>
-                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    {recosFallback ? t('example · editable') : t('based on this product image')}
-                  </Typography.Text>
-                  <a onClick={() => fetchRecos()} style={{ marginLeft: 'auto', fontSize: 11.5, color: '#722ed1' }}>
-                    🔄 {t('Refresh')}
-                  </a>
-                </div>
-                {recosLoading ? (
-                  <div style={{ padding: '8px 0' }}>
-                    <Spin size="small" />{' '}
-                    <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
-                      {t('AI is analyzing this product…')}
-                    </Typography.Text>
+                  <div style={{ marginTop: 8 }}>
+                    <Segmented
+                      value={procStyle}
+                      onChange={(v) => setProcStyle(v as string)}
+                      options={STYLES.map((s) => ({ value: s, label: s }))}
+                    />
                   </div>
-                ) : recos.length ? (
-                  activeKey === 'selling_point' ? (
-                    // 卖点图:多选勾选(可选多个卖点,叠加到主图文案)
-                    <>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                        {recos.map((p, i) => (
-                          <Tag.CheckableTag
-                            key={i}
-                            checked={pickedPoints.includes(p)}
-                            onChange={(on) =>
-                              setPickedPoints((prev) => (on ? [...prev, p] : prev.filter((x) => x !== p)))
-                            }
-                          >
-                            {p}
-                          </Tag.CheckableTag>
-                        ))}
-                      </div>
-                      <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
-                        {pickedPoints.length
-                          ? `${t('Selected')} ${pickedPoints.length} · ${pickedPoints.join(' · ')}`
-                          : t('Tick the selling points to overlay (multi-select)')}
-                      </Typography.Text>
-                    </>
-                  ) : (
-                    <Space direction="vertical" style={{ width: '100%' }} size={7}>
-                      {recos.map((p, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            display: 'flex',
-                            gap: 8,
-                            alignItems: 'center',
-                            background: '#fff',
-                            border: '1px solid #efdbff',
-                            borderRadius: 8,
-                            padding: '8px 10px',
-                          }}
-                        >
-                          <Typography.Text style={{ flex: 1, fontSize: 12.5 }}>{p}</Typography.Text>
-                          <Button
-                            size="small"
-                            onClick={() => setInstruction(p)}
-                            style={{ color: '#722ed1', borderColor: '#d3adf7' }}
-                          >
-                            {t('Fill in')}
-                          </Button>
-                        </div>
-                      ))}
-                    </Space>
-                  )
-                ) : (
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {t('No recommendations — enter manually below')}
+                  <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 8 }}>
+                    ℹ️{' '}
+                    {t(
+                      'Text rendering depends on the image model; a strong-text production endpoint can be switched in later.',
+                    )}
                   </Typography.Text>
-                )}
-              </div>
-            ) : null}
+                </div>
+              ) : null}
 
-            {/* 专属表单:P1 只渲染提示词(其余字段 P2+) */}
-            {activeFunc.fields.some((f) => f.type === 'prompt' && !f.planned) || activeFunc.promptPlaceholder ? (
-              <div style={{ marginBottom: 18 }}>
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  ✏️ {t('Prompt')}{' '}
-                  {activeFunc.instructionRequired ? (
-                    <span style={{ color: '#ff4d4f' }}>*</span>
+              {/* 推荐提示词(点图出 3 条,看图生成;可填入/换一换) */}
+              {supportsReco(activeKey) ? (
+                <div
+                  style={{
+                    marginBottom: 18,
+                    background: '#f9f0ff',
+                    border: '1px solid #efdbff',
+                    borderRadius: 10,
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9 }}>
+                    <Tag color="purple" style={{ margin: 0 }}>
+                      AI
+                    </Tag>
+                    <Typography.Text strong style={{ fontSize: 12.5, color: '#722ed1' }}>
+                      {t('Recommended prompts')}
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      {recosFallback ? t('example · editable') : t('based on this product image')}
+                    </Typography.Text>
+                    <a onClick={() => fetchRecos()} style={{ marginLeft: 'auto', fontSize: 11.5, color: '#722ed1' }}>
+                      🔄 {t('Refresh')}
+                    </a>
+                  </div>
+                  {recosLoading ? (
+                    <div style={{ padding: '8px 0' }}>
+                      <Spin size="small" />{' '}
+                      <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
+                        {t('AI is analyzing this product…')}
+                      </Typography.Text>
+                    </div>
+                  ) : recos.length ? (
+                    activeKey === 'selling_point' ? (
+                      // 卖点图:多选勾选(可选多个卖点,叠加到主图文案)
+                      <>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          {recos.map((p, i) => (
+                            <Tag.CheckableTag
+                              key={i}
+                              checked={pickedPoints.includes(p)}
+                              onChange={(on) =>
+                                setPickedPoints((prev) => (on ? [...prev, p] : prev.filter((x) => x !== p)))
+                              }
+                            >
+                              {p}
+                            </Tag.CheckableTag>
+                          ))}
+                        </div>
+                        <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
+                          {pickedPoints.length
+                            ? `${t('Selected')} ${pickedPoints.length} · ${pickedPoints.join(' · ')}`
+                            : t('Tick the selling points to overlay (multi-select)')}
+                        </Typography.Text>
+                      </>
+                    ) : (
+                      <Space direction="vertical" style={{ width: '100%' }} size={7}>
+                        {recos.map((p, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex',
+                              gap: 8,
+                              alignItems: 'center',
+                              background: '#fff',
+                              border: '1px solid #efdbff',
+                              borderRadius: 8,
+                              padding: '8px 10px',
+                            }}
+                          >
+                            <Typography.Text style={{ flex: 1, fontSize: 12.5 }}>{p}</Typography.Text>
+                            <Button
+                              size="small"
+                              onClick={() => setInstruction(p)}
+                              style={{ color: '#722ed1', borderColor: '#d3adf7' }}
+                            >
+                              {t('Fill in')}
+                            </Button>
+                          </div>
+                        ))}
+                      </Space>
+                    )
                   ) : (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('No recommendations — enter manually below')}
+                    </Typography.Text>
+                  )}
+                </div>
+              ) : null}
+
+              {/* 专属表单:P1 只渲染提示词(其余字段 P2+) */}
+              {activeFunc.fields.some((f) => f.type === 'prompt' && !f.planned) || activeFunc.promptPlaceholder ? (
+                <div style={{ marginBottom: 18 }}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    ✏️ {t('Prompt')}{' '}
+                    {activeFunc.instructionRequired ? (
+                      <span style={{ color: '#ff4d4f' }}>*</span>
+                    ) : (
+                      <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
+                        {t('optional')}
+                      </Typography.Text>
+                    )}
+                  </Typography.Text>
+                  {/* 固定 rows 而非 autoSize:autoSize 走 rc-resize-observer,在独立 React root(jsBlock/Modal)里
+                  卸载瞬间会测到 NaN 高度报 warning;固定行高彻底避开该 ResizeObserver。 */}
+                  <Input.TextArea
+                    value={instruction}
+                    onChange={(e) => setInstruction(e.target.value)}
+                    placeholder={activeFunc.promptPlaceholder}
+                    maxLength={500}
+                    showCount
+                    rows={4}
+                    style={{ marginTop: 8 }}
+                  />
+                  {['recolor', 'erase', 'detail'].includes(activeKey) ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 6 }}>
+                      💡 {t('Describe the exact part precisely — everything else stays unchanged.')}
+                    </Typography.Text>
+                  ) : null}
+                </div>
+              ) : (
+                <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+                  {t('This function needs no prompt — just pick images and generate.')}
+                </Typography.Paragraph>
+              )}
+
+              {/* 图片比例(仅支持比例的功能显示;'' = 原图/默认,不透传 size) */}
+              {activeFunc.fields.some((f) => f.type === 'ratio') ? (
+                <div style={{ marginBottom: 18 }}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    📐 {t('Aspect ratio')}{' '}
                     <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
                       {t('optional')}
                     </Typography.Text>
-                  )}
-                </Typography.Text>
-                {/* 固定 rows 而非 autoSize:autoSize 走 rc-resize-observer,在独立 React root(jsBlock/Modal)里
-                  卸载瞬间会测到 NaN 高度报 warning;固定行高彻底避开该 ResizeObserver。 */}
-                <Input.TextArea
-                  value={instruction}
-                  onChange={(e) => setInstruction(e.target.value)}
-                  placeholder={activeFunc.promptPlaceholder}
-                  maxLength={500}
-                  showCount
-                  rows={4}
-                  style={{ marginTop: 8 }}
-                />
-                {['recolor', 'erase', 'detail'].includes(activeKey) ? (
-                  <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 6 }}>
-                    💡 {t('Describe the exact part precisely — everything else stays unchanged.')}
                   </Typography.Text>
-                ) : null}
-              </div>
-            ) : (
-              <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-                {t('This function needs no prompt — just pick images and generate.')}
-              </Typography.Paragraph>
-            )}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                    {['', ...RATIOS].map((r) => (
+                      <Tag.CheckableTag key={r || 'orig'} checked={aspect === r} onChange={() => setAspect(r)}>
+                        {r || t('Original')}
+                      </Tag.CheckableTag>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
 
-            {/* 图片比例(仅支持比例的功能显示;'' = 原图/默认,不透传 size) */}
-            {activeFunc.fields.some((f) => f.type === 'ratio') ? (
-              <div style={{ marginBottom: 18 }}>
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  📐 {t('Aspect ratio')}{' '}
-                  <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
-                    {t('optional')}
+            {/* 底部生成栏(常驻配置列底部,对齐阿里:张数下拉 / 档位ⓘ / 消耗ⓘ / 开始生成) */}
+            <div
+              style={{ flexShrink: 0, borderTop: '1px solid #f0f0f0', padding: '10px 16px 12px', background: '#fff' }}
+            >
+              <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+                    {t('Count per image')}
                   </Typography.Text>
-                </Typography.Text>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                  {['', ...RATIOS].map((r) => (
-                    <Tag.CheckableTag key={r || 'orig'} checked={aspect === r} onChange={() => setAspect(r)}>
-                      {r || t('Original')}
-                    </Tag.CheckableTag>
-                  ))}
+                  <Select
+                    size="small"
+                    style={{ width: '100%' }}
+                    value={count}
+                    onChange={(v) => setCount(Number(v) || 1)}
+                    options={[1, 2, 3, 4].map((n) => ({ value: n, label: t('{{n}} images', { n }) }))}
+                  />
+                </div>
+                <div style={{ flex: 1.5 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+                    {t('Model tier')}{' '}
+                    <Tooltip title={t('Advanced tier uses a stronger model — better quality, higher cost.')}>
+                      <span style={{ cursor: 'help' }}>ⓘ</span>
+                    </Tooltip>
+                  </Typography.Text>
+                  <Segmented
+                    size="small"
+                    block
+                    value={tier}
+                    onChange={(v) => setTier(v as 'basic' | 'advanced')}
+                    options={[
+                      { value: 'basic', label: t('Basic tier') },
+                      { value: 'advanced', label: t('Advanced tier') },
+                    ]}
+                  />
                 </div>
               </div>
-            ) : null}
-
-            {/* 生成栏 */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 20,
-                flexWrap: 'wrap',
-                padding: '14px 0 4px',
-                borderTop: '1px solid #f0f0f0',
-                marginTop: 6,
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  {t('Count per image')}
-                </Typography.Text>
-                <InputNumber
-                  min={1}
-                  max={4}
-                  value={count}
-                  onChange={(v) => setCount(Number(v) || 1)}
-                  style={{ width: 70 }}
-                />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  {t('Model tier')}
-                </Typography.Text>
-                <Segmented
-                  value={tier}
-                  onChange={(v) => setTier(v as 'basic' | 'advanced')}
-                  options={[
-                    { value: 'basic', label: t('Basic tier') },
-                    { value: 'advanced', label: t('Advanced tier') },
-                  ]}
-                />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  {t('Model')}
-                </Typography.Text>
+              {/* 高级:显式指定模型(我们的超集能力,默认收起不干扰主流程) */}
+              <a
+                style={{ fontSize: 11.5, display: 'inline-block', marginTop: 8 }}
+                onClick={() => setAdvOpen((v) => !v)}
+              >
+                ⚙️ {t('Advanced: choose model')} {advOpen ? '▴' : '▾'}
+              </a>
+              {advOpen ? (
                 <Select
-                  style={{ minWidth: 170 }}
+                  size="small"
+                  style={{ width: '100%', marginTop: 6 }}
                   value={modelKey}
                   onChange={setModelKey}
                   options={[
@@ -1141,120 +1394,180 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
                     ...models.map((m) => ({ value: `${m.llmService}:${m.model}`, label: m.label })),
                   ]}
                 />
+              ) : null}
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
+                <span style={{ fontSize: 11, color: '#6b7280' }}>
+                  {t('Est. cost')}{' '}
+                  <Typography.Text strong style={{ color: '#faad14', fontSize: 13 }}>
+                    {activeFunc.cost * count} {t('beans')}
+                  </Typography.Text>{' '}
+                  <Tooltip title={t('Reference price: function base cost × count. Dynamic pricing arrives later.')}>
+                    <span style={{ cursor: 'help' }}>ⓘ</span>
+                  </Tooltip>
+                </span>
+                <Button
+                  type="primary"
+                  style={{ marginLeft: 'auto' }}
+                  loading={Boolean(busy)}
+                  onClick={doGenerate}
+                  disabled={!picked.size}
+                >
+                  ✨ {busy ? `${t('Generating')} ${busy.done}/${busy.total}` : t('Start generating')}
+                </Button>
               </div>
-              <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
-                  {t('Est. cost')}
-                </Typography.Text>
-                <Typography.Text strong style={{ color: '#faad14' }}>
-                  {activeFunc.cost * count} {t('beans')}
-                </Typography.Text>
-              </div>
-              <Button type="primary" size="large" loading={Boolean(busy)} onClick={doGenerate} disabled={!picked.size}>
-                ✨ {busy ? `${t('Generating')} ${busy.done}/${busy.total}` : t('Start generating')}
-              </Button>
+              {busy ? (
+                <div style={{ marginTop: 8 }}>
+                  <Progress
+                    percent={busy.total ? Math.round((busy.done / busy.total) * 100) : 0}
+                    status="active"
+                    format={() => `${busy.done}/${busy.total}`}
+                  />
+                </div>
+              ) : null}
             </div>
-
-            {/* 出图进度条:多张时逐张生成,进度 = 已出/总数;候选逐张在右侧回流 */}
-            {busy ? (
-              <div style={{ marginTop: 12 }}>
-                <Progress
-                  percent={busy.total ? Math.round((busy.done / busy.total) * 100) : 0}
-                  status="active"
-                  format={() => `${busy.done}/${busy.total}`}
-                />
-                <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
-                  ⏳ {t('Generating one by one — candidates appear on the right as each finishes (upstream is slow).')}
-                </Typography.Text>
-              </div>
-            ) : null}
           </div>
 
-          {/* 右:示例 / 结果 */}
-          <div style={{ width: 326, flexShrink: 0, padding: '18px 16px', background: '#fafbfc', overflowY: 'auto' }}>
-            <Typography.Text type="secondary" style={{ fontSize: 12.5, fontWeight: 600 }}>
-              📎 {t('Preview (before · after)')}
-            </Typography.Text>
-            <div style={{ marginTop: 10, marginBottom: 18 }}>
-              <CompareView
-                originalUrl={compareOriginalUrl}
-                candidateUrl={viewCandidate?.url || null}
-                mode="side"
-                t={t}
-                emptyHint={
-                  currentSrc
-                    ? t('Pick a function and generate — candidates show here')
-                    : t('Select a source image first')
-                }
-              />
-            </div>
-
-            <Typography.Text type="secondary" style={{ fontSize: 12.5, fontWeight: 600 }}>
-              🎉 {t('Generated candidates')}
-              {data.candidates.length ? (
-                <Typography.Text style={{ color: '#1677ff' }}> ({data.candidates.length})</Typography.Text>
-              ) : null}
-            </Typography.Text>
-            {data.candidates.length ? (
-              <>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '10px 0' }}>
+          {/* 右:大结果画布(空闲=功能介绍 hero;有候选=结果网格 + 大图对比,对齐阿里「结果优先」) */}
+          <div
+            data-testid="ws-canvas"
+            style={{ flex: 1, minWidth: 0, background: '#f7f8fa', overflowY: 'auto', padding: 24 }}
+          >
+            {data.candidates.length || busy ? (
+              <div data-testid="ws-results">
+                {busy ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      marginBottom: 14,
+                      fontSize: 12.5,
+                      color: '#6b7280',
+                    }}
+                  >
+                    <Spin size="small" />{' '}
+                    {t('Generating one by one — candidates appear here as each finishes (upstream is slow).')}
+                  </div>
+                ) : null}
+                {viewCandidate ? (
+                  <div
+                    style={{
+                      background: '#fff',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: 12,
+                      padding: 16,
+                      marginBottom: 18,
+                    }}
+                  >
+                    <CompareView
+                      originalUrl={compareOriginalUrl}
+                      candidateUrl={viewCandidate.url || null}
+                      mode="side"
+                      emptyHint={t('Select a source image first')}
+                      t={t}
+                    />
+                    <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 12 }}>
+                      <Button type="primary" onClick={() => setAdoptTarget(viewCandidate)}>
+                        ✓ {t('Adopt')}
+                      </Button>
+                      <Button danger onClick={() => doDiscard(viewCandidate)}>
+                        {t('Discard')}
+                      </Button>
+                      <Button onClick={() => setViewCandidateId(null)}>{t('Close preview')}</Button>
+                    </div>
+                  </div>
+                ) : null}
+                <Typography.Text type="secondary" style={{ fontSize: 12.5, fontWeight: 600 }}>
+                  🎉 {t('Generated candidates')} ({data.candidates.length})
+                  {!viewCandidate && data.candidates.length ? (
+                    <span style={{ fontWeight: 400 }}> · {t('Click a candidate to compare / adopt')}</span>
+                  ) : null}
+                </Typography.Text>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                    gap: 12,
+                    marginTop: 10,
+                  }}
+                >
                   {data.candidates.map((c) => (
                     <div
                       key={c.id}
                       role="button"
                       tabIndex={0}
-                      onClick={() => setViewCandidateId(c.id)}
+                      onClick={() => setViewCandidateId(c.id === viewCandidateId ? null : c.id)}
                       onKeyDown={(e) => (e.key === 'Enter' ? setViewCandidateId(c.id) : undefined)}
                       style={{
-                        width: 62,
-                        height: 62,
-                        borderRadius: 8,
+                        borderRadius: 10,
                         overflow: 'hidden',
                         cursor: 'pointer',
-                        border: c.id === viewCandidateId ? '2px solid #1677ff' : '2px solid transparent',
+                        background: '#fff',
+                        border: c.id === viewCandidateId ? '2px solid #1677ff' : '1px solid #e5e7eb',
                       }}
                     >
-                      {c.url ? (
-                        <img
-                          src={c.url}
-                          alt={sceneLabel(c.genParams?.scene)}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
-                      ) : null}
+                      <div style={{ aspectRatio: '1 / 1', background: '#f4f5f7' }}>
+                        {c.url ? (
+                          <img
+                            src={c.url}
+                            alt={sceneLabel(c.genParams?.scene)}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        ) : null}
+                      </div>
+                      <div
+                        style={{
+                          padding: '5px 8px',
+                          fontSize: 11,
+                          color: '#6b7280',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {sceneLabel(c.genParams?.scene)}
+                      </div>
                     </div>
                   ))}
                 </div>
-                {viewCandidate ? (
-                  <Space wrap>
-                    <Button type="primary" onClick={() => setAdoptTarget(viewCandidate)}>
-                      ✓ {t('Adopt')}
-                    </Button>
-                    <Button danger onClick={() => doDiscard(viewCandidate)}>
-                      {t('Discard')}
-                    </Button>
-                  </Space>
-                ) : (
-                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    {t('Click a candidate to compare / adopt')}
-                  </Typography.Text>
-                )}
-                <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: 8 }}>
+                <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginTop: 12 }}>
                   {t('Adopting writes the product final image (audit as user); publish prefers the adopted set.')}
                 </Typography.Paragraph>
-              </>
+              </div>
             ) : (
               <div
+                data-testid="ws-hero"
                 style={{
-                  border: '1.5px dashed #e5e7eb',
-                  borderRadius: 10,
-                  padding: '24px 12px',
+                  minHeight: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   textAlign: 'center',
-                  color: '#9ca3af',
-                  fontSize: 12,
-                  marginTop: 10,
+                  padding: '40px 24px',
                 }}
               >
-                🖼️ {t('Candidates will appear here → compare / adopt / discard')}
+                <div style={{ fontSize: 26, fontWeight: 700, color: '#1677ff' }}>{funcLabel(activeFunc)}</div>
+                <div style={{ fontSize: 14, color: '#6b7280', marginTop: 8 }}>{funcHeroSub(activeFunc)}</div>
+                {currentSrc?.url ? (
+                  <img
+                    src={currentSrc.url}
+                    alt={funcLabel(activeFunc)}
+                    style={{
+                      maxWidth: 420,
+                      maxHeight: 360,
+                      objectFit: 'contain',
+                      marginTop: 24,
+                      borderRadius: 12,
+                      background: '#fff',
+                      border: '1px solid #e5e7eb',
+                      padding: 8,
+                    }}
+                  />
+                ) : null}
+                <div style={{ fontSize: 12.5, color: '#9ca3af', marginTop: 20, maxWidth: 460 }}>
+                  {funcHeroValue(activeFunc)}
+                </div>
               </div>
             )}
           </div>
@@ -1262,6 +1575,122 @@ export function CreativeWorkshop({ app, productId, productTitle, initialAssetIds
       ) : (
         <VideoPane app={app} productId={productId} sources={carryImages} loadingSources={loading} t={t} />
       )}
+
+      {/* 管理图片:完整商品图网格(勾选/上传);配置列只放压缩条 */}
+      <Modal
+        title={`${t('Manage images')} (${picked.size}/9)`}
+        open={manageOpen}
+        onCancel={() => setManageOpen(false)}
+        onOk={() => setManageOpen(false)}
+        cancelButtonProps={{ style: { display: 'none' } }}
+        okText={t('Done')}
+        width={760}
+      >
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+          ✅ {t('Product images auto-loaded — no re-upload needed. Pick images to process, or upload extra.')}
+        </Typography.Text>
+        <Spin spinning={loading}>
+          {carryImages.length ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
+              {carryImages.map((c) => {
+                const on = picked.has(c.key);
+                return (
+                  <div
+                    key={c.key}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => togglePick(c.key)}
+                    onKeyDown={(e) => (e.key === 'Enter' ? togglePick(c.key) : undefined)}
+                    style={{
+                      position: 'relative',
+                      aspectRatio: '1 / 1',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      border: on ? '2px solid #52c41a' : '1px solid #e5e7eb',
+                      boxShadow: on ? '0 0 0 2px rgba(82,196,26,.12)' : 'none',
+                      cursor: 'pointer',
+                      background: '#f4f5f7',
+                    }}
+                  >
+                    {c.url ? (
+                      <img
+                        src={c.url}
+                        alt={String(c.role || c.key)}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    ) : null}
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: 4,
+                        top: 4,
+                        fontSize: 9,
+                        color: '#fff',
+                        borderRadius: 3,
+                        padding: '0 4px',
+                        lineHeight: '15px',
+                        background: c.uploaded ? '#722ed1' : c.role === 'main' ? '#faad14' : '#40a9ff',
+                      }}
+                    >
+                      {c.uploaded ? t('Uploaded') : c.role === 'main' ? t('Main') : t('Detail')}
+                    </span>
+                    <span
+                      aria-hidden
+                      style={{
+                        position: 'absolute',
+                        right: 4,
+                        top: 4,
+                        width: 17,
+                        height: 17,
+                        borderRadius: 5,
+                        border: '1.5px solid #fff',
+                        background: on ? '#52c41a' : 'rgba(0,0,0,.28)',
+                        color: '#fff',
+                        fontSize: 11,
+                        lineHeight: '15px',
+                        textAlign: 'center',
+                      }}
+                    >
+                      {on ? '✓' : ''}
+                    </span>
+                  </div>
+                );
+              })}
+              {/* 上传新图 */}
+              <label
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 4,
+                  border: '1.5px dashed #e5e7eb',
+                  borderRadius: 8,
+                  color: '#9ca3af',
+                  cursor: 'pointer',
+                  aspectRatio: '1 / 1',
+                  background: '#fafbfc',
+                }}
+              >
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) onUpload(f);
+                    e.target.value = '';
+                  }}
+                />
+                <span style={{ fontSize: 20 }}>{uploading ? '…' : '+'}</span>
+                <span style={{ fontSize: 11 }}>{t('Upload')}</span>
+              </label>
+            </div>
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('No images yet')} />
+          )}
+        </Spin>
+      </Modal>
 
       <AdoptModal
         candidate={adoptTarget}

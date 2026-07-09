@@ -141,7 +141,17 @@
 
 ---
 
-## W1 · 骨架布局对齐（~1.5d）【纯前端】
+## W1 · 骨架布局对齐（~1.5d）【前端为主 + 建页脚本】
+
+> **范围变更（2026-07-09 用户拍板）**：创意工坊改为**独立菜单页**，不再用全屏弹窗（「弹窗显得有点太小了」）。
+> 承载方式：新建 admin 菜单页（flowSurfaces:createMenu 一条龙），页内薄壳 jsBlock
+> （`docs/jsblocks/creative-workshop.js`，只做 URL 解析 + `__aiListingWorkshopKit.mount`，以后迭代只改插件不写库）；
+> 组件内置**商品选择器**（裸进入菜单时先选品，`aiListingReview:list` 搜索+网格+加载更多），顶部「⇄ 切换商品」，
+> 切换按 key=pid 重挂载天然重置状态并同步 URL `?productId=`。候选区入口按钮改为**跳转独立页**
+> （`?productId&assetIds&from=review`，`from=review` 时显示「返回候选区」= history.back）；
+> **独立页未创建时自动回退全屏 Modal**（渐进增强，不断档）。建页脚本
+> `docs/plans/scripts/create-workshop-page.js`（幂等：建页/建块一次，重跑仅同步 jsBlock 代码 + 角色授权
+> admin/member/r_store_admin），涉及共享生产库由用户 `!` 运行。
 
 **目标（用户可见）**：打开工坊后与阿里同构——左轨（分组标题「素材生成」+「新」角标 + 阿里排序）、
 **窄配置列（约 320px，含选图/表单/生成栏）**、**右侧大结果画布**（空闲=功能介绍 hero，生成后=结果网格）；
@@ -386,6 +396,23 @@
 
 ## 验收记录
 
+- **W1** ✅ 2026-07-09（自测完成，待你验收）：骨架对齐阿里 + 独立菜单页承载（范围变更见 W1 节首）。
+  - **实测诊断**（shot-workshop.js）：三区 `76 / 320 / 894`（此前 92/872/326，画布反转成最大区）；左轨
+    14 功能阿里排序 + 「素材生成」分组 + 5 个「新」角标（细节/翻译/材质/流程/卖点）；顶部 tab 居中、
+    「创作历史」占位（W4 点亮）；选图 `(1/9)` 计数 + 9 张硬上限（勾选/上传/生成三处拦截）+ 横排缩略 +
+    「管理图片」弹层（完整网格迁入）；张数 = Select 下拉（功能级默认张数，场景图 2）；档位 ⓘ 说明；模型
+    Select 收进「高级:指定模型」折叠；消耗 ⓘ 算式提示；提示词计数/必填星保持；画布双态 hero/results
+    （data-testid 断言 `ws-hero`/`ws-results`）。
+  - **独立页承载**：组件重构为 wrapper（选品态）+ WorkshopBody（key=pid 重挂载天然重置）;
+    裸进入选品器实测:24 张商品卡渲染 → 点选进工坊 → 「⇄ 切换商品」→ 回选品器,全链路通;
+    候选区入口改跳独立页(`?productId&assetIds&from=review`),页面未建时自动回退全屏 Modal(已验证)。
+    薄壳 jsBlock `docs/jsblocks/creative-workshop.js`(Babel parse OK)+ 幂等建页脚本
+    `create-workshop-page.js`(flowSurfaces:createMenu/addBlock + 代码同步 + 三角色授权)待用户 `!` 运行。
+  - **出图回归 ⚠️ 外部阻塞**：白底图 UI 全链路(点生成→busy→错误提示→恢复)正常,但**两个图像网关当前都不可用**——
+    gpt-image-2(:8317)`503 auth_unavailable: no auth available`(直连 API 复现,与 W1 无关;第一轮 P1 期间
+    出现过同一错误码后恢复),grok(:8001)会话 401(既有问题)。网关恢复后补验真实出图。
+  - **杂项**：预览编辑页 jsBlock 两处 Tooltip `overlayStyle` 弃用警告已在镜像修复(styles.root),随下次 apply 上库;
+    locale +48 键(en/zh 各 491→);makeT 支持插值。
 - **W0** ✅ 2026-07-09：`docs/plans/scripts/shot-workshop.js` 固化并自测通过（登录→开 Modal→诊断 JSON→
   6 张分功能截图）。基线实测与 §二 差距表逐项互证：三区 `92 / 872 / 326`（宽表单+窄右栏，待 W1 反转为
   窄配置列+大画布）；左轨 14 功能、无「素材生成」分组、无「新」角标、排序非阿里序；顶部 tab 齐、无创作历史

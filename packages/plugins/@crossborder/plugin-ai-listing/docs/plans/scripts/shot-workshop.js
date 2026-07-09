@@ -75,7 +75,12 @@ const SHOT_FUNCS = ['白底图', '场景图', '商品换色', '模特图'];
       ),
       hasBackBtn: /返回候选区/.test(txt),
       hasHistoryEntry: /创作历史/.test(txt), // 基线预期 false;W4 点亮
-      pickedText: (txt.match(/已选\s*\d+(\s*\/\s*9)?/) || [null])[0], // (n/9) 计数;基线无 /9
+      pickedText: (txt.match(/\(\d+\/9\)|已选\s*\d+/) || [null])[0], // (n/9) 计数(W1 起);旧基线为「已选 n」
+      canvasState: modal.querySelector('[data-testid="ws-results"]')
+        ? 'results'
+        : modal.querySelector('[data-testid="ws-hero"]')
+        ? 'hero'
+        : 'unknown', // 画布双态:有候选=results,空闲=hero
       countControl:
         middle && middle.querySelector('.ant-input-number')
           ? 'InputNumber'

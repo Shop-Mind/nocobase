@@ -1860,7 +1860,7 @@ function ReviewApp() {
         <div className="ehead">
           <div className="eh-top">
             <span className="lbl">商品标题</span>
-            <Tooltip title={TITLE_RULES_TEXT} overlayStyle={{ maxWidth: 420 }}>
+            <Tooltip title={TITLE_RULES_TEXT} styles={{ root: { maxWidth: 420 } }}>
               <span className="norm" style={{ cursor: 'help' }}>
                 标题规范 ⓘ
               </span>
@@ -2189,7 +2189,7 @@ function ReviewApp() {
           <div className="shead">
             <span className="eyebrow">DESC</span>
             <span className="zh">商品描述</span>
-            <Tooltip title={SELLING_RULES_TEXT} overlayStyle={{ maxWidth: 420 }}>
+            <Tooltip title={SELLING_RULES_TEXT} styles={{ root: { maxWidth: 420 } }}>
               <span className="i" style={{ cursor: 'help' }}>
                 卖点规范 ⓘ
               </span>

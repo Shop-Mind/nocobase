@@ -19,10 +19,14 @@ import { CreativeWorkshop } from './CreativeWorkshop';
 import type { MediaStudioApp } from '../MediaStudio/types';
 
 export interface WorkshopKitMountOptions {
-  productId: number | string;
+  // W1 起可缺省:独立菜单页裸进入时组件内置商品选择器
+  productId?: number | string;
   assetIds?: Array<number | string>;
   productTitle?: string;
   onBack?: () => void;
+  // 独立页模式:顶部显示「切换商品」;切换时回调(jsBlock 用它同步 URL ?productId=)
+  allowSwitch?: boolean;
+  onProductChange?: (id: number, title?: string) => void;
 }
 
 type WorkshopKit = {
@@ -36,12 +40,12 @@ export function installWorkshopKit(app: MediaStudioApp): WorkshopKit {
   if (w.__aiListingWorkshopKit) return w.__aiListingWorkshopKit;
   const kit: WorkshopKit = {
     mount(container, opts) {
-      const productId = Number(opts.productId);
-      if (!container || !productId) {
+      if (!container) {
         // eslint-disable-next-line no-console
-        console.warn('[ai-listing] workshop kit mount: 缺少容器或 productId');
+        console.warn('[ai-listing] workshop kit mount: 缺少容器');
         return () => undefined;
       }
+      const productId = Number(opts.productId) || undefined;
       // 同一容器重复 mount:先卸载旧 root
       const existing = roots.get(container);
       if (existing) existing.unmount();
@@ -61,6 +65,8 @@ export function installWorkshopKit(app: MediaStudioApp): WorkshopKit {
               productTitle: opts.productTitle,
               initialAssetIds,
               onBack: opts.onBack,
+              allowSwitch: opts.allowSwitch,
+              onProductChange: opts.onProductChange,
             }),
           ),
         ),

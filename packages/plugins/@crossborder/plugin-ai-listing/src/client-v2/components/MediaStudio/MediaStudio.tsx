@@ -35,6 +35,24 @@ import {
 const isVideoAsset = (a: MediaAsset | null | undefined): boolean =>
   Boolean(a && (a.assetType === 'video' || a.role === 'video'));
 
+// 模块级缓存:创意工坊独立菜单页 uid(desktopRoutes title=创意工坊 type=flowPage)。
+// 页面尚未创建(查不到)→ null,入口回退全屏 Modal;查到 → 跳独立页(用户要求不用弹窗)。
+let workshopPageUidCache: string | null | undefined;
+async function resolveWorkshopPageUid(app: MediaStudioApp): Promise<string | null> {
+  if (workshopPageUidCache !== undefined) return workshopPageUidCache;
+  try {
+    const res = (await app.apiClient.request({
+      url: 'desktopRoutes:list',
+      method: 'get',
+      params: { filter: JSON.stringify({ title: '创意工坊', type: 'flowPage' }), pageSize: 1 },
+    })) as { data?: { data?: Array<{ schemaUid?: string }> } };
+    workshopPageUidCache = res?.data?.data?.[0]?.schemaUid || null;
+  } catch {
+    workshopPageUidCache = null;
+  }
+  return workshopPageUidCache;
+}
+
 // 缩略图卡(.th):单击=选为当前图并大图预览;右上角小勾选=多选;角标 主图金星/已采纳翠✓。
 function Thumb({
   asset,
@@ -153,7 +171,7 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   const [adopting, setAdopting] = useState(false);
   // 找美工改图后,员工在原生抽屉里产候选;这里轮询刷新让候选回流页面(双端同步)。设一个观察截止点。
   const [watchUntil, setWatchUntil] = useState(0);
-  // 创意工坊全屏 Modal:带当前商品 + 选中图进独立工坊页;关闭时刷新候选区
+  // 创意工坊:优先跳独立菜单页(W1,用户要求不用弹窗);页面未创建时回退全屏 Modal
   const [workshopOpen, setWorkshopOpen] = useState(false);
 
   const refresh = useCallback(
@@ -226,6 +244,24 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   }, [data.videos, data.videoAdopted, data.videoCandidates]);
 
   const current = data.gallery.find((g) => g.id === currentId) || null;
+
+  // 打开创意工坊:优先跳独立菜单页(带当前商品+选中图);独立页未创建时回退全屏 Modal
+  const openWorkshop = useCallback(async () => {
+    const uid = await resolveWorkshopPageUid(app);
+    if (!uid) {
+      setWorkshopOpen(true);
+      return;
+    }
+    const ids = picked.size ? [...picked] : current ? [current.id] : [];
+    const query = new URLSearchParams();
+    query.set('productId', String(productId));
+    if (ids.length) query.set('assetIds', ids.join(','));
+    query.set('from', 'review'); // 工坊页据此显示「返回候选区」
+    const to = `/admin/${uid}?${query.toString()}`;
+    const routerApp = app as unknown as { router?: { navigate?: (to: string) => void } };
+    if (routerApp.router?.navigate) routerApp.router.navigate(to);
+    else window.location.assign(to);
+  }, [app, picked, current, productId]);
   const previewVideo = previewVideoId ? videos.find((v) => v.id === previewVideoId) || null : null;
   const previewAsset: MediaAsset | null = previewVideo || current;
   const viewCandidate = data.candidates.find((c) => c.id === viewCandidateId) || null;
@@ -867,7 +903,7 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
       {/* 卡壳 + 标题(「商品图片 · AI 改图」)由外层 jsBlock 的 antd Card 提供;深墨区头 studio-head 归 Phase 3
           (jsBlock Card 头 → 深墨,随客户端一起上线,避免与卡壳标题重复/生产端无头)。此处 MediaStudio 只渲染工具栏 + 主体。 */}
       <div className="studio-tools">
-        <button type="button" className="tbtn go" onClick={() => setWorkshopOpen(true)}>
+        <button type="button" className="tbtn go" onClick={() => openWorkshop()}>
           🎨 {t('Creative Workshop')}
         </button>
         {openEditor ? (
@@ -881,7 +917,7 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
             {q.icon} {q.label}
           </button>
         ))}
-        <button type="button" className="tbtn" onClick={() => setWorkshopOpen(true)}>
+        <button type="button" className="tbtn" onClick={() => openWorkshop()}>
           🎬 {t('Image to video')}
         </button>
         <div className="mc">
