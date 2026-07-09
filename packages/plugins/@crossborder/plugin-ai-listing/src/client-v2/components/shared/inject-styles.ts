@@ -8,6 +8,7 @@
  */
 
 import { CREATIVE_CONSOLE_CSS, CREATIVE_CONSOLE_STYLE_ID } from './creative-console';
+import { AIC_FONTS_CSS } from './creative-console-fonts';
 
 /**
  * 幂等地把 Creative Console 设计系统注入 document.head 的一个 <style id="ai-listing-creative-console"> 里。
@@ -27,7 +28,9 @@ export function injectCreativeConsole(): void {
     el.setAttribute('type', 'text/css');
     document.head.appendChild(el);
   }
-  if (el.textContent !== CREATIVE_CONSOLE_CSS) {
-    el.textContent = CREATIVE_CONSOLE_CSS;
+  // 字体在前（@font-face 需先于引用它的规则解析），皮肤规则在后。
+  const css = AIC_FONTS_CSS + CREATIVE_CONSOLE_CSS;
+  if (el.textContent !== css) {
+    el.textContent = css;
   }
 }

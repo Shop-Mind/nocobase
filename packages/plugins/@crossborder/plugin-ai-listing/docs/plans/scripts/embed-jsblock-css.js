@@ -6,13 +6,17 @@ const fs = require('fs');
 
 const ROOT = '/Users/wuzhixuan/code/project/nocobase/packages/plugins/@crossborder/plugin-ai-listing';
 const CC = ROOT + '/src/client-v2/components/shared/creative-console.ts';
+const FONTS = ROOT + '/src/client-v2/components/shared/creative-console-fonts.ts';
 const MIRROR = ROOT + '/docs/jsblocks/preview-edit.js';
 
 const ccSrc = fs.readFileSync(CC, 'utf8');
 // Extract the CREATIVE_CONSOLE_CSS template literal body.
 const m = ccSrc.match(/export const CREATIVE_CONSOLE_CSS = `([\s\S]*?)`;/);
 if (!m) throw new Error('CREATIVE_CONSOLE_CSS not found');
-const css = m[1];
+// 字体在前（与 inject-styles.ts 的拼接顺序一致），皮肤规则在后。
+const fm = fs.readFileSync(FONTS, 'utf8').match(/export const AIC_FONTS_CSS = `([\s\S]*?)`;/);
+if (!fm) throw new Error('AIC_FONTS_CSS not found');
+const css = fm[1] + m[1];
 
 const START = '/* __AIC_CSS_INJECT_START__ (mirrored from creative-console.ts — do not hand-edit; run embed-css.js) */';
 const END = '/* __AIC_CSS_INJECT_END__ */';

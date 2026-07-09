@@ -560,12 +560,20 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
       );
     }
     if (previewAsset && isVideoAsset(previewAsset) && previewAsset.url) {
+      // 视频按自身比例呈现,紧贴画面居中(不再塞进正方形舞台留黑边)。宽不超容器、高上限 460。
       return (
-        <div className="stage">
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
           <video
             src={previewAsset.url}
             controls
-            style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+            style={{
+              maxWidth: '100%',
+              maxHeight: 460,
+              borderRadius: 13,
+              background: '#14121e',
+              boxShadow: 'var(--shadow-md)',
+              display: 'block',
+            }}
           />
         </div>
       );
@@ -675,52 +683,57 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
             {galleryEmpty ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('No images yet')} />
             ) : (
-              <div className="gscroll">
-                {(tab === 'all' || tab === 'video') && videos.length ? (
-                  <div className="vslot">
-                    <div className="glbl">
-                      {t('Videos')} <b>{videos.length}</b>{' '}
-                      <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>· {t('Main video slot')}</span>
+              // gwrap：滚动渐隐提示的锚点。渐隐挂在 gwrap（贴住 gscroll 实际底边）而不是被拉伸的
+              // gcol 底部——否则内容不满时渐隐条悬空在列底，看起来像一根莫名其妙的灰胶囊。
+              <div className="gwrap">
+                <div className="gscroll">
+                  {(tab === 'all' || tab === 'video') && videos.length ? (
+                    <div className="vslot">
+                      <div className="glbl">
+                        {t('Videos')} <b>{videos.length}</b>{' '}
+                        <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>· {t('Main video slot')}</span>
+                      </div>
+                      {videos.slice(0, 1).map((v) => (
+                        <React.Fragment key={v.id}>
+                          <div
+                            className="vthumb"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => selectVideo(v.id)}
+                            onKeyDown={(e) => (e.key === 'Enter' ? selectVideo(v.id) : undefined)}
+                          >
+                            {/* #t=0.1 媒体片段:强制 seek 到首帧,否则部分浏览器只 preload 元数据、缩略一直是灰块 */}
+                            {v.url ? <video src={`${v.url}#t=0.1`} muted preload="metadata" /> : null}
+                            <span className="vplay">▶</span>
+                            <span className="vbadge">{v.finalSelected ? t('Adopted') : t('Downloaded')}</span>
+                          </div>
+                          <div className="vcap">
+                            <span className="vt">
+                              {v.genParams?.model ? `${v.genParams.model} · ${t('Image to video')}` : t('Source video')}
+                            </span>
+                            {v.finalSelected ? (
+                              <a style={{ color: 'var(--jade)', cursor: 'default' }}>✓ {t('Adopted as main video')}</a>
+                            ) : (
+                              <a onClick={() => doAdoptVideo(v)}>✓ {t('Adopt as main video')}</a>
+                            )}
+                          </div>
+                        </React.Fragment>
+                      ))}
                     </div>
-                    {videos.slice(0, 1).map((v) => (
-                      <React.Fragment key={v.id}>
-                        <div
-                          className="vthumb"
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => selectVideo(v.id)}
-                          onKeyDown={(e) => (e.key === 'Enter' ? selectVideo(v.id) : undefined)}
-                        >
-                          {v.url ? <video src={v.url} muted preload="metadata" /> : null}
-                          <span className="vplay">▶</span>
-                          <span className="vbadge">{v.finalSelected ? t('Adopted') : t('Downloaded')}</span>
-                        </div>
-                        <div className="vcap">
-                          <span className="vt">
-                            {v.genParams?.model ? `${v.genParams.model} · ${t('Image to video')}` : t('Source video')}
-                          </span>
-                          {v.finalSelected ? (
-                            <a style={{ color: 'var(--jade)', cursor: 'default' }}>✓ {t('Adopted as main video')}</a>
-                          ) : (
-                            <a onClick={() => doAdoptVideo(v)}>✓ {t('Adopt as main video')}</a>
-                          )}
-                        </div>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                ) : null}
-                {(tab === 'all' || tab === 'main') &&
-                  renderGroup(
-                    t('Main image'),
-                    galleryFiltered.main,
-                    picked.size ? `${t('Selected')} ${picked.size}` : null,
-                  )}
-                {(tab === 'all' || tab === 'detail') &&
-                  renderGroup(
-                    t('Detail images'),
-                    galleryFiltered.detail,
-                    galleryFiltered.detail.length > 9 ? `↓ ${t('Scroll to see all')}` : null,
-                  )}
+                  ) : null}
+                  {(tab === 'all' || tab === 'main') &&
+                    renderGroup(
+                      t('Main image'),
+                      galleryFiltered.main,
+                      picked.size ? `${t('Selected')} ${picked.size}` : null,
+                    )}
+                  {(tab === 'all' || tab === 'detail') &&
+                    renderGroup(
+                      t('Detail images'),
+                      galleryFiltered.detail,
+                      galleryFiltered.detail.length > 9 ? `↓ ${t('Scroll to see all')}` : null,
+                    )}
+                </div>
               </div>
             )}
           </div>
@@ -835,36 +848,38 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
               </div>
             ) : null}
 
-            {/* 操作条:采纳选中候选 / 以此再改 / 弃用(无选中候选时禁用) */}
-            <div className="actbar">
-              <button
-                type="button"
-                className={`act adopt${viewCandidate ? '' : ' mut'}`}
-                disabled={!viewCandidate}
-                onClick={() => viewCandidate && setAdoptTarget(viewCandidate)}
-              >
-                ✓ {t('Adopt selected candidate')}
-              </button>
-              {openEditor ? (
+            {/* 操作条:采纳选中候选 / 以此再改 / 弃用。没有候选时整条隐藏(一排永远禁用的按钮只制造噪音)。 */}
+            {data.candidates.length ? (
+              <div className="actbar">
                 <button
                   type="button"
-                  className={`act iter${viewCandidate ? '' : ' mut'}`}
+                  className={`act adopt${viewCandidate ? '' : ' mut'}`}
                   disabled={!viewCandidate}
-                  title={t('Iterate from this candidate as the new source')}
-                  onClick={iterateFromCandidate}
+                  onClick={() => viewCandidate && setAdoptTarget(viewCandidate)}
                 >
-                  ↻ {t('Iterate')}
+                  ✓ {t('Adopt selected candidate')}
                 </button>
-              ) : null}
-              <button
-                type="button"
-                className={`act discard${viewCandidate ? '' : ' mut'}`}
-                disabled={!viewCandidate}
-                onClick={() => viewCandidate && doDiscard(viewCandidate)}
-              >
-                ✕ {t('Discard')}
-              </button>
-            </div>
+                {openEditor ? (
+                  <button
+                    type="button"
+                    className={`act iter${viewCandidate ? '' : ' mut'}`}
+                    disabled={!viewCandidate}
+                    title={t('Iterate from this candidate as the new source')}
+                    onClick={iterateFromCandidate}
+                  >
+                    ↻ {t('Iterate')}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className={`act discard${viewCandidate ? '' : ' mut'}`}
+                  disabled={!viewCandidate}
+                  onClick={() => viewCandidate && doDiscard(viewCandidate)}
+                >
+                  ✕ {t('Discard')}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </Spin>

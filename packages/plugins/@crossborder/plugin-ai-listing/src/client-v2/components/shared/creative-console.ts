@@ -31,7 +31,8 @@ export const AIC_SCOPE_CLASS = 'aic-scope';
 
 export const CREATIVE_CONSOLE_CSS = `
 :root{
-    --canvas:#f4f1ea; --canvas-2:#eae4d9; --paper:#fffdf8; --paper-2:#faf7f0; --paper-3:#f5f1e8;
+    /* 中性色板（用户定稿：与系统统一的白/中性灰，不要暖棕纸色） */
+    --canvas:#f5f6f8; --canvas-2:#eceef2; --paper:#ffffff; --paper-2:#fafbfc; --paper-3:#f2f3f6;
     --ink:#15121e; --ink-2:#1e1a2c; --ink-3:#2a2440;
     --violet:#6a5cff; --violet-2:#8b78ff; --violet-soft:#efeaff; --violet-line:#ded6ff;
     --amber:#ff9e2c; --amber-soft:#fff2dd; --amber-line:#f4dcae;
@@ -51,8 +52,7 @@ export const CREATIVE_CONSOLE_CSS = `
   font-size:13px;
   line-height:1.45;
   -webkit-font-smoothing:antialiased;
-  background:var(--canvas);
-  background-image:radial-gradient(1200px 500px at 15% -6%,rgba(106,92,255,.05),transparent 60%),radial-gradient(900px 480px at 106% 2%,rgba(255,158,44,.045),transparent 55%);
+  /* 不在 scope 上涂底色：每个区块各自包一层 .aic-scope，涂色会在白色页面上留下一块块色斑（用户反馈的「突兀」）。 */
 }
 .aic-scope,.aic-scope *{box-sizing:border-box}
 
@@ -83,6 +83,23 @@ export const CREATIVE_CONSOLE_CSS = `
 .aic-scope .pane.editor{background:linear-gradient(180deg,var(--paper) 0,var(--canvas) 22%,var(--canvas) 100%);padding:16px 20px 40px}
 
 .aic-scope .pane.side{border-left:1px solid var(--line);background:var(--paper-2);padding:16px 15px 40px}
+
+/* ── 预览编辑页三栏骨架（jsBlock 根布局）：固定像素栏宽（弃用 antd 24 格），左右栏 sticky + 自身内滚。
+   挂在 jsBlock 根上（不在 .aic-scope 内），类名全局唯一。断点：<1360 收窄侧栏，<1100 纵向堆叠。 */
+.aic-cols{display:flex;align-items:flex-start;gap:14px}
+.aic-cols>.aic-rail{flex:0 0 250px;width:250px;min-width:0;position:sticky;top:8px;max-height:calc(100vh - 118px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.aic-cols>.aic-rail.right{display:flex;flex-direction:column;gap:12px}
+.aic-cols>.aic-main{flex:1;min-width:0}
+/* 粘性保存条（Phase 5）：wrapper 承担 sticky（父级 .aic-main 高度=整列，才有滑行空间），bar 只管观感 */
+.aic-savewrap{position:sticky;top:8px;z-index:30}
+.aic-savewrap .savebar{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--amber-line);border-left:4px solid var(--amber);border-radius:12px;box-shadow:var(--shadow-md);padding:9px 14px;margin-bottom:12px}
+.aic-savewrap .sb-txt{font-size:12.5px;font-weight:600;color:var(--text-2)}
+.aic-savewrap .sb-txt b{color:#a5680d;font-size:14px}
+.aic-savewrap .sp{flex:1}
+.aic-savewrap .sb-kbd{font-size:11px;color:var(--text-3);background:var(--paper-2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;white-space:nowrap}
+
+@media (max-width:1360px){.aic-cols>.aic-rail{flex-basis:220px;width:220px}}
+@media (max-width:1100px){.aic-cols{display:block}.aic-cols>.aic-rail{position:static;width:auto;max-height:none;overflow:visible;margin-bottom:12px}}
 
 .aic-scope .lp{padding:13px 13px 8px;position:sticky;top:0;background:var(--paper-2);z-index:2;border-bottom:1px solid var(--line-2)}
 
@@ -126,7 +143,8 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .lpage{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;font-size:11.5px;color:var(--text-2);border-top:1px solid var(--line-2);position:sticky;bottom:0;background:var(--paper-2)}
 
-.aic-scope .lpage .pg{display:flex;gap:3px}
+.aic-scope .lpage .pg{display:flex;gap:3px;align-items:center}
+.aic-scope .lpage .pg i{font-style:normal;color:var(--text-3);padding:0 3px}
 
 .aic-scope .lpage .pg b{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;background:var(--violet);color:#fff;font-weight:700;font-family:"Fraunces",serif}
 
@@ -174,7 +192,9 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .ehead{background:var(--paper);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-md);margin-bottom:16px;padding:15px 17px}
 
-.aic-scope .eh-top{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.aic-scope .eh-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;row-gap:8px}
+
+.aic-scope .eh-top .lbl,.aic-scope .eh-top .norm{white-space:nowrap;flex-shrink:0}
 
 .aic-scope .eh-top .lbl{font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--text-3)}
 
@@ -210,11 +230,21 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .titlein.active{border-color:var(--violet);box-shadow:0 0 0 3px rgba(106,92,255,.13)}
 
+/* 真实编辑态：原生 textarea 版 titlein（jsBlock Header 用），贴内容自适应高度由 JS 控制 */
+.aic-scope textarea.titlein{width:100%;display:block;outline:0;resize:none;overflow:hidden;font-family:inherit}
+.aic-scope textarea.titlein:focus{border-color:var(--violet);box-shadow:0 0 0 3px rgba(106,92,255,.13)}
+.aic-scope .titlein{word-break:break-word}
+.aic-scope .eh-top button.norm{font:inherit;font-size:11px}
+.aic-scope .hbtn:disabled{opacity:.55;cursor:not-allowed}
+.aic-scope .chip.err{background:var(--coral-soft);color:#b3401f;border:1px solid var(--coral-line)}
+.aic-scope .orig-line{font-size:11.5px;color:var(--text-3);margin-top:7px}
+.aic-scope .orig-line a{color:var(--violet);margin-left:6px;cursor:pointer}
+
 .aic-scope .titlein .cur{display:inline-block;width:2px;height:18px;background:var(--violet);vertical-align:-3px;animation:blink 1.1s steps(1) infinite}
 
 .aic-scope .chips{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:11px}
 
-.aic-scope .chip{font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:20px;display:inline-flex;align-items:center;gap:5px}
+.aic-scope .chip{font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:20px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 
 .aic-scope .chip.pub{background:var(--jade-soft);color:#0b7a56;border:1px solid var(--jade-line)}
 
@@ -250,7 +280,7 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .banner .bsp{flex:1}
 
-.aic-scope .studio-head{display:flex;align-items:center;gap:10px;padding:13px 17px;background:linear-gradient(115deg,#1b1530,#261c42);color:#efeafc;position:relative;overflow:hidden;flex-wrap:wrap}
+.aic-scope .studio-head{display:none}
 
 .aic-scope .studio-head::after{content:"";position:absolute;inset:0;opacity:.55;pointer-events:none;
     background:radial-gradient(340px 130px at 4% -30%,rgba(139,120,255,.5),transparent 60%),radial-gradient(260px 130px at 99% 140%,rgba(255,106,77,.32),transparent 60%)}
@@ -273,7 +303,7 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .mc .box{background:#fff;border:1px solid var(--line);border-radius:7px;padding:4px 9px;font-weight:600;color:var(--text)}
 
-.aic-scope .studio-body{display:grid;grid-template-columns:190px 1fr;gap:15px;padding:15px 16px}
+.aic-scope .studio-body{display:grid;grid-template-columns:220px 1fr;gap:15px;padding:15px 16px}
 
 .aic-scope .gtabs{display:flex;gap:3px;background:var(--canvas-2);border-radius:9px;padding:3px;margin-bottom:11px}
 
@@ -289,9 +319,10 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .gcol{display:flex;flex-direction:column;min-height:0;position:relative}
 
-.aic-scope .gscroll{overflow-y:auto;max-height:452px;padding-right:7px;margin-right:-5px}
+.aic-scope .gscroll{overflow-y:auto;max-height:560px;padding-right:7px;margin-right:-5px}
 
-.aic-scope .gcol::after{content:"";position:absolute;left:0;right:6px;bottom:0;height:24px;pointer-events:none;background:linear-gradient(180deg,transparent,var(--paper-2) 92%)}
+.aic-scope .gwrap{position:relative;min-height:0}
+.aic-scope .gwrap::after{content:"";position:absolute;left:0;right:6px;bottom:0;height:24px;pointer-events:none;background:linear-gradient(180deg,transparent,#fff 92%)}
 
 .aic-scope .ggrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px}
 
@@ -326,11 +357,13 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .stagelbl .modes.submode{margin-left:8px}
 
-.aic-scope .stage{position:relative;border-radius:13px;overflow:hidden;box-shadow:var(--shadow-md);aspect-ratio:1/1;max-height:330px;background:#efeae0;user-select:none;margin:0 auto}
+.aic-scope .stage{position:relative;border-radius:13px;overflow:hidden;box-shadow:var(--shadow-md);aspect-ratio:1/1;max-height:460px;background:var(--canvas-2);user-select:none;margin:0 auto}
+
+.aic-scope .stage::after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1px rgba(20,18,30,.1);pointer-events:none}
 
 .aic-scope .stage .layer{position:absolute;inset:0;background-size:cover;background-position:center}
 
-.aic-scope .stage .full{inset:0}
+.aic-scope .stage .full{inset:0;background-size:contain;background-repeat:no-repeat}
 
 .aic-scope .stage .before{filter:saturate(.6) brightness(.99)}
 
@@ -346,11 +379,13 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .stage .handle{position:absolute;top:50%;left:54%;transform:translate(-50%,-50%);width:36px;height:36px;border-radius:50%;background:#fff;display:grid;place-items:center;box-shadow:var(--shadow-md);color:var(--violet);font-size:15px;cursor:ew-resize}
 
-.aic-scope .stage.duo{aspect-ratio:2/1;display:grid;grid-template-columns:1fr 1fr;gap:2px;background:#d9d2c6}
+.aic-scope .stage.duo{aspect-ratio:2/1;display:grid;grid-template-columns:1fr 1fr;gap:2px;background:var(--line)}
 
-.aic-scope .stage.duo .duocell{position:relative;overflow:hidden;background:#efeae0;display:grid;place-items:center}
+.aic-scope .stage.duo .duocell{position:relative;overflow:hidden;background:var(--canvas-2)}
 
-.aic-scope .stage.duo .duocell img{width:100%;height:100%;object-fit:contain}
+/* 绝对定位填格：height:100% 在 auto 网格行里按 indefinite 解析（回退 auto→按原图比例撑高溢出被裁），
+   absolute+inset 始终贴合格子，contain 保证两张图完整可见。 */
+.aic-scope .stage.duo .duocell img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 
 .aic-scope .cand{display:flex;align-items:center;gap:7px;margin:12px 0;flex-wrap:wrap}
 
@@ -366,7 +401,7 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .cand .ct img{width:100%;height:100%;object-fit:cover}
 
-.aic-scope .actbar{display:flex;gap:8px;flex-wrap:wrap}
+.aic-scope .actbar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:2px}
 
 .aic-scope .act{font:inherit;font-size:12px;font-weight:600;border-radius:9px;padding:7px 15px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
 
@@ -383,7 +418,7 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .batch .nav{cursor:pointer;color:#a5680d;font-weight:800}
 
-.aic-scope .candbar{margin:13px 0 12px}
+.aic-scope .candbar{margin:13px auto 12px;max-width:560px}
 
 .aic-scope .candhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 
@@ -567,7 +602,7 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .sidecard{background:var(--paper);border:1px solid var(--line);border-radius:15px;box-shadow:var(--shadow-md);margin-bottom:15px;overflow:hidden}
 
-.aic-scope .sc-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line-2)}
+.aic-scope .sc-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line-2);flex-wrap:wrap;row-gap:6px}
 
 .aic-scope .sc-head .t{font-size:12.5px;font-weight:700}
 
@@ -613,7 +648,7 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .log{position:relative}
 
-.aic-scope .logrow{display:grid;grid-template-columns:40px 1fr;gap:9px;padding:10px 0;border-top:1px solid var(--line-2)}
+.aic-scope .logrow{display:grid;grid-template-columns:34px 1fr;gap:8px;padding:7px 0;border-top:1px solid var(--line-2)}
 
 .aic-scope .logrow:first-child{border-top:0}
 
@@ -629,13 +664,13 @@ export const CREATIVE_CONSOLE_CSS = `
 
 .aic-scope .logrow .lc .lf .tm{margin-left:auto;font-size:10.5px;color:var(--text-3);font-weight:500;font-family:"Fraunces",serif}
 
-.aic-scope .logrow .lc .lv{font-size:11.5px;color:var(--text-2);margin-top:3px}
+.aic-scope .logrow .lc .lv{font-size:11.5px;color:var(--text-2);margin-top:1px;line-height:1.35}
 
 .aic-scope .logrow .lc .lv .old{text-decoration:line-through;color:var(--text-3)}
 
 .aic-scope .logrow .lc .lv .new{font-family:"Fraunces",serif;font-weight:600;color:var(--text)}
 
-.aic-scope .logrow .lc .ln{font-size:11px;color:var(--text-3);margin-top:2px}
+.aic-scope .logrow .lc .ln{font-size:10.5px;color:var(--text-3);margin-top:1px;line-height:1.3}
 
 /* ── Phase 8 收尾:防横向溢出 + 键盘焦点可见(a11y) + 窄屏优雅收拢 ── */
 .aic-scope .plad,.aic-scope .studio-tools,.aic-scope .chips,.aic-scope .statusline,.aic-scope .actbar,.aic-scope .filters{flex-wrap:wrap}
