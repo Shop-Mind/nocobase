@@ -162,10 +162,11 @@ async function api(pathname, { method = 'post', body, query } = {}) {
   // 角色授权(page + tab 两行 × 三角色,已存在跳过)
   for (const rid of [routeId, tabRow?.id].filter(Boolean)) {
     for (const role of ROLES) {
+      // select 列表里的裸参数 PG 推导不出类型,必须显式 cast(首跑曾报 inconsistent types deduced for parameter)
       await c.query(
         `insert into "rolesDesktopRoutes" ("createdAt","updatedAt","desktopRouteId","roleName")
-         select now(), now(), $1, $2
-         where not exists (select 1 from "rolesDesktopRoutes" where "desktopRouteId"=$1 and "roleName"=$2)`,
+         select now(), now(), $1::bigint, $2::text
+         where not exists (select 1 from "rolesDesktopRoutes" where "desktopRouteId"=$1::bigint and "roleName"=$2::text)`,
         [String(rid), role],
       );
     }

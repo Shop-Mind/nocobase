@@ -2,6 +2,10 @@
 // 组件与全部交互都在插件 bundle 里(window.__aiListingWorkshopKit,由 client/plugin.tsx 安装);
 // 本 jsBlock 保持最薄 —— 以后功能迭代只改插件源码(yarn build + 刷新),不再写库。
 // 镜像同步:改本文件后运行 docs/plans/scripts/create-workshop-page.js(幂等:建页一次,之后只同步代码)。
+// 沙箱约定:hooks 不是裸全局,必须从 ctx.libs.React 解构(与 preview-edit 镜像同款前导)。
+const React = ctx.libs.React;
+const { useEffect, useRef } = React;
+
 function WorkshopPage() {
   const ref = useRef(null);
   const ready = typeof window !== 'undefined' && !!window.__aiListingWorkshopKit;
