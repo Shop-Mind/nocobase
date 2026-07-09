@@ -29,6 +29,7 @@ import {
 import { listMediaScenes } from './scenes';
 import { suggestPrompts } from './suggest';
 import { toPublicUrl } from './public-url';
+import { deleteStyleTemplate, listStyleTemplates, saveStyleTemplate } from './style-templates';
 
 const MEDIA_ACTIONS = [
   'scenes',
@@ -43,12 +44,16 @@ const MEDIA_ACTIONS = [
   'adopt',
   'revertAdopt',
   'discard',
+  'styleTemplates',
+  'saveStyleTemplate',
+  'deleteStyleTemplate',
 ] as const;
 
-// 服务层错误码 → HTTP 状态:限额 429、找不到 404、状态锁 409,其余按参数/配置错误 400
+// 服务层错误码 → HTTP 状态:限额 429、找不到 404、越权 403、状态锁 409,其余按参数/配置错误 400
 function httpStatusOf(code: string): number {
   if (code === 'MEDIA_LIMIT_EXCEEDED') return 429;
   if (code.endsWith('_NOT_FOUND')) return 404;
+  if (code.endsWith('_FORBIDDEN')) return 403;
   if (code === 'MEDIA_ADOPT_LOCKED') return 409;
   return 400;
 }
@@ -388,6 +393,95 @@ export function setupMedia(plugin: Plugin): void {
         }
         try {
           const result = await revertAdoptAsset(plugin, { assetId, actorId: currentUserId(ctx), traceId });
+          ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
+        } catch (e) {
+          handleError(ctx, e, traceId);
+        }
+        await next();
+      },
+
+      // 风格模版列表(W2):builtin(scene/category 过滤)+ mine + 类目聚合;带 productId 时按商品文本推荐类目
+      styleTemplates: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as {
+          scene?: string;
+          category?: string;
+          source?: 'builtin' | 'mine';
+          productId?: number;
+        };
+        try {
+          // 商品文本 = 标题(终稿优先)+ 源/目标类目名,供关键词推荐类目;无商品(自由模式)传空落「通用」
+          let productText = '';
+          const productId = Number(v.productId) || 0;
+          if (productId) {
+            const p = await app.db.getRepository('aiListingProducts').findOne({ filterByTk: productId });
+            if (p) {
+              productText = [
+                p.get('titleFinal'),
+                p.get('titleProcessed'),
+                p.get('titleOriginal'),
+                p.get('categoryOriginal'),
+                p.get('categoryTargetName'),
+              ]
+                .filter(Boolean)
+                .join(' ');
+            }
+          }
+          const result = await listStyleTemplates(app, {
+            scene: v.scene,
+            category: v.category,
+            source: v.source === 'mine' || v.source === 'builtin' ? v.source : undefined,
+            userId: Number((ctx.state as { currentUser?: { id?: number } })?.currentUser?.id) || undefined,
+            productText,
+          });
+          ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
+        } catch (e) {
+          handleError(ctx, e, traceId);
+        }
+        await next();
+      },
+
+      // 保存自定义模版(W2 手动新建 / W3 结果侧「保存为模版」共用):source=user,归属当前用户
+      saveStyleTemplate: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as {
+          title?: string;
+          category?: string;
+          scene?: string;
+          prompt?: string;
+          thumbUrl?: string;
+        };
+        try {
+          const result = await saveStyleTemplate(app, {
+            title: v.title,
+            category: v.category,
+            scene: v.scene,
+            prompt: v.prompt,
+            thumbUrl: v.thumbUrl,
+            userId: Number((ctx.state as { currentUser?: { id?: number } })?.currentUser?.id) || 0,
+          });
+          ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
+        } catch (e) {
+          handleError(ctx, e, traceId);
+        }
+        await next();
+      },
+
+      // 删除自定义模版:仅本人的 user 模版;builtin/他人模版 403
+      deleteStyleTemplate: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as { id?: number };
+        const id = Number(v.id);
+        if (!id) {
+          ctx.status = 400;
+          ctx.body = fail('NO_TEMPLATE_ID', '缺少模版 id', false, traceId);
+          return await next();
+        }
+        try {
+          const result = await deleteStyleTemplate(app, {
+            id,
+            userId: Number((ctx.state as { currentUser?: { id?: number } })?.currentUser?.id) || 0,
+          });
           ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
         } catch (e) {
           handleError(ctx, e, traceId);

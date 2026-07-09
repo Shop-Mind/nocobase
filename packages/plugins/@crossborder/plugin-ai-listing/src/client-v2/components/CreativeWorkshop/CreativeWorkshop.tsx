@@ -19,11 +19,13 @@ import {
   Empty,
   Input,
   Modal,
+  Popconfirm,
   Progress,
   Segmented,
   Select,
   Space,
   Spin,
+  Tabs,
   Tag,
   Tooltip,
   Typography,
@@ -73,6 +75,159 @@ const MODEL_PRESETS: Array<{ key: string; label: string; desc: string }> = [
 ];
 // 生产流程图:3 档风格(对标官方信息图风格)。值即注入 process 模板 {style} 的风格名。
 const STYLES = ['商务信息图', '实物写实', '简约卡通'];
+
+// —— W2 风格模版体系 —— 类目 key → i18n 键(与服务端 STYLE_TEMPLATE_CATEGORIES 的 label 一致)
+const TPL_CAT_LABELS: Record<string, string> = {
+  festive: 'Festive & Gifts',
+  bags: 'Bags & Luggage',
+  home: 'Home & Storage',
+  food: 'Food & Beverage',
+  apparel: 'Apparel & Accessories',
+  industrial: 'Industrial & Tools',
+  general: 'General',
+};
+
+// aiListingMedia:styleTemplates 返回的一条模版
+interface StyleTemplate {
+  id: number;
+  title: string;
+  category: string;
+  scene: string;
+  prompt: string;
+  thumbUrl: string | null;
+  source: 'builtin' | 'user';
+  sort: number;
+}
+
+interface StyleTemplateData {
+  templates: StyleTemplate[];
+  mine: StyleTemplate[];
+  categories: Array<{ key: string; label: string; count: number }>;
+  recommended: string;
+}
+
+// 模版图卡:有 thumbUrl 显示小图,否则文字卡(prompt 摘要铺渐变底);选中高亮描边 + ✓ 角标;
+// mine 卡带删除角标(Popconfirm 确认,阻止冒泡不触发选中)。
+function TplCard({
+  tpl,
+  selected,
+  onClick,
+  onDelete,
+  t,
+}: {
+  tpl: StyleTemplate;
+  selected: boolean;
+  onClick: () => void;
+  onDelete?: () => void;
+  t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-testid="ws-tpl-card"
+      data-selected={selected ? '1' : '0'}
+      onClick={onClick}
+      onKeyDown={(e) => (e.key === 'Enter' ? onClick() : undefined)}
+      title={tpl.prompt}
+      style={{
+        position: 'relative',
+        border: selected ? '2px solid #7a5cff' : '1px solid #e5e7eb',
+        borderRadius: 8,
+        overflow: 'hidden',
+        cursor: 'pointer',
+        background: '#fff',
+      }}
+    >
+      <div style={{ aspectRatio: '1 / 1', background: '#f4f5f7' }}>
+        {tpl.thumbUrl ? (
+          <img src={tpl.thumbUrl} alt={tpl.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              padding: '8px 8px 0',
+              background: 'linear-gradient(150deg,#f6f2ff,#fdf3ee)',
+              color: '#6b6580',
+              fontSize: 10.5,
+              lineHeight: '15px',
+              overflow: 'hidden',
+            }}
+          >
+            {tpl.prompt}
+          </div>
+        )}
+      </div>
+      <div
+        style={{
+          padding: '4px 6px',
+          fontSize: 11.5,
+          fontWeight: selected ? 600 : 400,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          borderTop: '1px solid #f0f0f0',
+        }}
+      >
+        {tpl.title}
+      </div>
+      {selected ? (
+        <span
+          style={{
+            position: 'absolute',
+            top: 4,
+            left: 4,
+            width: 18,
+            height: 18,
+            borderRadius: '50%',
+            background: '#7a5cff',
+            color: '#fff',
+            fontSize: 11,
+            display: 'grid',
+            placeItems: 'center',
+          }}
+        >
+          ✓
+        </span>
+      ) : null}
+      {onDelete ? (
+        <Popconfirm
+          title={t('Delete this template?')}
+          okText={t('Delete')}
+          cancelText={t('Cancel')}
+          onConfirm={(e) => {
+            e?.stopPropagation();
+            onDelete();
+          }}
+          onCancel={(e) => e?.stopPropagation()}
+        >
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label={t('Delete template')}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              top: 4,
+              right: 4,
+              width: 18,
+              height: 18,
+              borderRadius: '50%',
+              background: 'rgba(0,0,0,.45)',
+              color: '#fff',
+              fontSize: 11,
+              display: 'grid',
+              placeItems: 'center',
+            }}
+          >
+            ✕
+          </span>
+        </Popconfirm>
+      ) : null}
+    </div>
+  );
+}
 
 function galleryToCarry(gallery: MediaAsset[]): CarryImage[] {
   return gallery.map((g) => ({
@@ -335,6 +490,20 @@ function WorkshopBody({
   const [manageOpen, setManageOpen] = useState(false); // 管理图片弹层(完整网格)
   const [advOpen, setAdvOpen] = useState(false); // 高级:显式指定模型(默认收起)
   const [cmpMode, setCmpMode] = useState<'slider' | 'side'>('slider'); // 画布大图对比:拉帘(默认)/并排
+  // —— W2 模版风格选择(templateTabs 功能才拉)——
+  const [tplData, setTplData] = useState<StyleTemplateData | null>(null);
+  const [tplTab, setTplTab] = useState<string>('reco'); // reco 推荐提示词 / builtin 推荐风格模版 / mine 自定义模版
+  const [tplCat, setTplCat] = useState<string>('general'); // 当前类目(默认=按商品推荐)
+  const [tplSelected, setTplSelected] = useState<number | null>(null); // 选中的模版 id(再点取消)
+  const [tplLoading, setTplLoading] = useState(false);
+  const [tplMoreOpen, setTplMoreOpen] = useState(false); // 「更多 >」全量浏览弹层
+  const [newTplOpen, setNewTplOpen] = useState(false); // 新建模版弹层
+  const [newTpl, setNewTpl] = useState<{ title: string; category: string; prompt: string }>({
+    title: '',
+    category: 'general',
+    prompt: '',
+  });
+  const [newTplSaving, setNewTplSaving] = useState(false);
 
   const activeFunc = useMemo<WorkshopFunction>(
     () => getWorkshopFunction(activeKey) || WORKSHOP_FUNCTIONS[0],
@@ -390,6 +559,32 @@ function WorkshopBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.gallery]);
 
+  // W2:拉风格模版(builtin+mine+类目聚合);带 productId 自动推荐类目并默认选中,自由模式落「通用」
+  const loadTpls = useCallback(
+    async (opts?: { keepCat?: boolean }) => {
+      setTplLoading(true);
+      const res = await callMediaApi<StyleTemplateData>(app, 'aiListingMedia:styleTemplates', {
+        scene: activeKey,
+        productId: productId || undefined,
+      });
+      setTplLoading(false);
+      if (res.ok && res.data) {
+        setTplData(res.data);
+        if (!opts?.keepCat) {
+          const rec = res.data.recommended;
+          const has = res.data.categories.some((c) => c.key === rec);
+          setTplCat(has ? rec : res.data.categories[0]?.key || 'general');
+        }
+      }
+    },
+    [app, activeKey, productId],
+  );
+
+  useEffect(() => {
+    if (!activeFunc.templateTabs) return;
+    loadTpls();
+  }, [activeFunc.templateTabs, loadTpls]);
+
   // 候选回流轮询(生成/找美工后 3 分钟内每 5s 刷新)
   useEffect(() => {
     if (!watchUntil) return;
@@ -419,6 +614,8 @@ function WorkshopBody({
     setProcStyle(STYLES[0]);
     setPickedPoints([]);
     setViewCandidateId(null);
+    setTplSelected(null);
+    setTplTab('reco');
     if (fn.single) {
       setPicked((prev) => {
         const first = [...prev][0];
@@ -486,6 +683,62 @@ function WorkshopBody({
       }
     },
     [app, message, t, activeFunc.single],
+  );
+
+  // W2:点模版卡 = 选中 + prompt 全文填入提示词框(可再手改);再点同卡取消(提示词未被手改才一并清空)
+  const toggleTpl = useCallback(
+    (tpl: StyleTemplate) => {
+      if (tplSelected === tpl.id) {
+        setTplSelected(null);
+        setInstruction((prev) => (prev === tpl.prompt ? '' : prev));
+      } else {
+        setTplSelected(tpl.id);
+        setInstruction(tpl.prompt);
+      }
+    },
+    [tplSelected],
+  );
+
+  // 新建自定义模版(标题/类目/提示词;缩略图留给 W3「保存为模版」带结果图)
+  const saveNewTpl = useCallback(async () => {
+    const title = newTpl.title.trim();
+    const prompt = newTpl.prompt.trim();
+    if (!title || !prompt) {
+      message.warning(t('Template title and prompt are required'));
+      return;
+    }
+    setNewTplSaving(true);
+    const res = await callMediaApi<StyleTemplate>(app, 'aiListingMedia:saveStyleTemplate', {
+      title,
+      category: newTpl.category,
+      scene: activeKey,
+      prompt,
+    });
+    setNewTplSaving(false);
+    if (res.ok) {
+      message.success(t('Template saved'));
+      setNewTplOpen(false);
+      setNewTpl({ title: '', category: 'general', prompt: '' });
+      setTplTab('mine');
+      loadTpls({ keepCat: true });
+    } else if (res.message) {
+      message.error(res.message);
+    }
+  }, [app, newTpl, activeKey, message, t, loadTpls]);
+
+  // 删除自定义模版(仅本人;服务端二次校验)
+  const deleteTpl = useCallback(
+    async (id: number) => {
+      const res = await callMediaApi(app, 'aiListingMedia:deleteStyleTemplate', { id });
+      if (res.ok) {
+        message.success(t('Template deleted'));
+        if (tplSelected === id) setTplSelected(null);
+        loadTpls({ keepCat: true });
+      } else if (res.message) {
+        message.error(res.message);
+      }
+    },
+    [app, message, t, loadTpls, tplSelected],
   );
 
   // 上传第二张图(Logo / 材质参考)→ File Manager attachments → 记 refImage(生成时传 refImageUrl)
@@ -723,6 +976,161 @@ function WorkshopBody({
     const r = t(k);
     return r && r !== k ? r : fn.heroValue;
   };
+
+  // —— W2 模版风格选择三 tab 的各 pane(templateTabs 功能才用;recoBox 同时是非 tab 功能的独立块)——
+  const catTpls = (tplData?.templates || []).filter((tpl) => tpl.category === tplCat);
+  const recoBox = (
+    <div style={{ background: '#f9f0ff', border: '1px solid #efdbff', borderRadius: 10, padding: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9 }}>
+        <Tag color="purple" style={{ margin: 0 }}>
+          AI
+        </Tag>
+        <Typography.Text strong style={{ fontSize: 12.5, color: '#722ed1' }}>
+          {t('Recommended prompts')}
+        </Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+          {recosFallback ? t('example · editable') : t('based on this product image')}
+        </Typography.Text>
+        <a onClick={() => fetchRecos()} style={{ marginLeft: 'auto', fontSize: 11.5, color: '#722ed1' }}>
+          🔄 {t('Refresh')}
+        </a>
+      </div>
+      {recosLoading ? (
+        <div style={{ padding: '8px 0' }}>
+          <Spin size="small" />{' '}
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
+            {t('AI is analyzing this product…')}
+          </Typography.Text>
+        </div>
+      ) : recos.length ? (
+        activeKey === 'selling_point' ? (
+          // 卖点图:多选勾选(可选多个卖点,叠加到主图文案)
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {recos.map((p, i) => (
+                <Tag.CheckableTag
+                  key={i}
+                  checked={pickedPoints.includes(p)}
+                  onChange={(on) => setPickedPoints((prev) => (on ? [...prev, p] : prev.filter((x) => x !== p)))}
+                >
+                  {p}
+                </Tag.CheckableTag>
+              ))}
+            </div>
+            <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
+              {pickedPoints.length
+                ? `${t('Selected')} ${pickedPoints.length} · ${pickedPoints.join(' · ')}`
+                : t('Tick the selling points to overlay (multi-select)')}
+            </Typography.Text>
+          </>
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }} size={7}>
+            {recos.map((p, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'center',
+                  background: '#fff',
+                  border: '1px solid #efdbff',
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                }}
+              >
+                <Typography.Text style={{ flex: 1, fontSize: 12.5 }}>{p}</Typography.Text>
+                <Button
+                  size="small"
+                  onClick={() => setInstruction(p)}
+                  style={{ color: '#722ed1', borderColor: '#d3adf7' }}
+                >
+                  {t('Fill in')}
+                </Button>
+              </div>
+            ))}
+          </Space>
+        )
+      ) : (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t('No recommendations — enter manually below')}
+        </Typography.Text>
+      )}
+    </div>
+  );
+  // tab2 推荐风格模版:类目下拉(按商品自动推荐默认选中)+ 2×3 图卡 + 「更多 >」全量浏览
+  const builtinPane =
+    tplLoading && !tplData ? (
+      <div style={{ padding: '8px 0' }}>
+        <Spin size="small" />
+      </div>
+    ) : (
+      <div data-testid="ws-tpl-builtin">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <Select
+            size="small"
+            style={{ flex: 1, minWidth: 0 }}
+            value={tplCat}
+            onChange={(v) => setTplCat(v)}
+            options={(tplData?.categories || []).map((c) => ({
+              value: c.key,
+              label: `${t(TPL_CAT_LABELS[c.key] || c.key)} (${c.count})${
+                c.key === tplData?.recommended ? ` · ${t('Recommended')}` : ''
+              }`,
+            }))}
+          />
+          <a onClick={() => setTplMoreOpen(true)} style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+            {t('More')} &gt;
+          </a>
+        </div>
+        {catTpls.length ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+            {catTpls.slice(0, 6).map((tpl) => (
+              <TplCard key={tpl.id} tpl={tpl} selected={tplSelected === tpl.id} onClick={() => toggleTpl(tpl)} t={t} />
+            ))}
+          </div>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t('No templates in this category yet')}
+          </Typography.Text>
+        )}
+        <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
+          💡 {t('Click a card to fill the prompt; click again to deselect')}
+        </Typography.Text>
+      </div>
+    );
+  // tab3 自定义模版:我的模版网格(删除角标)+ 空态引导 + 新建
+  const minePane = (
+    <div data-testid="ws-tpl-mine">
+      {tplData?.mine.length ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+          {tplData.mine.map((tpl) => (
+            <TplCard
+              key={tpl.id}
+              tpl={tpl}
+              selected={tplSelected === tpl.id}
+              onClick={() => toggleTpl(tpl)}
+              onDelete={() => deleteTpl(tpl.id)}
+              t={t}
+            />
+          ))}
+        </div>
+      ) : (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+          {t('No custom templates yet — save a good result as a template, or create one below.')}
+        </Typography.Text>
+      )}
+      <Button
+        size="small"
+        style={{ marginTop: 10 }}
+        onClick={() => {
+          setNewTpl({ title: '', category: tplCat || 'general', prompt: instruction || '' });
+          setNewTplOpen(true);
+        }}
+      >
+        ＋ {t('New template')}
+      </Button>
+    </div>
+  );
 
   return (
     <div
@@ -1228,94 +1636,30 @@ function WorkshopBody({
                 </div>
               ) : null}
 
-              {/* 推荐提示词(点图出 3 条,看图生成;可填入/换一换) */}
-              {supportsReco(activeKey) ? (
-                <div
-                  style={{
-                    marginBottom: 18,
-                    background: '#f9f0ff',
-                    border: '1px solid #efdbff',
-                    borderRadius: 10,
-                    padding: 12,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9 }}>
-                    <Tag color="purple" style={{ margin: 0 }}>
-                      AI
-                    </Tag>
-                    <Typography.Text strong style={{ fontSize: 12.5, color: '#722ed1' }}>
-                      {t('Recommended prompts')}
-                    </Typography.Text>
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                      {recosFallback ? t('example · editable') : t('based on this product image')}
-                    </Typography.Text>
-                    <a onClick={() => fetchRecos()} style={{ marginLeft: 'auto', fontSize: 11.5, color: '#722ed1' }}>
-                      🔄 {t('Refresh')}
-                    </a>
-                  </div>
-                  {recosLoading ? (
-                    <div style={{ padding: '8px 0' }}>
-                      <Spin size="small" />{' '}
-                      <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
-                        {t('AI is analyzing this product…')}
-                      </Typography.Text>
-                    </div>
-                  ) : recos.length ? (
-                    activeKey === 'selling_point' ? (
-                      // 卖点图:多选勾选(可选多个卖点,叠加到主图文案)
-                      <>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                          {recos.map((p, i) => (
-                            <Tag.CheckableTag
-                              key={i}
-                              checked={pickedPoints.includes(p)}
-                              onChange={(on) =>
-                                setPickedPoints((prev) => (on ? [...prev, p] : prev.filter((x) => x !== p)))
-                              }
-                            >
-                              {p}
-                            </Tag.CheckableTag>
-                          ))}
-                        </div>
-                        <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 8 }}>
-                          {pickedPoints.length
-                            ? `${t('Selected')} ${pickedPoints.length} · ${pickedPoints.join(' · ')}`
-                            : t('Tick the selling points to overlay (multi-select)')}
-                        </Typography.Text>
-                      </>
-                    ) : (
-                      <Space direction="vertical" style={{ width: '100%' }} size={7}>
-                        {recos.map((p, i) => (
-                          <div
-                            key={i}
-                            style={{
-                              display: 'flex',
-                              gap: 8,
-                              alignItems: 'center',
-                              background: '#fff',
-                              border: '1px solid #efdbff',
-                              borderRadius: 8,
-                              padding: '8px 10px',
-                            }}
-                          >
-                            <Typography.Text style={{ flex: 1, fontSize: 12.5 }}>{p}</Typography.Text>
-                            <Button
-                              size="small"
-                              onClick={() => setInstruction(p)}
-                              style={{ color: '#722ed1', borderColor: '#d3adf7' }}
-                            >
-                              {t('Fill in')}
-                            </Button>
-                          </div>
-                        ))}
-                      </Space>
-                    )
-                  ) : (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {t('No recommendations — enter manually below')}
-                    </Typography.Text>
-                  )}
+              {/* 模版风格选择(W2):templateTabs 功能 = 三 tab(推荐提示词/推荐风格模版/自定义模版);
+              其余支持推荐的功能保留单一推荐提示词块 */}
+              {activeFunc.templateTabs ? (
+                <div style={{ marginBottom: 18 }} data-testid="ws-tpl-tabs">
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    🎨 {t('Template styles')}
+                  </Typography.Text>
+                  <Tabs
+                    size="small"
+                    activeKey={tplTab}
+                    onChange={(k) => setTplTab(k)}
+                    style={{ marginTop: 2 }}
+                    // 320px 配置列放三枚中文 tab:默认 gutter(32)会溢出折叠成「···」,压缩间距+字号保证三 tab 全显
+                    tabBarGutter={14}
+                    tabBarStyle={{ fontSize: 13 }}
+                    items={[
+                      { key: 'reco', label: t('Recommended prompts'), children: recoBox },
+                      { key: 'builtin', label: t('Style templates'), children: builtinPane },
+                      { key: 'mine', label: t('My templates'), children: minePane },
+                    ]}
+                  />
                 </div>
+              ) : supportsReco(activeKey) ? (
+                <div style={{ marginBottom: 18 }}>{recoBox}</div>
               ) : null}
 
               {/* 专属表单:P1 只渲染提示词(其余字段 P2+) */}
@@ -1754,6 +2098,112 @@ function WorkshopBody({
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('No images yet')} />
           )}
         </Spin>
+      </Modal>
+
+      {/* W2「更多 >」:全量浏览内置模版(左类目侧栏 + 右大网格);点卡选中/填充后关闭回表单 */}
+      <Modal
+        title={t('All style templates')}
+        open={tplMoreOpen}
+        onCancel={() => setTplMoreOpen(false)}
+        footer={null}
+        width={760}
+      >
+        <div style={{ display: 'flex', gap: 14, minHeight: 380 }}>
+          <div style={{ width: 130, flexShrink: 0, borderRight: '1px solid #f0f0f0', paddingRight: 8 }}>
+            {(tplData?.categories || []).map((c) => (
+              <div
+                key={c.key}
+                role="button"
+                tabIndex={0}
+                onClick={() => setTplCat(c.key)}
+                onKeyDown={(e) => (e.key === 'Enter' ? setTplCat(c.key) : undefined)}
+                style={{
+                  padding: '7px 10px',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  fontSize: 12.5,
+                  marginBottom: 2,
+                  background: tplCat === c.key ? '#f4f0ff' : 'transparent',
+                  color: tplCat === c.key ? '#5b3ddc' : undefined,
+                  fontWeight: tplCat === c.key ? 600 : 400,
+                }}
+              >
+                {t(TPL_CAT_LABELS[c.key] || c.key)} ({c.count}){c.key === tplData?.recommended ? ' ★' : ''}
+              </div>
+            ))}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {catTpls.length ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                {catTpls.map((tpl) => (
+                  <TplCard
+                    key={tpl.id}
+                    tpl={tpl}
+                    selected={tplSelected === tpl.id}
+                    onClick={() => {
+                      toggleTpl(tpl);
+                      setTplMoreOpen(false);
+                    }}
+                    t={t}
+                  />
+                ))}
+              </div>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('No templates in this category yet')} />
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      {/* W2 新建自定义模版:标题/类目/提示词(提示词预填当前输入框内容) */}
+      <Modal
+        title={t('New template')}
+        open={newTplOpen}
+        onCancel={() => setNewTplOpen(false)}
+        onOk={() => saveNewTpl()}
+        okText={t('Save')}
+        cancelText={t('Cancel')}
+        confirmLoading={newTplSaving}
+        width={460}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+          <div>
+            <Typography.Text strong style={{ fontSize: 12.5 }}>
+              {t('Template title')} <span style={{ color: '#ff4d4f' }}>*</span>
+            </Typography.Text>
+            <Input
+              value={newTpl.title}
+              maxLength={30}
+              showCount
+              onChange={(e) => setNewTpl((prev) => ({ ...prev, title: e.target.value }))}
+              style={{ marginTop: 6 }}
+            />
+          </div>
+          <div>
+            <Typography.Text strong style={{ fontSize: 12.5 }}>
+              {t('Category')}
+            </Typography.Text>
+            <Select
+              style={{ width: '100%', marginTop: 6 }}
+              value={newTpl.category}
+              onChange={(v) => setNewTpl((prev) => ({ ...prev, category: v }))}
+              options={Object.entries(TPL_CAT_LABELS).map(([key, label]) => ({ value: key, label: t(label) }))}
+            />
+          </div>
+          <div>
+            <Typography.Text strong style={{ fontSize: 12.5 }}>
+              {t('Template prompt')} <span style={{ color: '#ff4d4f' }}>*</span>
+            </Typography.Text>
+            <Input.TextArea
+              value={newTpl.prompt}
+              maxLength={500}
+              showCount
+              rows={4}
+              onChange={(e) => setNewTpl((prev) => ({ ...prev, prompt: e.target.value }))}
+              style={{ marginTop: 6 }}
+            />
+          </div>
+        </div>
       </Modal>
 
       <AdoptModal

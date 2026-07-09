@@ -22,6 +22,7 @@ import { seedPlatformAccounts, setupSettings } from './settings';
 import { setupAssistant } from './assistant';
 import { setupOpenApi } from './openapi';
 import { setupMedia } from './media/actions';
+import { seedStyleTemplates } from './media/style-templates-seed';
 
 export class PluginAiListingServer extends Plugin {
   async afterAdd() {}
@@ -55,6 +56,14 @@ export class PluginAiListingServer extends Plugin {
     setupOpenApi(this);
     // 图片编辑闭环（Phase 0）：aiListingMedia candidates/generate/jobStatus/adopt/discard——AI 只产候选、用户显式采纳。
     setupMedia(this);
+    // 创意工坊内置风格模版（W2）：启动后按 title+category 幂等补种（只补缺，不覆盖已有行），install/upgrade 之外的老库也能拿到。
+    this.app.on('afterStart', async () => {
+      try {
+        await seedStyleTemplates(this.app);
+      } catch (e) {
+        this.app.logger.warn(`[ai-listing] style templates seeding skipped: ${(e as Error)?.message}`);
+      }
+    });
   }
 
   async install() {

@@ -65,6 +65,8 @@ export interface WorkshopFunction {
   cost: number;
   // 每原图默认张数(1-4;缺省 1)
   defaultCount?: number;
+  // W2 模版风格选择三 tab(推荐提示词/推荐风格模版/自定义模版);scene_gen 先开,selling_point/model_shot 第二批
+  templateTabs?: boolean;
   // 专属表单字段声明(P1 仅渲染非 planned 的 prompt)
   fields: WorkshopField[];
   // 未启用功能的落地阶段标注(灰态 tooltip)
@@ -100,6 +102,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     tier: 'advanced',
     cost: 51,
     defaultCount: 2,
+    templateTabs: true,
     fields: [
       { type: 'ratio', planned: true },
       { type: 'prompt', required: true },

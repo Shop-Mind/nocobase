@@ -245,6 +245,26 @@
 
 **回退**：collection/action 全新增，隐藏 Tabs 即回到 W1 形态；表保留无副作用。
 
+**✅ 验收记录（2026-07-09 完成）**
+- 后端：collection `aiListingStyleTemplates`（本地 dev 不自动建新表，跑了一次 `yarn nocobase upgrade` 同步）；
+  种子 37 条 ×7 类目（festive 6/bags 5/home 5/food 5/apparel 5/industrial 5/general 6），`afterStart` 按
+  title+category 幂等补种（只补缺不覆盖）；action `styleTemplates`（builtin+mine+类目聚合+推荐类目一次拉全，
+  支持 scene/category/source 过滤）/`saveStyleTemplate`/`deleteStyleTemplate`（`_FORBIDDEN`→403 映射新增）。
+  类目推荐 = 商品标题/类目文本关键词加权评分（多字词 2 分/单字泛词 1 分，防「食品真空包装机」被「包」抢类目），
+  不命中落「通用」。
+- 前端：`functions.ts` 增 `templateTabs`（scene_gen 先开）；「模版风格选择」三 tab（推荐提示词=原 AI 看图块 /
+  推荐风格模版=类目 Select+2×3 图卡+「更多 >」全量弹层（左类目侧栏 ★推荐）/ 自定义模版=网格+删除角标
+  Popconfirm+空态引导+新建弹层（标题/类目/提示词，提示词预填当前输入））；点卡=选中+prompt 全文填入（可手改），
+  再点取消（未手改才清空）；无缩略图渲染文字卡（渐变底 prompt 摘要）。Tabs `tabBarGutter=14` 保证 320px 列三
+  tab 全显（默认 gutter 溢出折叠成「···」）。i18n en/zh 各 +27 键。
+- 测试：单测 `style-templates.test.ts` 5/5（种子幂等/过滤+聚合/推荐加权/save 校验/delete 权限）；E2E
+  `verify-w2-templates.js` 9/9（37 条、聚合=总数、category 过滤、save→mine→delete 净零、删 builtin 403、
+  圣诞商品(productId=11)→festive、无商品→general）；浏览器探针：三 tab 全显、推荐类目自动选中
+  「节日礼品 (6) · 推荐」、点卡 promptFilled=true、再点取消清空、更多弹层 7 类目、mine 空态+新建按钮。
+- 待办（不阻塞验收）：①模版缩略图 `gen-template-thumbs.js` 已备好（断点续跑、LIMIT 分批），等图片网关恢复后跑，
+  当前 UI 文字卡兜底；②「模版 prompt 直接生成出图」回归与 W1 同因被两网关外部阻塞；③第二批
+  selling_point/model_shot 开 templateTabs + 各自种子，随 W5 表单深化一起做。
+
 ---
 
 ## W3 · 结果画布操作闭环（~1d）【前端为主】
