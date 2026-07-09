@@ -522,5 +522,7 @@
   "Food & Beverage": "食品饮料",
   "Apparel & Accessories": "服饰配件",
   "Industrial & Tools": "工业工具",
-  "General": "通用"
+  "General": "通用",
+  "Examples": "示例",
+  "vision model unavailable — static examples, editable": "视觉模型暂不可用·以下为静态示例,可直接手改"
 }

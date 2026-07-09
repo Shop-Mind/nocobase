@@ -261,9 +261,17 @@
   `verify-w2-templates.js` 9/9（37 条、聚合=总数、category 过滤、save→mine→delete 净零、删 builtin 403、
   圣诞商品(productId=11)→festive、无商品→general）；浏览器探针：三 tab 全显、推荐类目自动选中
   「节日礼品 (6) · 推荐」、点卡 promptFilled=true、再点取消清空、更多弹层 7 类目、mine 空态+新建按钮。
-- 待办（不阻塞验收）：①模版缩略图 `gen-template-thumbs.js` 已备好（断点续跑、LIMIT 分批），等图片网关恢复后跑，
-  当前 UI 文字卡兜底；②「模版 prompt 直接生成出图」回归与 W1 同因被两网关外部阻塞；③第二批
-  selling_point/model_shot 开 templateTabs + 各自种子，随 W5 表单深化一起做。
+- 待办（不阻塞验收）：①模版缩略图 `gen-template-thumbs.js` 已备好（断点续跑、LIMIT 分批、可 LLM_SERVICE/MODEL
+  显式指定线路），等任一生图线路恢复后跑（用户反馈 #64：模版卡要像阿里一样图文卡），当前 UI 文字卡兜底；
+  ②「模版 prompt 直接生成出图」回归被生图线路阻塞；③第二批 selling_point/model_shot 开 templateTabs +
+  各自种子，随 W5 表单深化一起做。
+- **AI 线路状态（2026-07-09 实测，全灭）**：OpenAI 中转（120.76.157.51:8317，gpt-5.5 视觉 + gpt-image-2 生图）
+  `503 auth_unavailable`；xAI 中转（:8001，grok imagine）`401 session 失效`；**DashScope 官方 Key 被封**
+  （`401 API-key is blocked`，wan/qwen 全不可用）；DeepSeek 仅纯文本。→ 推荐提示词因此走静态兜底
+  （35s 超时后回落）。已做透明化（用户反馈）：兜底时灰「示例」标 +「视觉模型暂不可用·静态示例可手改」，
+  真看图时紫 AI 标 +「基于本商品图 · <模型名>」（suggestPrompts 的 model 字段透出）。恢复路径任选其一：
+  修 codex 中转 auth / 刷 grok cookie / 换新 DashScope API Key（AI 员工 → LLM 服务,换 Key 后视觉+生图+缩略图
+  三件事全部解锁）。
 
 ---
 

@@ -11,11 +11,14 @@
 // 流程:对一张标准商品图逐条模版跑 aiListingMedia:generate(落 File Manager)→ 回写模版 thumbUrl →
 // 随手 discard 生成的候选(缩略图 URL 已留存,候选区保持干净)。可断点续跑:已有 thumbUrl 的模版自动跳过。
 // 用法:SHOT_ACCOUNT=xxx SHOT_PASSWORD=xxx SRC_IMAGE_URL=<标准商品图URL> [LIMIT=5] node gen-template-thumbs.js
-// 注意:单张 2-3 分钟,37 条全量约 1.5-2h,建议分批(LIMIT);网关(gpt-image-2)不可用时直接报错退出。
+// 可选 LLM_SERVICE=v_xxx MODEL=qwen-image-... 显式指定生图线路(缺省走服务端自动解析);
+// 注意:单张 1-3 分钟,37 条全量约 1-2h,建议分批(LIMIT);生图线路不可用时直接报错退出。
 
 const BASE = process.env.SHOT_BASE || 'http://localhost:13000';
 const SRC = process.env.SRC_IMAGE_URL;
 const LIMIT = Number(process.env.LIMIT) || Infinity;
+const LLM_SERVICE = process.env.LLM_SERVICE || undefined;
+const MODEL = process.env.MODEL || undefined;
 
 async function main() {
   if (!SRC) {
@@ -56,6 +59,8 @@ async function main() {
       scene: 'scene_gen',
       instruction: tpl.prompt,
       n: 1,
+      llmService: LLM_SERVICE,
+      model: MODEL,
     });
     const asset = gen.data?.assets?.[0];
     if (!gen.ok || !asset?.url) {

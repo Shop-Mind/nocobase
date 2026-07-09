@@ -472,6 +472,7 @@ function WorkshopBody({
   const [recos, setRecos] = useState<string[]>([]); // 推荐提示词(看图出)
   const [recosLoading, setRecosLoading] = useState(false);
   const [recosFallback, setRecosFallback] = useState(false); // true=静态兜底(无视觉模型)
+  const [recosModel, setRecosModel] = useState<string | null>(null); // 实际看图的视觉模型名(兜底时 null)
   const [refImage, setRefImage] = useState<{ url: string; name: string } | null>(null); // 第二张图(Logo/材质参考)
   const [refUploading, setRefUploading] = useState(false);
   const [craft, setCraft] = useState<string>(''); // Logo 工艺
@@ -919,16 +920,21 @@ function WorkshopBody({
     const src = carryImages.find((c) => picked.has(c.key));
     if (!src) return;
     setRecosLoading(true);
-    const res = await callMediaApi<{ prompts: string[]; fallback: boolean }>(app, 'aiListingMedia:suggestPrompts', {
-      assetId: src.assetId,
-      sourceImageUrl: src.assetId ? undefined : src.url || undefined,
-      scene: activeFunc.key,
-      n: 3,
-    });
+    const res = await callMediaApi<{ prompts: string[]; fallback: boolean; model: string | null }>(
+      app,
+      'aiListingMedia:suggestPrompts',
+      {
+        assetId: src.assetId,
+        sourceImageUrl: src.assetId ? undefined : src.url || undefined,
+        scene: activeFunc.key,
+        n: 3,
+      },
+    );
     setRecosLoading(false);
     if (res.ok && res.data) {
       setRecos(res.data.prompts || []);
       setRecosFallback(Boolean(res.data.fallback));
+      setRecosModel(res.data.model || null);
     } else {
       setRecos([]);
     }
@@ -981,15 +987,25 @@ function WorkshopBody({
   const catTpls = (tplData?.templates || []).filter((tpl) => tpl.category === tplCat);
   const recoBox = (
     <div style={{ background: '#f9f0ff', border: '1px solid #efdbff', borderRadius: 10, padding: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9 }}>
-        <Tag color="purple" style={{ margin: 0 }}>
-          AI
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9, flexWrap: 'wrap' }}>
+        {/* 透明化(用户反馈):真看图=紫 AI 标 + 模型名;静态兜底=灰「示例」标 + 明确说明,不再含糊 */}
+        <Tag color={recosFallback && !recosLoading ? 'default' : 'purple'} style={{ margin: 0 }}>
+          {recosFallback && !recosLoading ? t('Examples') : 'AI'}
         </Tag>
-        <Typography.Text strong style={{ fontSize: 12.5, color: '#722ed1' }}>
+        <Typography.Text
+          strong
+          style={{ fontSize: 12.5, color: recosFallback && !recosLoading ? undefined : '#722ed1' }}
+        >
           {t('Recommended prompts')}
         </Typography.Text>
         <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-          {recosFallback ? t('example · editable') : t('based on this product image')}
+          {recosLoading
+            ? ''
+            : recosFallback
+              ? t('vision model unavailable — static examples, editable')
+              : recosModel
+                ? `${t('based on this product image')} · ${recosModel}`
+                : t('based on this product image')}
         </Typography.Text>
         <a onClick={() => fetchRecos()} style={{ marginLeft: 'auto', fontSize: 11.5, color: '#722ed1' }}>
           🔄 {t('Refresh')}
