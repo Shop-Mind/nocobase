@@ -51,8 +51,10 @@ const DEFAULT_SCENES: MediaScene[] = [
   {
     key: 'scene_gen',
     title: 'Scene image',
+    // 位置/朝向约束不写死在模板:由前端「允许重新摆放商品」开关经 {instruction} 注入(默认注入「严格保持
+    // 原有位置、比例与朝向」,行为与旧模板等价;开启时注入允许重排句,避免模板与注入互相打架)
     promptTemplate:
-      '将商品自然融入以下场景:{instruction}。保持商品主体、材质、比例与朝向不变,光影与场景融合自然,画面真实可信。',
+      '将商品自然融入以下场景:{instruction}。保持商品本身的款式、颜色与材质完全不变,光影与场景融合自然,画面真实可信。',
     route: 'instruct',
     compareMode: 'side_by_side',
     defaultN: 2,

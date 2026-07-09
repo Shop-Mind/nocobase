@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   App as AntdApp,
   Button,
+  ColorPicker,
   Empty,
   Input,
   Modal,
@@ -25,6 +26,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Tabs,
   Tag,
   Tooltip,
@@ -37,6 +39,17 @@ import { callMediaApi, makeT, type MediaAsset, type MediaPanelData, type MediaSt
 import { WORKSHOP_FUNCTIONS, getWorkshopFunction, type WorkshopFunction } from './functions';
 import { VideoPane } from './VideoPane';
 import { WorkshopHistory } from './WorkshopHistory';
+import {
+  composeInstruction,
+  recolorInstructions,
+  ERASE_TARGETS,
+  MODEL_AGES,
+  MODEL_BACKGROUNDS,
+  MODEL_GENDERS,
+  MODEL_RACES,
+  RECOLOR_COLORS,
+  type ModelSpec,
+} from './prompt-compose';
 
 // 带入区的一张图:来自商品图集(assetId)或用户新上传(sourceImageUrl)
 interface CarryImage {
@@ -484,6 +497,15 @@ function WorkshopBody({
   const [lang, setLang] = useState<string>('English'); // 图片翻译目标语种
   const [modelPreset, setModelPreset] = useState<string>(MODEL_PRESETS[0].desc); // 模特图选中的模特描述
   const [procStyle, setProcStyle] = useState<string>(STYLES[0]); // 生产流程图风格
+  // —— W5 功能表单深化 ——
+  const [recolorColors, setRecolorColors] = useState<string[]>([]); // 换色目标色(多选,一色一张)
+  const [customColor, setCustomColor] = useState<string>(''); // 换色自定义色(ColorPicker,hex 注入 prompt)
+  const [modelSpec, setModelSpec] = useState<ModelSpec>({}); // 模特档位(与预置模特互斥)
+  const [translateProductText, setTranslateProductText] = useState(false); // 翻译商品实物上的文字
+  const [keepBrandWords, setKeepBrandWords] = useState(true); // 品牌词不翻译
+  const [hdScale, setHdScale] = useState<2 | 4>(2); // 高清放大倍数
+  const [eraseTargets, setEraseTargets] = useState<string[]>([]); // 擦除元素勾选
+  const [sceneRelayout, setSceneRelayout] = useState(false); // 场景图:允许重新摆放商品
   const [pickedPoints, setPickedPoints] = useState<string[]>([]); // 营销卖点图:勾选的 AI 卖点
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -621,6 +643,14 @@ function WorkshopBody({
     setModelPreset(MODEL_PRESETS[0].desc);
     setProcStyle(STYLES[0]);
     setPickedPoints([]);
+    setRecolorColors([]);
+    setCustomColor('');
+    setModelSpec({});
+    setTranslateProductText(false);
+    setKeepBrandWords(true);
+    setHdScale(2);
+    setEraseTargets([]);
+    setSceneRelayout(false);
     setViewCandidateId(null);
     setTplSelected(null);
     setTplTab('reco');
@@ -788,20 +818,21 @@ function WorkshopBody({
       message.warning(t('Please upload the logo image'));
       return;
     }
-    let effInstr = instr;
-    if (activeFunc.key === 'logo') {
-      effInstr = `印在商品的${logoPos}${craft ? `,采用${craft}工艺` : ''}${instr ? `;${instr}` : ''}`;
-    } else if (activeFunc.key === 'material' && refImage) {
-      effInstr = instr ? `${instr}(材质参考第二张图)` : '把商品材质换成第二张图所示的材质质感';
-    } else if (activeFunc.key === 'model_shot') {
-      // 模特描述来自预置库(或自传模特图作第二张图);用户额外指令追加其后
-      const base = refImage ? '第二张图中的模特' : modelPreset || '一位气质自然的模特';
-      effInstr = instr ? `${base};${instr}` : base;
-    } else if (activeFunc.key === 'selling_point') {
-      // 营销卖点图:勾选的 AI 卖点用 · 连接,叠加用户额外文案
-      const joined = pickedPoints.join(' · ');
-      effInstr = joined ? (instr ? `${joined} · ${instr}` : joined) : instr;
-    }
+    // 表单档位/开关 → 指令(W5 提炼为纯函数 prompt-compose.ts,便于单测)
+    const effInstr = composeInstruction({
+      funcKey: activeFunc.key,
+      instruction: instr,
+      hasRefImage: Boolean(refImage),
+      craft,
+      logoPos,
+      modelPreset: refImage ? '' : modelPreset,
+      modelSpec,
+      pickedPoints,
+      eraseTargets,
+      translateProductText,
+      keepBrandWords,
+      sceneRelayout,
+    });
     // 卖点图:必须有卖点(勾选或手填其一)
     if (activeFunc.key === 'selling_point' && !effInstr.trim()) {
       message.warning(t('Pick or enter at least one selling point'));
@@ -813,7 +844,10 @@ function WorkshopBody({
     const refImageUrl = refImage?.url || undefined;
     const [llmService, model] = modelKey ? modelKey.split(/:(.+)/) : [undefined, undefined];
     // 每张源图出 count 张候选;gpt-image-2 网关每次只回 1 张,故按 n=1 逐张循环,进度 = 已出/总数。
-    const perImage = Math.min(Math.max(count, 1), 4);
+    // 换色多色批量(W5):选了 N 个目标色 = 每源图一色一张(取代张数),targetColor 记进 parameters 供历史/色标签。
+    const allColors = activeFunc.key === 'recolor' ? [...recolorColors, ...(customColor ? [customColor] : [])] : [];
+    const colorInstrs = allColors.length ? recolorInstructions(instr, allColors) : null;
+    const perImage = colorInstrs ? colorInstrs.length : Math.min(Math.max(count, 1), 4);
     const total = targets.length * perImage;
     setBusy({ done: 0, total });
     // 带图编辑经 codex 上游偏慢(单张 ~2–3 分钟),放宽候选回流轮询窗口以兜住 apiClient 可能的提前超时
@@ -832,12 +866,17 @@ function WorkshopBody({
             assetId: src.assetId,
             sourceImageUrl: src.assetId ? undefined : src.url || undefined,
             scene: activeFunc.key,
-            instruction: effInstr,
+            instruction: colorInstrs ? colorInstrs[k] : effInstr,
             n: 1,
             llmService,
             model,
             aspect: aspect || undefined,
             tier,
+            parameters: colorInstrs
+              ? { targetColor: allColors[k] }
+              : activeFunc.key === 'hd'
+                ? { upscale_factor: hdScale }
+                : undefined,
             refImageUrl,
             targetLanguage,
             style,
@@ -877,8 +916,16 @@ function WorkshopBody({
     logoPos,
     lang,
     modelPreset,
+    modelSpec,
     procStyle,
     pickedPoints,
+    recolorColors,
+    customColor,
+    hdScale,
+    eraseTargets,
+    translateProductText,
+    keepBrandWords,
+    sceneRelayout,
     refresh,
     message,
     t,
@@ -1728,8 +1775,22 @@ function WorkshopBody({
                       </Tag.CheckableTag>
                     ))}
                   </div>
+                  {/* W5-3 保护开关:商品实物文字/品牌词,注入 prompt 强约束 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
+                      <Switch size="small" checked={translateProductText} onChange={setTranslateProductText} />
+                      {t('Translate text printed on the product')}
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        {t('off = printed text / labels stay untouched')}
+                      </Typography.Text>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
+                      <Switch size="small" checked={keepBrandWords} onChange={setKeepBrandWords} />
+                      {t('Keep brand words untranslated')}
+                    </label>
+                  </div>
                   <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 8 }}>
-                    ℹ️{' '}
+                    {t('Source language: auto-detect')} · ℹ️{' '}
                     {t(
                       'Translation is approximated by the general image model; a layout-locked production translation endpoint can be switched in later.',
                     )}
@@ -1753,10 +1814,53 @@ function WorkshopBody({
                       <Tag.CheckableTag
                         key={m.key}
                         checked={!refImage && modelPreset === m.desc}
-                        onChange={() => setModelPreset(m.desc)}
+                        onChange={() => {
+                          setModelPreset(m.desc);
+                          setModelSpec({}); // 与档位互斥:选预置清档位
+                        }}
                       >
                         {m.label}
                       </Tag.CheckableTag>
+                    ))}
+                  </div>
+                  {/* W5-2 档位组合(人种/性别/年龄/背景):点任一档 = 放弃预置,按描述生成 */}
+                  <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 10 }}>
+                    {t('Or combine persona traits (overrides the preset above)')}
+                  </Typography.Text>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                      marginTop: 6,
+                      opacity: refImage ? 0.45 : 1,
+                    }}
+                  >
+                    {(
+                      [
+                        ['race', t('Race'), MODEL_RACES],
+                        ['gender', t('Gender'), MODEL_GENDERS],
+                        ['age', t('Age'), MODEL_AGES],
+                        ['bg', t('Background'), MODEL_BACKGROUNDS],
+                      ] as Array<[keyof ModelSpec, string, string[]]>
+                    ).map(([dim, label, options]) => (
+                      <div key={dim} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                        <Typography.Text type="secondary" style={{ fontSize: 11.5, width: 34, flexShrink: 0 }}>
+                          {label}
+                        </Typography.Text>
+                        {options.map((opt) => (
+                          <Tag.CheckableTag
+                            key={opt}
+                            checked={modelSpec[dim] === opt}
+                            onChange={(on) => {
+                              setModelSpec((prev) => ({ ...prev, [dim]: on ? opt : undefined }));
+                              if (on) setModelPreset(''); // 与预置互斥:选档位清预置
+                            }}
+                          >
+                            {opt}
+                          </Tag.CheckableTag>
+                        ))}
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -1810,6 +1914,31 @@ function WorkshopBody({
                 <div style={{ marginBottom: 18 }}>{recoBox}</div>
               ) : null}
 
+              {/* 擦除(W5-5):常见元素多选,与手填合并成指令 */}
+              {activeFunc.key === 'erase' ? (
+                <div style={{ marginBottom: 18 }} data-testid="ws-erase-chips">
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    🧽 {t('Elements to erase')}{' '}
+                    <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
+                      {t('multi-select; add specifics below')}
+                    </Typography.Text>
+                  </Typography.Text>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                    {ERASE_TARGETS.map((tg) => (
+                      <Tag.CheckableTag
+                        key={tg}
+                        checked={eraseTargets.includes(tg)}
+                        onChange={(on) =>
+                          setEraseTargets((prev) => (on ? [...prev, tg] : prev.filter((x) => x !== tg)))
+                        }
+                      >
+                        {tg}
+                      </Tag.CheckableTag>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               {/* 专属表单:P1 只渲染提示词(其余字段 P2+);ref 供「再次编辑」回填后滚动定位 */}
               {activeFunc.fields.some((f) => f.type === 'prompt' && !f.planned) || activeFunc.promptPlaceholder ? (
                 <div style={{ marginBottom: 18 }} ref={promptRef}>
@@ -1845,6 +1974,84 @@ function WorkshopBody({
                   {t('This function needs no prompt — just pick images and generate.')}
                 </Typography.Paragraph>
               )}
+
+              {/* 商品换色(W5-1):12 色板多选 + 自定义色;一色一张批量出图 */}
+              {activeFunc.key === 'recolor' ? (
+                <div style={{ marginBottom: 18 }} data-testid="ws-recolor-colors">
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    🎨 {t('Target colors')}{' '}
+                    <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
+                      {t('multi-select — one image per color; prompt above describes which part')}
+                    </Typography.Text>
+                  </Typography.Text>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                    {RECOLOR_COLORS.map((color) => (
+                      <Tag.CheckableTag
+                        key={color}
+                        checked={recolorColors.includes(color)}
+                        onChange={(on) =>
+                          setRecolorColors((prev) => (on ? [...prev, color] : prev.filter((x) => x !== color)))
+                        }
+                      >
+                        {color}
+                      </Tag.CheckableTag>
+                    ))}
+                    <ColorPicker
+                      size="small"
+                      value={customColor || null}
+                      onChangeComplete={(c) => setCustomColor(c.toHexString())}
+                      showText={() => (customColor ? customColor : t('Custom'))}
+                      allowClear
+                      onClear={() => setCustomColor('')}
+                    />
+                  </div>
+                  {recolorColors.length + (customColor ? 1 : 0) > 0 ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 8 }}>
+                      💡{' '}
+                      {t('{{n}} colors selected — one candidate per color will be generated', {
+                        n: recolorColors.length + (customColor ? 1 : 0),
+                      })}
+                    </Typography.Text>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* 高清增强(W5-4):放大倍数档(服务端按源图尺寸×倍数换算 size,输出上限 2048px) */}
+              {activeFunc.key === 'hd' ? (
+                <div style={{ marginBottom: 18 }} data-testid="ws-hd-scale">
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    🔍 {t('Upscale factor')}
+                  </Typography.Text>
+                  <div style={{ marginTop: 8 }}>
+                    <Segmented
+                      value={hdScale}
+                      onChange={(v) => setHdScale(v as 2 | 4)}
+                      options={[
+                        { value: 2, label: '2x' },
+                        { value: 4, label: '4x' },
+                      ]}
+                    />
+                  </div>
+                  <Typography.Text type="secondary" style={{ fontSize: 11.5, display: 'block', marginTop: 8 }}>
+                    ℹ️ {t('Output capped at 2048px')}
+                  </Typography.Text>
+                </div>
+              ) : null}
+
+              {/* 场景图(W5-6):重排构图开关(对应阿里 needLayout) */}
+              {activeFunc.key === 'scene_gen' ? (
+                <div style={{ marginBottom: 18 }} data-testid="ws-scene-relayout">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
+                    <Switch size="small" checked={sceneRelayout} onChange={setSceneRelayout} />
+                    <Typography.Text strong style={{ fontSize: 13 }}>
+                      {t('Allow re-arranging the product')}
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      {t('off = keep the original placement strictly')}
+                    </Typography.Text>
+                  </label>
+                </div>
+              ) : null}
 
               {/* 图片比例(仅支持比例的功能显示;'' = 原图/默认,不透传 size) */}
               {activeFunc.fields.some((f) => f.type === 'ratio') ? (
@@ -2082,6 +2289,12 @@ function WorkshopBody({
                           textOverflow: 'ellipsis',
                         }}
                       >
+                        {/* 换色批量(W5):结果卡带目标色标签,一眼分辨各 SKU 色 */}
+                        {(c.genParams?.parameters as { targetColor?: string } | undefined)?.targetColor ? (
+                          <Tag style={{ marginRight: 4, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                            {(c.genParams?.parameters as { targetColor?: string }).targetColor}
+                          </Tag>
+                        ) : null}
                         {sceneLabel(c.genParams?.scene)}
                       </div>
                     </div>

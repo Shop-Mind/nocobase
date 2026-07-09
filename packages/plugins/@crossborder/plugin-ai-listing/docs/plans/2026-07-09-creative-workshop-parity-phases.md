@@ -422,6 +422,26 @@
 
 **回退**：全是表单字段级增量，逐项可摘。
 
+**✅ 验收记录（2026-07-09 完成,真实出图抽验顺延）**
+- 组合逻辑提炼为纯函数 `prompt-compose.ts`(doGenerate 的 effInstr 全部迁出,logo/material/selling_point
+  既有组合零回归),单测 `prompt-compose.test.ts` 11/11。
+- **换色多色批量**:12 色板 CheckableTag 多选 + antd ColorPicker 自定义;选 N 色=每源图一色一张(取代张数),
+  `parameters.targetColor` 随 genParams 落库(E2E 实证候选与 history 都能读到),候选卡带色标签;
+  提示词语义改为「要换色的部位」(placeholder 同步,兼容旧写法)。
+- **模特图档位化**:人种(欧美白人/非裔黑人/亚洲/拉美裔)×性别×年龄×背景(影棚/室内/欧洲街景/海滩)四组
+  CheckableTag 组合出模特描述;与预置模特**双向互斥**(探针实证:点档位清预置、点预置清档位);参考图仍最优先。
+- **图片翻译保护开关**:「翻译商品实物上的文字」(默认关)+「品牌词不翻译」(默认开)注入强约束;
+  标注「源语言:自动识别」。
+- **高清倍数档**:2x/4x Segmented → parameters.upscale_factor(服务端既有 upscale 策略,输出 2048 封顶);
+  scaleSeg/color 字段在 functions.ts 转正(去 planned)。
+- **擦除元素勾选**:水印/文字/品牌 Logo/人物/背景杂物/边框装饰 6 chips 多选,与手填合并去重。
+- **场景图重排开关**:「允许重新摆放商品」(对应阿里 needLayout);scenes.ts 模板把位置约束移交注入句
+  (默认注入「严格保持原位」,行为等价,开关打开时不再与模板打架),scenes/edit-adopt 单测无回归。
+- 测试:单测 11/11;E2E `verify-w5-forms.js` 4/4(targetColor 透传链路);浏览器探针六表单全绿
+  (色板 12+picker+计数、档位互斥双向、翻译开关默认态+自动识别、2x/4x+2048、擦除 6 chips、重排开关)。
+- 顺延:换色真实出图抽验(2 色出 2 张、只变目标区域的实拍对照)依赖带源图编辑线路,恢复后与 W1/W3 挂起项
+  一并回归。
+
 ---
 
 ## W6 · i豆动态计价 + 消耗明细（~1d）【前后端】

@@ -137,14 +137,10 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     enabled: true,
     single: true,
     instructionRequired: true,
-    promptPlaceholder: '填「哪个部位换成什么颜色」,如:红色的酒瓶套 换成 藏青色',
+    promptPlaceholder: '填要换色的部位,如:红色的酒瓶套(下方勾选目标色可一次出多色;也可直接写"换成藏青色")',
     tier: 'advanced',
     cost: 17,
-    fields: [
-      { type: 'mask', planned: true },
-      { type: 'color', planned: true },
-      { type: 'prompt', required: true },
-    ],
+    fields: [{ type: 'mask', planned: true }, { type: 'color' }, { type: 'prompt', required: true }],
   },
   {
     key: 'logo',
@@ -187,7 +183,7 @@ export const WORKSHOP_FUNCTIONS: WorkshopFunction[] = [
     instructionRequired: false,
     tier: 'basic',
     cost: 3,
-    fields: [{ type: 'scaleSeg', planned: true }],
+    fields: [{ type: 'scaleSeg' }],
   },
   {
     key: 'detail',

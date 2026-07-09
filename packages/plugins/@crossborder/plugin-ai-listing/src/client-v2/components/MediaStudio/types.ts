@@ -41,6 +41,8 @@ export interface MediaAsset {
     refImageUrl?: string | null;
     targetLanguage?: string | null;
     style?: string | null;
+    // 请求参数快照(W5:换色批量的 targetColor、高清倍数 upscale_factor 等在此)
+    parameters?: Record<string, unknown> | null;
   } | null;
   createdAt?: string;
 }
