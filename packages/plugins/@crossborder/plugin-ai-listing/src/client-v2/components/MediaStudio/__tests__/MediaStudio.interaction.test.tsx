@@ -7,8 +7,9 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
-// MediaStudio 交互测试(Phase 1):点缩略图 → 舞台大图预览;点候选 → 对比模式 + CompareView;视频入列 vslot。
-// 布局类断言(gscroll 固定高度独立竖滚)属浏览器渲染,由 Playwright 覆盖,这里只测交互逻辑。
+// MediaStudio 交互测试:点缩略图 → 舞台大图预览;点候选 → 对比模式(A5 起 = 背景层拉帘舞台
+// .stage .layer.full ×2 + .handle,不再渲染 CompareView 的 <img>);视频入列 vslot(预览为独立 <video controls>,
+// 不包在 .stage 里)。布局类断言(gscroll 固定高度独立竖滚)属浏览器渲染,由 Playwright 覆盖,这里只测交互逻辑。
 
 import React from 'react';
 import { App as AntdApp } from 'antd';
@@ -127,13 +128,16 @@ describe('MediaStudio interactions (Phase 1)', () => {
     await waitFor(() => expect(container.querySelector('.candstrip .ccard')).toBeTruthy());
     // 无选中候选 → 对比禁用
     expect(compareBtn(container)?.disabled).toBe(true);
-    // 点候选 → 进对比,ccard 高亮,CompareView(slider 模式)渲染候选图
+    // 点候选 → 进对比,ccard 高亮,拉帘舞台渲染:原图/候选两层背景 + 可拖手柄
     fireEvent.click(container.querySelector('.candstrip .ccard') as Element);
     await waitFor(() => {
       expect(container.querySelector('.ccard.on')).toBeTruthy();
       expect(compareBtn(container)?.className).toContain('on');
       expect(compareBtn(container)?.disabled).toBe(false);
-      expect(container.querySelector('img[alt="Candidate"]')).toBeTruthy();
+      const layers = container.querySelectorAll('.stage .layer.full');
+      expect(layers.length).toBe(2);
+      expect((layers[1] as HTMLElement).style.backgroundImage).toContain('cand.jpg');
+      expect(container.querySelector('.stage .handle[role="slider"]')).toBeTruthy();
     });
   });
 
@@ -141,8 +145,12 @@ describe('MediaStudio interactions (Phase 1)', () => {
     const { container } = renderStudio();
     await waitFor(() => expect(container.querySelector('.vslot')).toBeTruthy());
     expect(container.querySelector('.vslot video')).toBeTruthy();
-    // 点视频缩略 → 舞台放视频
+    // 点视频缩略 → 预览区放可播视频(按自身比例居中,不包在 .stage 里)
     fireEvent.click(container.querySelector('.vslot .vthumb') as Element);
-    await waitFor(() => expect(container.querySelector('.stage video')).toBeTruthy());
+    await waitFor(() => {
+      const v = container.querySelector('video[controls]');
+      expect(v).toBeTruthy();
+      expect(v?.getAttribute('src')).toContain('clip.mp4');
+    });
   });
 });

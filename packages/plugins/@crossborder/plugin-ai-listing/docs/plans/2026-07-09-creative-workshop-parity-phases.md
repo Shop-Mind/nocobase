@@ -401,7 +401,9 @@
   500/视口 1000);②**拉帘交互改帘线手柄**——去掉图下独立滑杆,帘线上圆形 ⇄ 手柄直接拖(pointer capture,
   点图任意处吸附,键盘 ←→ 微调,role=slider a11y),容器 inline-block 贴合图片实际尺寸(无两侧灰条,帘线只在
   图内)。实测拖到 25% 生效、旧 antd Slider 已移除。候选区(MediaStudio 右栏/AdoptModal)同步受益。
-  备忘:MediaStudio.interaction.test 2/4 陈年失败(断言 .ccard/.vslot,干净树复现,与本批无关)→ 记 WB 修。
+  MediaStudio.interaction.test 2/4 陈年失败已同日修复:断言从 CompareView `<img>`/`.stage video` 更新为
+  A5 后的现实现(拉帘舞台 `.stage .layer.full`×2 背景层 + `.handle[role=slider]`;视频预览为独立
+  `<video controls>` 不包在 .stage)。修后 4/4,gen-queue 3/3、adopt-plan 3/3 回归绿。
 - **W1.5 用户反馈批** ✅ 2026-07-09：①**画布对比拉帘**——大图对比卡加 拉帘/并排 Segmented(默认拉帘,复用
   CompareView slider 模式),实测默认拉帘、可切并排;②**自由改图模式(不选商品直接用)**——选品器加「不选商品,
   直接上传改图」入口;服务端 `candidates` 支持 productId 缺省(model.findAll IS NULL 列无商品归属候选;
