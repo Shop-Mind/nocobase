@@ -807,17 +807,37 @@ function ReviewApp() {
     });
   }, [detail, draft, dirtyCount, approveCore, saveWith]);
 
-  // —— 保存安全网（Phase 5）——
+  // —— 保存安全网（Phase 5）+ 键盘流（A3）——
   // 最新值放 ref 供全局监听器读取（监听器只挂一次，不随渲染反复解绑）。
   const guardRef = useRef({});
   guardRef.current = { dirtyCount, busy, locked, save };
-  // Cmd/Ctrl+S：始终拦截浏览器「保存网页」，有未保存修改且未锁定时触发保存。
+  // Cmd/Ctrl+S 保存；J/K 上下切商品（走 switchProduct，天然继承未保存确认）。
+  // 键盘守卫：输入态（input/textarea/contenteditable）不抢键、弹窗（mask/drawer）打开不响应。
   useEffect(() => {
+    const isTypingTarget = (el) => {
+      if (!el || !el.tagName) return false;
+      const tag = el.tagName.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(el.isContentEditable);
+    };
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 's') {
         e.preventDefault();
         const g = guardRef.current;
         if (g.dirtyCount > 0 && !g.locked && !g.busy) g.save();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = String(e.key).toLowerCase();
+      if (key !== 'j' && key !== 'k') return;
+      if (isTypingTarget(e.target)) return;
+      if (document.querySelector('.ant-modal-mask, .ant-drawer-open')) return;
+      const g = guardRef.current;
+      const list = g.products || [];
+      const idx = list.findIndex((p) => p.id === g.selectedId);
+      const next = key === 'j' ? list[idx + 1] : list[idx - 1];
+      if (next && g.switchProduct) {
+        e.preventDefault();
+        g.switchProduct(next.id);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -853,6 +873,10 @@ function ReviewApp() {
     },
     [selectedId, dirtyCount, locked],
   );
+  // J/K 键盘切商品要用的最新值（switchProduct 定义在 guardRef 首次赋值之后，这里补挂）
+  guardRef.current.products = products;
+  guardRef.current.selectedId = selectedId;
+  guardRef.current.switchProduct = switchProduct;
 
   const rollback = useCallback(async () => {
     if (!detail) return;

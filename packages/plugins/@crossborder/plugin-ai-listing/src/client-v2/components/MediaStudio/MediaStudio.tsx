@@ -510,6 +510,43 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     setCurtainPct(50);
   }, []);
 
+  // 键盘流(A3):←→ 切候选、A 采纳当前候选(免确认可撤销,所以敢给快捷键)、X 弃用、Esc 回预览。
+  // 三重守卫:输入态(input/textarea/contenteditable)不抢键、弹窗(mask/drawer)打开不响应、
+  // 拉帘手柄(role=slider)聚焦时 ←→ 归手柄。
+  useEffect(() => {
+    const isTypingTarget = (el: EventTarget | null): boolean => {
+      const node = el as HTMLElement | null;
+      if (!node) return false;
+      const tag = (node.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(node.isContentEditable);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+      if ((e.target as HTMLElement | null)?.closest?.('[role="slider"]')) return;
+      if (document.querySelector('.ant-modal-mask, .ant-drawer-open')) return;
+      const list = data.candidates;
+      if (!list.length) return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const idx = list.findIndex((cd) => cd.id === viewCandidateId);
+        const nextIdx = idx < 0 ? 0 : Math.min(Math.max(idx + (e.key === 'ArrowRight' ? 1 : -1), 0), list.length - 1);
+        selectCandidate(list[nextIdx].id);
+      } else if ((e.key === 'a' || e.key === 'A') && viewCandidate) {
+        e.preventDefault();
+        quickAdopt(viewCandidate);
+      } else if ((e.key === 'x' || e.key === 'X') && viewCandidate) {
+        e.preventDefault();
+        doDiscard(viewCandidate);
+      } else if (e.key === 'Escape') {
+        setStageMode('preview');
+        setViewCandidateId(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [data.candidates, viewCandidateId, viewCandidate, quickAdopt, doDiscard, selectCandidate]);
+
   // 以此再改:以当前选中候选为源,开原生抽屉继续迭代(非回到原图)。
   const iterateFromCandidate = useCallback(() => {
     if (!openEditor || !viewCandidate) return;
@@ -990,6 +1027,8 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
                     {candView === 'grid'
                       ? t('Tick candidates to adopt in bulk')
                       : t('Click a candidate → original / candidate compare')}
+                    {' · '}
+                    {t('←→ switch · A adopt · X discard')}
                   </span>
                   {candPicked.size ? (
                     <>
