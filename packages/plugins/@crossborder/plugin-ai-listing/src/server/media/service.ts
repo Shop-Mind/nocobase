@@ -920,8 +920,10 @@ export async function adoptAsset(
   // 视频候选:单视频位。采纳把之前采纳的视频移出(discarded),本视频占位(finalSelected=true, role=video)。
   if (asset.get('assetType') === 'video') {
     const prevVideos = await Assets.find({ filter: { productId, assetType: 'video', finalSelected: true } });
+    const displacedVideoIds: number[] = [];
     for (const pv of prevVideos) {
       if (Number(pv.get('id')) !== Number(input.assetId)) {
+        displacedVideoIds.push(Number(pv.get('id')));
         await Assets.update({ filterByTk: pv.get('id') as number, values: { finalSelected: false, discarded: true } });
       }
     }
@@ -942,7 +944,8 @@ export async function adoptAsset(
           resourceId: productId,
           fieldName: `video#${input.assetId}`,
           oldValue: null,
-          newValue: { assetId: input.assetId, url: assetUrl(asset), role: 'video' },
+          // displacedVideoIds:撤销采纳(revertAdoptAsset)靠它恢复被顶掉的旧采纳视频
+          newValue: { assetId: input.assetId, url: assetUrl(asset), role: 'video', displacedVideoIds },
           reason: 'AI 视频候选采纳为商品视频',
           traceId: input.traceId,
         },
@@ -1016,6 +1019,90 @@ export async function adoptAsset(
     // 审计失败不回滚采纳
   }
   return { productId, role, sort, replacedAssetId };
+}
+
+export interface RevertAdoptInput {
+  assetId: number;
+  actorId: string;
+  traceId: string;
+}
+
+// 撤销采纳(采纳的后悔药,支撑前端「已采纳·撤销」toast):候选回到候选区(finalSelected=false,origin 回
+// ai_candidate),并按该资产最近一条 media.adopt 审计回放副作用——图片替换模式恢复被替换原图、视频恢复被
+// 顶掉的旧采纳视频。受商品状态锁约束,写 media.adoptRevert 审计(actorType=user)。
+export async function revertAdoptAsset(
+  plugin: PluginLike,
+  input: RevertAdoptInput,
+): Promise<{ productId: number; restoredAssetIds: number[] }> {
+  const { app } = plugin;
+  const Assets = app.db.getRepository('aiListingMediaAssets');
+  const asset = await Assets.findOne({ filterByTk: input.assetId });
+  if (!asset) throw new MediaServiceError('MEDIA_ASSET_NOT_FOUND', `素材 ${input.assetId} 不存在`);
+  if ((asset.get('origin') as string) !== 'ai_adopted' || !asset.get('finalSelected')) {
+    throw new MediaServiceError('MEDIA_NOT_ADOPTED', '该素材不是已采纳的候选,无法撤销采纳');
+  }
+  const productId = asset.get('productId') as number;
+  if (!productId) throw new MediaServiceError('MEDIA_ASSET_NO_PRODUCT', '素材未关联商品,无法撤销');
+  await assertProductEditable(app, productId);
+
+  const isVideo = asset.get('assetType') === 'video';
+  const Audit = app.db.getRepository('aiListingAuditLogs');
+  const lastAdopt = await Audit.findOne({
+    filter: {
+      action: 'media.adopt',
+      resourceType: 'product',
+      resourceId: productId,
+      fieldName: `${isVideo ? 'video' : 'media'}#${input.assetId}`,
+    },
+    sort: ['-id'],
+  });
+
+  const restoredAssetIds: number[] = [];
+  if (isVideo) {
+    const displaced = ((lastAdopt?.get('newValue') as Record<string, unknown>)?.displacedVideoIds as number[]) || [];
+    for (const id of displaced) {
+      const pv = await Assets.findOne({ filterByTk: id });
+      if (pv) {
+        await Assets.update({ filterByTk: id, values: { discarded: false, finalSelected: true } });
+        restoredAssetIds.push(Number(id));
+      }
+    }
+  } else {
+    const replacedAssetId = Number((lastAdopt?.get('oldValue') as Record<string, unknown>)?.replacedAssetId as number);
+    if (replacedAssetId) {
+      const target = await Assets.findOne({ filterByTk: replacedAssetId });
+      if (target && target.get('discarded')) {
+        const targetMeta = { ...((target.get('meta') as Record<string, unknown>) || {}) };
+        delete targetMeta.replacedBy;
+        await Assets.update({ filterByTk: replacedAssetId, values: { discarded: false, meta: targetMeta } });
+        restoredAssetIds.push(replacedAssetId);
+      }
+    }
+  }
+  // 候选回位:回到候选区可再次采纳/弃用(role/sort 残值无害,finalSelected=false 即不在最终集)
+  await Assets.update({
+    filterByTk: input.assetId,
+    values: { finalSelected: false, origin: 'ai_candidate' },
+  });
+  try {
+    await writeAuditEntries(app.db.getRepository('aiListingAuditLogs'), [
+      {
+        actorType: 'user',
+        actorId: input.actorId,
+        action: 'media.adoptRevert',
+        resourceType: 'product',
+        resourceId: productId,
+        fieldName: `${isVideo ? 'video' : 'media'}#${input.assetId}`,
+        oldValue: { assetId: input.assetId, finalSelected: true },
+        newValue: { reverted: true, restoredAssetIds },
+        reason: '用户撤销采纳,候选回到候选区',
+        traceId: input.traceId,
+      },
+    ]);
+  } catch {
+    // 审计失败不回滚撤销
+  }
+  return { productId, restoredAssetIds };
 }
 
 export interface DiscardAssetInput {

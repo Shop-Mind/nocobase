@@ -419,5 +419,13 @@
   "sheets": "",
   "Previous": "Previous",
   "Next": "Next",
-  "Iterate from this candidate as the new source": "Iterate from this candidate as the new source"
+  "Iterate from this candidate as the new source": "Iterate from this candidate as the new source",
+  "Adopt · replace source": "Adopt · replace source",
+  "Adopt · append": "Adopt · append",
+  "More adopt options": "More adopt options",
+  "Adopted (replaced source)": "Adopted — replaced the source image",
+  "Adopted (appended)": "Adopted — appended to the gallery",
+  "Undo": "Undo",
+  "Adoption reverted": "Adoption reverted — back in candidates",
+  "Revert failed": "Revert failed"
 }

@@ -309,19 +309,90 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
     [app, adoptTarget, refresh, onChange, message, t],
   );
 
+  // 快速采纳的替换目标:候选带源图(parentAssetId / genParams.sourceAssetId)且源图仍在图集里 → 替换它
+  const quickReplaceTarget = useCallback(
+    (cand: MediaAsset): MediaAsset | null => {
+      const srcId = cand.parentAssetId ?? cand.genParams?.sourceAssetId ?? null;
+      if (!srcId) return null;
+      return data.gallery.find((g) => g.id === srcId && !g.discarded) || null;
+    },
+    [data.gallery],
+  );
+
+  // 撤销采纳:8 秒内后悔药(服务端恢复候选/被替换图/被顶视频),高频操作因此可以免确认。
+  const undoAdopt = useCallback(
+    async (assetId: number, msgKey: string) => {
+      message.destroy(msgKey);
+      const r = await callMediaApi(app, 'aiListingMedia:revertAdopt', { assetId });
+      if (r.ok) {
+        message.info(t('Adoption reverted'));
+        await refresh();
+        onChange?.();
+      } else {
+        message.error(r.message || t('Revert failed'));
+      }
+    },
+    [app, refresh, onChange, message, t],
+  );
+
+  // 快速采纳(免确认):默认「替换源图」,无源图则「追加」;toast 带撤销。「更多方式」仍走 AdoptModal。
+  const quickAdopt = useCallback(
+    async (cand: MediaAsset) => {
+      const target = quickReplaceTarget(cand);
+      setAdopting(true);
+      const res = await callMediaApi(app, 'aiListingMedia:adopt', {
+        assetId: cand.id,
+        mode: target ? 'replace' : 'append',
+        replaceAssetId: target ? target.id : undefined,
+      });
+      setAdopting(false);
+      if (res.ok) {
+        setViewCandidateId(null);
+        setStageMode('preview');
+        await refresh();
+        onChange?.();
+        const msgKey = `adopt-${cand.id}`;
+        message.open({
+          key: msgKey,
+          type: 'success',
+          duration: 8,
+          content: (
+            <span>
+              {target ? t('Adopted (replaced source)') : t('Adopted (appended)')}{' '}
+              <a onClick={() => undoAdopt(cand.id, msgKey)}>{t('Undo')}</a>
+            </span>
+          ),
+        });
+      } else {
+        message.error(res.message || t('Adopt failed'));
+      }
+    },
+    [app, quickReplaceTarget, refresh, onChange, message, t, undoAdopt],
+  );
+
   // 采纳视频为主视频:视频采纳无 replace 语义,直接受控 action(服务端只保留一条 finalSelected 视频)。
   const doAdoptVideo = useCallback(
     async (v: MediaAsset) => {
       const res = await callMediaApi(app, 'aiListingMedia:adopt', { assetId: v.id, mode: 'append' });
       if (res.ok) {
-        message.success(t('Adopted as main video'));
         await refresh();
         onChange?.();
+        const msgKey = `adopt-video-${v.id}`;
+        message.open({
+          key: msgKey,
+          type: 'success',
+          duration: 8,
+          content: (
+            <span>
+              {t('Adopted as main video')} <a onClick={() => undoAdopt(v.id, msgKey)}>{t('Undo')}</a>
+            </span>
+          ),
+        });
       } else {
         message.error(res.message || t('Adopt failed'));
       }
     },
-    [app, refresh, onChange, message, t],
+    [app, refresh, onChange, message, t, undoAdopt],
   );
 
   const doDiscard = useCallback(
@@ -851,13 +922,26 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
             {/* 操作条:采纳选中候选 / 以此再改 / 弃用。没有候选时整条隐藏(一排永远禁用的按钮只制造噪音)。 */}
             {data.candidates.length ? (
               <div className="actbar">
+                {/* 免确认快速采纳(替换源图/追加,toast 8s 可撤销);「更多方式」才开 AdoptModal 精细控制 */}
                 <button
                   type="button"
                   className={`act adopt${viewCandidate ? '' : ' mut'}`}
+                  disabled={!viewCandidate || adopting}
+                  onClick={() => viewCandidate && quickAdopt(viewCandidate)}
+                >
+                  ✓{' '}
+                  {viewCandidate && quickReplaceTarget(viewCandidate)
+                    ? t('Adopt · replace source')
+                    : t('Adopt · append')}
+                </button>
+                <button
+                  type="button"
+                  className={`act iter${viewCandidate ? '' : ' mut'}`}
                   disabled={!viewCandidate}
+                  title={t('More adopt options')}
                   onClick={() => viewCandidate && setAdoptTarget(viewCandidate)}
                 >
-                  ✓ {t('Adopt selected candidate')}
+                  ⋯
                 </button>
                 {openEditor ? (
                   <button

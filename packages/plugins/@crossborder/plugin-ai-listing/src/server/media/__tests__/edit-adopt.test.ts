@@ -11,7 +11,7 @@
 // 审计(actorType=user,不含任何凭证)。全部用内存仓库 + 假 aiManager,不触网络/数据库。
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { adoptAsset, discardAsset, editImage, resolveImageEditTarget, upscaleSize } from '../service';
+import { adoptAsset, discardAsset, editImage, resolveImageEditTarget, revertAdoptAsset, upscaleSize } from '../service';
 
 type Row = Record<string, unknown> & { id: number };
 type Wrapped = { get: (k: string) => unknown };
@@ -499,5 +499,102 @@ describe('discardAsset', () => {
       discardAsset(plugin, { assetId: adopted.get('id') as number, actorId: '7', traceId: 't' }),
     ).rejects.toMatchObject({ code: 'MEDIA_ADOPT_LOCKED' });
     expect(tables['aiListingMediaAssets'].find((r) => r.id === adopted.get('id'))?.discarded).toBeFalsy();
+  });
+});
+
+// 撤销采纳(revertAdoptAsset):采纳的后悔药——候选回候选区,按最近一条 media.adopt 审计恢复被替换图/被顶视频
+describe('revertAdoptAsset', () => {
+  async function seedCandidate(repo: ReturnType<typeof makeDb>['repo'], productId: number, parentAssetId: number) {
+    const row = await repo('aiListingMediaAssets').create({
+      values: {
+        productId,
+        assetType: 'image',
+        role: 'detail',
+        origin: 'ai_candidate',
+        finalSelected: false,
+        discarded: false,
+        parentAssetId,
+        meta: { storedUrl: '/storage/uploads/candidate.png' },
+      },
+    });
+    return row.get('id') as number;
+  }
+
+  it('reverts an append-adopt: candidate goes back to the pool and an adoptRevert audit is written', async () => {
+    const { plugin, tables, repo } = makePlugin();
+    const { productId, assetId } = await seedProductWithImage(repo, 'processed');
+    const candidateId = await seedCandidate(repo, productId, assetId);
+    await adoptAsset(plugin, { assetId: candidateId, actorId: '7', traceId: 't-adopt' });
+
+    const result = await revertAdoptAsset(plugin, { assetId: candidateId, actorId: '7', traceId: 't-revert' });
+    expect(result).toMatchObject({ productId, restoredAssetIds: [] });
+    const cand = tables['aiListingMediaAssets'].find((r) => r.id === candidateId);
+    expect(cand).toMatchObject({ finalSelected: false, origin: 'ai_candidate' });
+    const revertAudit = tables['aiListingAuditLogs'].find((r) => r.action === 'media.adoptRevert');
+    expect(revertAudit).toMatchObject({ actorType: 'user', actorId: '7', resourceId: productId });
+  });
+
+  it('reverts a replace-adopt: the replaced original is restored (undiscarded, replacedBy cleared)', async () => {
+    const { plugin, tables, repo } = makePlugin();
+    const { productId, assetId } = await seedProductWithImage(repo);
+    const candidateId = await seedCandidate(repo, productId, assetId);
+    await adoptAsset(plugin, {
+      assetId: candidateId,
+      mode: 'replace',
+      replaceAssetId: assetId,
+      actorId: '7',
+      traceId: 't-replace',
+    });
+
+    const result = await revertAdoptAsset(plugin, { assetId: candidateId, actorId: '7', traceId: 't-revert' });
+    expect(result.restoredAssetIds).toEqual([assetId]);
+    const original = tables['aiListingMediaAssets'].find((r) => r.id === assetId);
+    expect(original).toMatchObject({ discarded: false });
+    expect((original?.meta as Record<string, unknown>).replacedBy).toBeUndefined();
+    const cand = tables['aiListingMediaAssets'].find((r) => r.id === candidateId);
+    expect(cand).toMatchObject({ finalSelected: false, origin: 'ai_candidate' });
+  });
+
+  it('reverts a video adopt: the displaced previously-adopted video is restored', async () => {
+    const { plugin, tables, repo } = makePlugin();
+    const { productId } = await seedProductWithImage(repo, 'processed');
+    const prev = await repo('aiListingMediaAssets').create({
+      values: { productId, assetType: 'video', role: 'video', origin: 'ai_adopted', finalSelected: true },
+    });
+    const candRow = await repo('aiListingMediaAssets').create({
+      values: { productId, assetType: 'video', role: 'video', origin: 'ai_candidate', finalSelected: false },
+    });
+    const candId = candRow.get('id') as number;
+    await adoptAsset(plugin, { assetId: candId, actorId: '7', traceId: 't-video' });
+    expect(tables['aiListingMediaAssets'].find((r) => r.id === prev.get('id'))).toMatchObject({
+      discarded: true,
+      finalSelected: false,
+    });
+
+    const result = await revertAdoptAsset(plugin, { assetId: candId, actorId: '7', traceId: 't-revert' });
+    expect(result.restoredAssetIds).toEqual([prev.get('id')]);
+    expect(tables['aiListingMediaAssets'].find((r) => r.id === prev.get('id'))).toMatchObject({
+      discarded: false,
+      finalSelected: true,
+    });
+    expect(tables['aiListingMediaAssets'].find((r) => r.id === candId)).toMatchObject({
+      finalSelected: false,
+      origin: 'ai_candidate',
+    });
+  });
+
+  it('rejects non-adopted assets and locked products', async () => {
+    const { plugin, repo } = makePlugin();
+    const { productId, assetId } = await seedProductWithImage(repo, 'processed');
+    await expect(revertAdoptAsset(plugin, { assetId, actorId: '7', traceId: 't' })).rejects.toMatchObject({
+      code: 'MEDIA_NOT_ADOPTED',
+    });
+    const adopted = await repo('aiListingMediaAssets').create({
+      values: { productId, assetType: 'image', origin: 'ai_adopted', finalSelected: true },
+    });
+    await repo('aiListingProducts').update({ filterByTk: productId, values: { status: 'published' } });
+    await expect(
+      revertAdoptAsset(plugin, { assetId: adopted.get('id') as number, actorId: '7', traceId: 't' }),
+    ).rejects.toMatchObject({ code: 'MEDIA_ADOPT_LOCKED' });
   });
 });

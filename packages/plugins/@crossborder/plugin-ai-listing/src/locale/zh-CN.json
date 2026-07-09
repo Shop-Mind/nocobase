@@ -419,5 +419,13 @@
   "sheets": "张",
   "Previous": "上一张",
   "Next": "下一张",
-  "Iterate from this candidate as the new source": "以此候选为源继续改"
+  "Iterate from this candidate as the new source": "以此候选为源继续改",
+  "Adopt · replace source": "采纳 · 替换源图",
+  "Adopt · append": "采纳 · 追加",
+  "More adopt options": "更多采纳方式",
+  "Adopted (replaced source)": "已采纳，已替换源图",
+  "Adopted (appended)": "已采纳，已追加到图集",
+  "Undo": "撤销",
+  "Adoption reverted": "已撤销采纳，候选已回到候选区",
+  "Revert failed": "撤销失败"
 }

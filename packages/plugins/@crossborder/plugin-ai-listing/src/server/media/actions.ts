@@ -16,6 +16,7 @@ import type Plugin from '../plugin';
 import { fail } from '../capture/shared';
 import {
   adoptAsset,
+  revertAdoptAsset,
   discardAsset,
   editImage,
   generateVideo,
@@ -40,6 +41,7 @@ const MEDIA_ACTIONS = [
   'videoJobStatus',
   'jobStatus',
   'adopt',
+  'revertAdopt',
   'discard',
 ] as const;
 
@@ -360,6 +362,25 @@ export function setupMedia(plugin: Plugin): void {
             actorId: currentUserId(ctx),
             traceId,
           });
+          ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
+        } catch (e) {
+          handleError(ctx, e, traceId);
+        }
+        await next();
+      },
+
+      // 撤销采纳(「已采纳·撤销」toast 的后端):候选回候选区,恢复被替换图/被顶视频
+      revertAdopt: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as { assetId?: number };
+        const assetId = Number(v.assetId);
+        if (!assetId) {
+          ctx.status = 400;
+          ctx.body = fail('NO_ASSET_ID', '缺少素材 id', false, traceId);
+          return await next();
+        }
+        try {
+          const result = await revertAdoptAsset(plugin, { assetId, actorId: currentUserId(ctx), traceId });
           ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
         } catch (e) {
           handleError(ctx, e, traceId);
