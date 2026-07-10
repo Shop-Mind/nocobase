@@ -7,10 +7,11 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
-// 推荐提示词(对标创意工坊「点图自动出 3 条」):三级链依次尝试,每级短超时快速失败——
+// 推荐提示词(对标创意工坊「点图自动出 3 条」):三级链并行竞速、按优先级收割,每级短超时快速失败——
 //   ① 看图:视觉 chat 模型(qwen-vl/gpt-5.5 等,capability task='chat' 且 input 含 'image')看商品图产词;
 //   ② 看标题:纯文本 chat 模型(DeepSeek/grok 等)按商品标题产词(视觉线路全挂时的真 AI 降级);
 //   ③ 静态示例:全部失败时的固定词,前端明确标注。
+// 所有目标同时起跑(不串行等死模型超时),排位靠前者成功即采用,总耗时≈实际应答那一级自身耗时。
 // env AI_LISTING_SUGGEST_MODEL("svc:model" 或裸模型名)可锁定只用某一个模型。
 // 铁律:只读、只产候选提示词不写库;任何失败绝不报错阻塞前端;商品图与 Key 只在服务端流转,出入参不含 Key。
 
@@ -120,8 +121,8 @@ function buildSpec(scene: string | undefined, n: number): { system: string; ask:
   }
   if (scene === 'video') {
     return {
-      system: '你是资深电商短视频导演,擅长为商品设计有吸引力的动态展示镜头。',
-      ask: `请仔细观察这张商品图,产出 ${n} 条不同的「商品场景视频」创意描述,用于 AI 图生视频。每条 40-90 个汉字,中文,包含:场景氛围、商品呈现方式、镜头运动(如缓慢推近/环绕/平移/固定)与光影变化,画面真实可信,不要出现具体品牌名。只返回一个 JSON 字符串数组,不要任何多余文字。`,
+      system: '你是资深电商短视频导演,为跨境电商商品制作高转化的动态展示短视频。',
+      ask: `请仔细观察这张商品图,产出 ${n} 条不同的商品展示视频镜头脚本,用于 AI 图生视频。每条 40-70 个汉字,中文,必须包含:开场场景氛围、一个明确的镜头运动(缓慢推近/环绕/平移/拉远选其一)、光影变化,并保证商品外观真实不变形;画面中不出现任何文字或水印,不要品牌名。只返回一个 JSON 字符串数组,不要任何多余文字。`,
     };
   }
   return {
@@ -140,8 +141,8 @@ function buildTextSpec(scene: string | undefined, n: number, title: string): { s
   }
   if (scene === 'video') {
     return {
-      system: '你是资深电商短视频导演,擅长为商品设计有吸引力的动态展示镜头。',
-      ask: `商品标题是「${title}」。请为该商品产出 ${n} 条不同的「商品场景视频」创意描述,用于 AI 图生视频。每条 40-90 个汉字,中文,包含:场景氛围、商品呈现方式、镜头运动与光影变化,不要出现具体品牌名。只返回一个 JSON 字符串数组,不要任何多余文字。`,
+      system: '你是资深电商短视频导演,为跨境电商商品制作高转化的动态展示短视频。',
+      ask: `商品标题是「${title}」。请为该商品产出 ${n} 条不同的商品展示视频镜头脚本,用于 AI 图生视频。每条 40-70 个汉字,中文,必须包含:开场场景氛围、一个明确的镜头运动(缓慢推近/环绕/平移/拉远选其一)、光影变化,并保证商品外观真实不变形;画面中不出现任何文字或水印,不要品牌名。只返回一个 JSON 字符串数组,不要任何多余文字。`,
     };
   }
   return {
@@ -291,23 +292,24 @@ export async function suggestPrompts(app: Application, input: SuggestPromptsInpu
   const warn = (msg: string, meta?: unknown) =>
     (app as unknown as { logger?: { warn?: (m: string, x?: unknown) => void } }).logger?.warn?.(msg, meta);
 
-  for (const target of targets) {
-    // 视觉级没图跳过;文本级没标题跳过(自由模式上传图无商品归属)
-    if (target.vision && !imageUrl) continue;
-    if (!target.vision && !productTitle) continue;
-    try {
-      const prompts = await attemptTarget(aiManager, target, {
-        scene: input.scene,
-        n,
-        imageUrl,
-        title: productTitle,
-      });
-      return { prompts, model: target.model, fallback: false, basis: target.vision ? 'image' : 'title' };
-    } catch (e) {
-      warn('[ai-listing] suggestPrompts attempt failed, trying next', {
-        model: target.model,
-        message: (e as Error)?.message,
-      });
+  // 并行优先级竞速(修复:原串行链在视觉线全挂时,要为每个死模型白等 15s 超时才轮到文本级,推荐词动辄 30-45s):
+  // 所有可用目标同时起跑,仍按原优先级顺序收割——排位靠前的成功立即采用,失败/超时立刻看下一位(通常已在跑或已完成),
+  // 总耗时≈实际应答那一级自身的耗时。代价是高优先级健康时低优先级的调用被浪费(纯 chat 小调用,可接受)。
+  // 视觉级没图跳过;文本级没标题跳过(自由模式上传图无商品归属)。
+  const runnable = targets.filter((t) => (t.vision ? Boolean(imageUrl) : Boolean(productTitle)));
+  const races = runnable.map((target) => ({
+    target,
+    result: attemptTarget(aiManager, target, { scene: input.scene, n, imageUrl, title: productTitle }).catch(
+      (e: Error) => {
+        warn('[ai-listing] suggestPrompts attempt failed, trying next', { model: target.model, message: e?.message });
+        return null;
+      },
+    ),
+  }));
+  for (const race of races) {
+    const prompts = await race.result;
+    if (prompts?.length) {
+      return { prompts, model: race.target.model, fallback: false, basis: race.target.vision ? 'image' : 'title' };
     }
   }
   return staticResult();

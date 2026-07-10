@@ -7,7 +7,7 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
-// 推荐提示词三级链单测:看图(视觉模型)→ 看标题(文本模型)→ 静态示例。
+// 推荐提示词三级链单测:看图(视觉模型)→ 看标题(文本模型)→ 静态示例;并行竞速、按优先级收割。
 // 覆盖:视觉成功 basis=image;视觉挂了降级文本 basis=title(带商品标题);全挂 basis=static;
 // env AI_LISTING_SUGGEST_MODEL 锁定;文本级 DeepSeek 优先;自由模式(无商品标题)不走文本级。
 
@@ -105,8 +105,8 @@ describe('suggestPrompts 3-tier chain', () => {
     });
     const res = await suggestPrompts(app, { assetId: 1, scene: 'scene_gen' });
     expect(res).toMatchObject({ basis: 'title', model: 'deepseek-v4-pro', fallback: false });
-    // 文本级 DeepSeek 排在 grok 前(官方直连更稳)
-    expect(invoked).toEqual(['gpt-5.5', 'deepseek-v4-pro']);
+    // 并行竞速:全员按优先级顺序起跑(DeepSeek 官方直连排文本级第一),胜出者是排位最靠前的成功者
+    expect(invoked).toEqual(['gpt-5.5', 'deepseek-v4-pro', 'grok-4.20-0309-console']);
   });
 
   it('all models fail → static fallback (basis=static, fallback=true)', async () => {
