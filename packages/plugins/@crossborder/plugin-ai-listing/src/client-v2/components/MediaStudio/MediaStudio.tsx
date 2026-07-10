@@ -281,7 +281,7 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
   // 快捷直连:对目标逐张生成候选(受服务端日限额保护)
   // 快捷场景改图 → 进生成队列(模块级,跨商品切换存活):工具栏不再锁死,可连续给多张图/多个场景派活。
   const quickGenerate = useCallback(
-    (sceneKey: string, instruction?: string) => {
+    (sceneKey: string, instruction?: string, targetLanguage?: string) => {
       const targets = genTargets();
       if (!targets.length) {
         message.warning(t('Select a source image first'));
@@ -297,6 +297,7 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
           scene: sceneKey,
           label: `${sm.label} · #${assetId}`,
           instruction,
+          targetLanguage,
           n: count,
           llmService,
           model,
@@ -913,7 +914,12 @@ export function MediaStudio({ app, productId, onChange, openEditor }: MediaStudi
         ) : null}
         {/* 队列化后场景按钮不再随生成锁死:点了就进队列,可连续派活 */}
         {QUICK_SCENES.map((q) => (
-          <button type="button" key={q.key} className="tbtn" onClick={() => quickGenerate(q.key, q.instruction)}>
+          <button
+            type="button"
+            key={q.key}
+            className="tbtn"
+            onClick={() => quickGenerate(q.key, q.instruction, q.targetLanguage)}
+          >
             {q.icon} {q.label}
           </button>
         ))}

@@ -26,6 +26,8 @@ export interface GenTask {
   /** 展示用:场景名 + 源图短标识(入列时生成,模块内不做 i18n) */
   label: string;
   instruction?: string;
+  /** 图片翻译目标语种(scene='translate' 时必传,如 'English') */
+  targetLanguage?: string;
   n: number;
   llmService?: string;
   model?: string;
@@ -83,6 +85,7 @@ async function pump(app: MediaStudioApp): Promise<void> {
             assetId: next.assetId,
             scene: next.scene,
             instruction: next.instruction || '',
+            targetLanguage: next.targetLanguage,
             n: next.n,
             llmService: next.llmService,
             model: next.model,

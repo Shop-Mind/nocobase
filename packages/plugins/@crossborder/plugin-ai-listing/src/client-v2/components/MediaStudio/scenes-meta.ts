@@ -27,11 +27,19 @@ const SCENE_META: Record<string, SceneMeta> = {
   custom: { icon: '✏️', label: '自由改图' },
 };
 
-// 候选区头部「快捷直连」:只放最常用、点了直接生成(白底/高清无需指令;去logo水印用预置指令)。
-export const QUICK_SCENES: Array<{ key: string; icon: string; label: string; instruction?: string }> = [
+// 候选区头部「快捷直连」:只放最常用、点了直接生成(白底/高清无需指令;去logo水印用预置指令;
+// 翻译(英)预置目标语种——搬运出海主战场是英文站,详情图文字一键英化;其他语种去创意工坊选)。
+export const QUICK_SCENES: Array<{
+  key: string;
+  icon: string;
+  label: string;
+  instruction?: string;
+  targetLanguage?: string;
+}> = [
   { key: 'white_bg', icon: '⬜', label: '白底图' },
   { key: 'erase', icon: '🧽', label: '去logo水印', instruction: '品牌 logo 和所有文字水印' },
   { key: 'hd', icon: '🔍', label: '高清' },
+  { key: 'translate', icon: '🌐', label: '翻译(英)', targetLanguage: 'English' },
 ];
 
 export function sceneMeta(key?: string | null): SceneMeta {

@@ -1,5 +1,6 @@
-# 日常发版增量镜像:基于上一版全量镜像,只重编 @crossborder/plugin-ai-listing(约 2-5 分钟)。
-# 适用:仅改动本插件源码的常规发布(改核心框架/升级依赖时用 Dockerfile.aliyun 全量重建)。
+# 日常发版增量镜像:基于上一版全量镜像,只重编本次发版改动的插件(约 3-6 分钟)。
+# 适用:仅改动 plugin-ai / plugin-ai-listing 源码的常规发布(改核心框架/升级依赖时用 Dockerfile.aliyun 全量重建)。
+# 注意:plugin-ai 必须完整构建(含 dts)——它的 dist d.ts 是 ai-listing 声明构建的上游依赖;构建顺序也因此固定。
 #
 # 用法:
 #   docker build -f Dockerfile.incremental \
@@ -9,9 +10,11 @@ ARG BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:v2-20260703-
 FROM ${BASE_IMAGE}
 WORKDIR /app/nocobase
 
+COPY packages/plugins/@nocobase/plugin-ai /app/nocobase/packages/plugins/@nocobase/plugin-ai
 COPY packages/plugins/@crossborder/plugin-ai-listing /app/nocobase/packages/plugins/@crossborder/plugin-ai-listing
 
-RUN NODE_OPTIONS=--max-old-space-size=3072 yarn build @crossborder/plugin-ai-listing
+RUN NODE_OPTIONS=--max-old-space-size=3072 yarn build @nocobase/plugin-ai && \
+    NODE_OPTIONS=--max-old-space-size=3072 yarn build @crossborder/plugin-ai-listing
 
 EXPOSE 13000
 CMD ["yarn", "start"]
