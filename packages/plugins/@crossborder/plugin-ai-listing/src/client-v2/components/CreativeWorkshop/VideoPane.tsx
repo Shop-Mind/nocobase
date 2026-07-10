@@ -55,7 +55,9 @@ const VIDEO_MODES: Array<{ key: string; label: string; enabled: boolean }> = [
   { key: 'keyframe', label: '首尾帧', enabled: false },
   { key: 'digital_human', label: '数字人', enabled: false },
 ];
-const DURATIONS = [3, 5];
+// 5/10 对齐阿里(其后端万相即 5s/10s 两档);grok imagine 线不接收时长参数(chat 形状),实测固定出 ~6s 片,
+// 选中 imagine 系模型时在时长控件下方给出诚实提示。万相 10s 档待 DashScope Key 恢复后按所用版本核验。
+const DURATIONS = [5, 10];
 const RESOLUTIONS = ['720P', '1080P'];
 const POLL_MS = 5000;
 
@@ -696,6 +698,11 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
               onChange={(v) => setDuration(Number(v))}
               options={DURATIONS.map((d) => ({ value: d, label: `${d}s` }))}
             />
+            {/grok|imagine/i.test(videoModelKey) ? (
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
+                {t('This model decides clip length itself (~6s)')}
+              </Typography.Text>
+            ) : null}
           </div>
           <div>
             <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>

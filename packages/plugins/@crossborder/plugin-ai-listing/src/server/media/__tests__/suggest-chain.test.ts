@@ -75,7 +75,8 @@ function makeApp(opts: {
 }
 
 const VISION = { value: 'gpt-5.5', capability: { task: 'chat', input: ['text', 'image'] } };
-const GROK_CHAT = { value: 'grok-4.20-0309-console', capability: { task: 'chat', input: ['text'] } };
+// grok-4 家族按名归入视觉分支(真实能力如此),纯文本第三模型用 qwen 代表
+const QWEN_CHAT = { value: 'qwen3.7-plus', capability: { task: 'chat', input: ['text'] } };
 const DEEPSEEK = { value: 'deepseek-v4-pro', capability: { task: 'chat', input: ['text'] } };
 
 afterEach(() => {
@@ -96,7 +97,7 @@ describe('suggestPrompts 3-tier chain', () => {
 
   it('vision fails → falls to a text model using the product title (basis=title)', async () => {
     const { app, invoked } = makeApp({
-      services: [{ llmService: 'svc', models: [VISION, GROK_CHAT, DEEPSEEK] }],
+      services: [{ llmService: 'svc', models: [VISION, QWEN_CHAT, DEEPSEEK] }],
       answers: {
         'gpt-5.5': new Error('503 auth_unavailable'),
         'deepseek-v4-pro': '["根据标题产出的场景一","场景二"]',
@@ -106,7 +107,7 @@ describe('suggestPrompts 3-tier chain', () => {
     const res = await suggestPrompts(app, { assetId: 1, scene: 'scene_gen' });
     expect(res).toMatchObject({ basis: 'title', model: 'deepseek-v4-pro', fallback: false });
     // 并行竞速:全员按优先级顺序起跑(DeepSeek 官方直连排文本级第一),胜出者是排位最靠前的成功者
-    expect(invoked).toEqual(['gpt-5.5', 'deepseek-v4-pro', 'grok-4.20-0309-console']);
+    expect(invoked).toEqual(['gpt-5.5', 'deepseek-v4-pro', 'qwen3.7-plus']);
   });
 
   it('all models fail → static fallback (basis=static, fallback=true)', async () => {
@@ -132,14 +133,14 @@ describe('suggestPrompts 3-tier chain', () => {
   });
 
   it('AI_LISTING_SUGGEST_MODEL pins a single model', async () => {
-    process.env.AI_LISTING_SUGGEST_MODEL = 'grok-4.20-0309-console';
+    process.env.AI_LISTING_SUGGEST_MODEL = 'qwen3.7-plus';
     const { app, invoked } = makeApp({
-      services: [{ llmService: 'svc', models: [VISION, GROK_CHAT, DEEPSEEK] }],
-      answers: { 'grok-4.20-0309-console': '["锁定模型产出的场景"]' },
+      services: [{ llmService: 'svc', models: [VISION, QWEN_CHAT, DEEPSEEK] }],
+      answers: { 'qwen3.7-plus': '["锁定模型产出的场景"]' },
       productTitle: '圣诞酒瓶套',
     });
     const res = await suggestPrompts(app, { assetId: 1, scene: 'scene_gen' });
-    expect(res).toMatchObject({ basis: 'title', model: 'grok-4.20-0309-console' });
-    expect(invoked).toEqual(['grok-4.20-0309-console']);
+    expect(res).toMatchObject({ basis: 'title', model: 'qwen3.7-plus' });
+    expect(invoked).toEqual(['qwen3.7-plus']);
   });
 });

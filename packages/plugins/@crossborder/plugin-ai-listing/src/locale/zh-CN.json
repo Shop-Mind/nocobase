@@ -576,5 +576,6 @@
   "Usage demonstration": "功能使用演示",
   "360° panorama showcase": "旋转全景展示",
   "Lifestyle & outfit showcase": "场景穿搭展示",
-  "AI is composing recommendations — one moment…": "AI 推荐词生成中，请稍候…"
+  "AI is composing recommendations — one moment…": "AI 推荐词生成中，请稍候…",
+  "This model decides clip length itself (~6s)": "该模型自行决定出片时长（约 6 秒）"
 }

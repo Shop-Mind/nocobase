@@ -59,7 +59,8 @@ function getVisionAiManager(app: Application): VisionAiManager | undefined {
 
 // 已知视觉对话家族名(冷 catalog 兜底用):plugin-ai 的能力判定除内置规则外还查 LiteLLM 在线目录(异步、冷缓存),
 // 重启后目录未加载时 gpt-5/gpt-4o 等会被暂判为纯文本;按名兜底避免头几次调用误降级。
-const VISION_MODEL_NAME = /(^|-)vl(-|\d|$)|vision|qvq|omni|gpt-5|gpt-4o|gpt-4\.|gpt-4-turbo/i;
+// grok-4 家族原生多模态(实测 grok-4.3-fast 经中转带图 200);按名兜底让显式选择与冷 catalog 都走视觉分支
+const VISION_MODEL_NAME = /(^|-)vl(-|\d|$)|vision|qvq|omni|gpt-5|gpt-4o|gpt-4\.|gpt-4-turbo|grok-4/i;
 
 interface SuggestTarget {
   llmService: string;
@@ -211,7 +212,9 @@ function fallbackPrompts(scene: string | undefined, n: number): string[] {
 }
 
 // 单次模型调用(带每级短超时):视觉级带图,文本级带标题;成功返回提示词数组,失败抛给上层换下一级。
+// 视觉级预算更宽:带图+生成 3 条完整脚本实测 17-18s(grok-4.3-fast),15s 会把活模型误杀成超时。
 const ATTEMPT_TIMEOUT_MS = 15000;
+const VISION_ATTEMPT_TIMEOUT_MS = 25000;
 async function attemptTarget(
   aiManager: VisionAiManager,
   target: SuggestTarget,
@@ -233,7 +236,10 @@ async function attemptTarget(
     ],
   });
   const timeout = new Promise<never>((_resolve, reject) =>
-    setTimeout(() => reject(new Error('SUGGEST_TIMEOUT')), ATTEMPT_TIMEOUT_MS),
+    setTimeout(
+      () => reject(new Error('SUGGEST_TIMEOUT')),
+      target.vision ? VISION_ATTEMPT_TIMEOUT_MS : ATTEMPT_TIMEOUT_MS,
+    ),
   );
   const res = await Promise.race([invocation, timeout]);
   const prompts = parsePrompts(contentToText(res?.content), opts.n, opts.scene === 'video' ? 160 : 60);
@@ -292,9 +298,9 @@ export async function suggestPrompts(app: Application, input: SuggestPromptsInpu
   const warn = (msg: string, meta?: unknown) =>
     (app as unknown as { logger?: { warn?: (m: string, x?: unknown) => void } }).logger?.warn?.(msg, meta);
 
-  // 并行优先级竞速(修复:原串行链在视觉线全挂时,要为每个死模型白等 15s 超时才轮到文本级,推荐词动辄 30-45s):
-  // 所有可用目标同时起跑,仍按原优先级顺序收割——排位靠前的成功立即采用,失败/超时立刻看下一位(通常已在跑或已完成),
-  // 总耗时≈实际应答那一级自身的耗时。代价是高优先级健康时低优先级的调用被浪费(纯 chat 小调用,可接受)。
+  // 并行分级竞速(修复:原串行链在视觉线全挂时,要为每个死模型白等超时才轮到文本级,推荐词动辄 30-45s):
+  // 所有可用目标同时起跑;收割按「级」——视觉级整级先看,级内先成先得(挂死的模型不堵队首),整级全败才看文本级
+  // (文本级通常已在并行中完成)。代价是高优先级健康时低优先级的调用被浪费(纯 chat 小调用,可接受)。
   // 视觉级没图跳过;文本级没标题跳过(自由模式上传图无商品归属)。
   const runnable = targets.filter((t) => (t.vision ? Boolean(imageUrl) : Boolean(productTitle)));
   const races = runnable.map((target) => ({
@@ -306,10 +312,32 @@ export async function suggestPrompts(app: Application, input: SuggestPromptsInpu
       },
     ),
   }));
-  for (const race of races) {
-    const prompts = await race.result;
-    if (prompts?.length) {
-      return { prompts, model: race.target.model, fallback: false, basis: race.target.vision ? 'image' : 'title' };
+  // 级内先成先得:第一个返回非空词表的目标胜出;全部落空回 null(catch 已兜底,result 永不 reject)
+  const firstHit = (tier: typeof races) =>
+    new Promise<{ target: SuggestTarget; prompts: string[] } | null>((resolve) => {
+      if (!tier.length) return resolve(null);
+      let pending = tier.length;
+      for (const race of tier) {
+        race.result
+          .then((prompts) => {
+            if (prompts?.length) resolve({ target: race.target, prompts });
+            else if (--pending === 0) resolve(null);
+          })
+          // result 按构造永不 reject(创建时已 catch 落 null);这里只为满足 promise/catch-or-return
+          .catch(() => {
+            if (--pending === 0) resolve(null);
+          });
+      }
+    });
+  for (const tier of [races.filter((r) => r.target.vision), races.filter((r) => !r.target.vision)]) {
+    const hit = await firstHit(tier);
+    if (hit) {
+      return {
+        prompts: hit.prompts,
+        model: hit.target.model,
+        fallback: false,
+        basis: hit.target.vision ? 'image' : 'title',
+      };
     }
   }
   return staticResult();
