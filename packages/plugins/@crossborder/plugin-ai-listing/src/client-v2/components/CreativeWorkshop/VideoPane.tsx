@@ -104,6 +104,8 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
   const { message } = AntdApp.useApp();
   const [mode, setMode] = useState<string>('i2v');
   const [sel, setSel] = useState<string>(''); // 选中源图 key(单选)
+  // 多图 AI 成片:勾选 2-5 张(独立于单选;≥2 时生成按钮切换为多图成片)
+  const [multi, setMulti] = useState<Set<string>>(new Set());
   const [duration, setDuration] = useState<number>(6);
   const [resolution, setResolution] = useState<string>('720p');
   const [aspect, setAspect] = useState<string>('9:16');
@@ -324,10 +326,14 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
     return () => clearInterval(iv);
   }, [jobState, jobId, app, message, t, refresh]);
 
+  // 多图成片选中数(仅 i2v 模式生效)
+  const multiCount = mode === 'i2v' ? multi.size : 0;
+
   const doGenerate = useCallback(async () => {
     const isT2V = mode === 't2v';
+    const isMulti = !isT2V && multi.size >= 2;
     const src = sources.find((s) => s.key === sel);
-    if (!isT2V && !src) {
+    if (!isT2V && !isMulti && !src) {
       message.warning(t('Select a source image first'));
       return;
     }
@@ -335,13 +341,21 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
       message.warning(t('Describe the video you want first'));
       return;
     }
+    if (isMulti && !isImagine) {
+      message.warning(t('Multi-image film needs an explicit video model (grok line)'));
+      return;
+    }
     setSubmitting(true);
     setErrorMsg('');
     const [vSvc, vModel] = videoModelKey ? videoModelKey.split(/:(.+)/) : [undefined, undefined];
+    const multiAssetIds = isMulti
+      ? sources.filter((x) => multi.has(x.key) && x.assetId).map((x) => x.assetId as number)
+      : undefined;
     const res = await callMediaApi<{ jobId: number }>(app, 'aiListingMedia:generateVideo', {
       productId,
-      assetId: isT2V ? undefined : src?.assetId,
-      sourceImageUrl: isT2V ? undefined : src?.assetId ? undefined : src?.url || undefined,
+      assetId: isT2V || isMulti ? undefined : src?.assetId,
+      assetIds: multiAssetIds,
+      sourceImageUrl: isT2V || isMulti ? undefined : src?.assetId ? undefined : src?.url || undefined,
       textToVideo: isT2V || undefined,
       prompt: prompt.trim() || undefined,
       duration,
@@ -360,7 +374,22 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
       setErrorMsg(res.message || t('Video generation failed'));
       message.error(res.message || t('Video generation failed'));
     }
-  }, [app, productId, sources, sel, mode, prompt, duration, resolution, aspect, isImagine, videoModelKey, message, t]);
+  }, [
+    app,
+    productId,
+    sources,
+    sel,
+    multi,
+    mode,
+    prompt,
+    duration,
+    resolution,
+    aspect,
+    isImagine,
+    videoModelKey,
+    message,
+    t,
+  ]);
 
   const doAdopt = useCallback(
     async (asset: MediaAsset) => {
@@ -466,7 +495,7 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             <Typography.Text strong style={{ fontSize: 13 }}>
               🖼️ {t('Source image')}{' '}
               <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
-                {t('single image · click to switch')}
+                {t('single image · click to switch')} · {t('tick 2-5 thumbnails for a multi-image film')}
               </Typography.Text>
             </Typography.Text>
             {/* 对齐阿里+用户反馈「图片改小」:64px 横排缩略条(横向滚动),不再整屏大网格 */}
@@ -501,6 +530,42 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
                             alt={String(s.role || s.key)}
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                           />
+                        ) : null}
+                        {/* 左上勾选=多图成片选择(与右上单选✓互不影响);仅有 assetId 的图可入选 */}
+                        {s.assetId ? (
+                          <span
+                            role="checkbox"
+                            aria-checked={multi.has(s.key)}
+                            aria-label={t('Pick for multi-image film')}
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMulti((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(s.key)) next.delete(s.key);
+                                else if (next.size < 5) next.add(s.key);
+                                return next;
+                              });
+                            }}
+                            onKeyDown={(e) => e.stopPropagation()}
+                            style={{
+                              position: 'absolute',
+                              left: 3,
+                              top: 3,
+                              width: 15,
+                              height: 15,
+                              borderRadius: 4,
+                              border: '1.5px solid #fff',
+                              background: multi.has(s.key) ? '#16a34a' : 'rgba(20,18,30,.35)',
+                              color: '#fff',
+                              fontSize: 10,
+                              lineHeight: '13px',
+                              textAlign: 'center',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {multi.has(s.key) ? '✓' : ''}
+                          </span>
                         ) : null}
                         {on ? (
                           <span
@@ -820,11 +885,27 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             type="primary"
             size="large"
             loading={submitting || jobState === 'running'}
-            disabled={mode === 't2v' ? !prompt.trim() || !videoModelKey : !sel || !activeMode.enabled}
+            disabled={
+              mode === 't2v'
+                ? !prompt.trim() || !videoModelKey
+                : multiCount >= 2
+                  ? !videoModelKey
+                  : !sel || !activeMode.enabled
+            }
             onClick={doGenerate}
           >
-            🎬 {jobState === 'running' ? t('Generating…') : t('Generate video')}
+            🎬{' '}
+            {jobState === 'running'
+              ? t('Generating…')
+              : multiCount >= 2
+                ? `${t('Generate multi-image film')} (${multiCount})`
+                : t('Generate video')}
           </Button>
+          {multiCount >= 2 && jobState !== 'running' ? (
+            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              {t('{{n}} segments, generated one by one then stitched into a single film', { n: multiCount })}
+            </Typography.Text>
+          ) : null}
           {jobState === 'running' ? (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               <Spin size="small" />{' '}

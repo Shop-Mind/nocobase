@@ -17,6 +17,14 @@ import { selectPublishableVideo } from '../../publish';
 
 vi.mock('../download', () => ({
   downloadToStorage: vi.fn(async () => ({ fileId: 555, url: '/storage/uploads/video-1.mp4' })),
+  storeLocalFile: vi.fn(async () => ({ fileId: 777, url: '/storage/uploads/multi.mp4' })),
+}));
+
+// 多图成片的拼接层 mock:不依赖真实 ffmpeg,记录调用以断言段数
+const concatMock = vi.fn(async () => undefined);
+vi.mock('../video-concat', () => ({
+  concatMp4: (...args: unknown[]) => concatMock(...args),
+  ffmpegBin: () => 'ffmpeg',
 }));
 
 type Row = Record<string, unknown> & { id: number };
@@ -271,5 +279,82 @@ describe('selectPublishableVideo', () => {
     expect(selectPublishableVideo([legacy])?.get('id')).toBe(5);
     const discarded = row({ id: 6, finalSelected: true, origin: 'ai_adopted', discarded: true });
     expect(selectPublishableVideo([discarded])).toBeUndefined();
+  });
+});
+
+describe('generateVideo · 多图 AI 成片', () => {
+  function makeAiPlugin(invokeMediaTask: ReturnType<typeof vi.fn>) {
+    const db = (globalThis as never as { __mvdb?: unknown }).__mvdb; // 不复用,每测新建
+    void db;
+    const made = (() => {
+      const base = makePlugin() as unknown as { plugin: { app: Record<string, unknown> }; tables: never; repo: never };
+      (base.plugin.app as { pm: unknown }).pm = {
+        get: (name: string) =>
+          name === 'ai' ? { aiManager: { getLLMService: async () => ({ provider: { invokeMediaTask } }) } } : undefined,
+      };
+      return base;
+    })();
+    return made as unknown as ReturnType<typeof makePlugin>;
+  }
+
+  it('2 张源图 → 逐段生成 → 拼接 → 单条视频候选(genParams.mode=multi_i2v)', async () => {
+    concatMock.mockClear();
+    const invoke = vi.fn(async () => ({ urls: ['https://relay.example.com/v1/files/video?id=seg'] }));
+    const { plugin, tables, repo } = makeAiPlugin(invoke);
+    const { productId, assetId } = await seedProductImage(repo, 'https://cdn.example.com/a.jpg');
+    const asset2 = await repo('aiListingMediaAssets').create({
+      values: {
+        productId,
+        assetType: 'image',
+        role: 'detail',
+        sourceUrl: 'https://cdn.example.com/b.jpg',
+        meta: { storedUrl: 'https://cdn.example.com/b.jpg' },
+      },
+    });
+    // 段产物下载走全局 fetch:回可用的二进制
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new Uint8Array([0, 0, 0, 1]).buffer,
+    })) as never;
+
+    const res = await generateVideo(plugin, {
+      productId,
+      assetIds: [assetId, asset2.get('id') as number],
+      prompt: '镜头缓慢推近',
+      duration: 6,
+      llmService: 'svc',
+      model: 'grok-imagine-video',
+    });
+    expect(res.providerTaskId).toMatch(/^multi-/);
+
+    // 后台任务异步推进:轮询内存表等它到终态
+    for (let i = 0; i < 40; i++) {
+      const job = tables['aiListingMediaJobs'].find((j) => j.id === res.jobId);
+      if (job?.status === 'success' || job?.status === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const job = tables['aiListingMediaJobs'].find((j) => j.id === res.jobId);
+    expect(job?.status).toBe('success');
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(concatMock).toHaveBeenCalledTimes(1);
+    expect((concatMock.mock.calls[0][0] as string[]).length).toBe(2);
+    const video = tables['aiListingMediaAssets'].find((a) => a.assetType === 'video');
+    expect(video).toBeTruthy();
+    const gp = video?.genParams as Record<string, unknown>;
+    expect(gp.mode).toBe('multi_i2v');
+    expect((gp.sourceAssetIds as number[]).length).toBe(2);
+  });
+
+  it('少于 2 张或未显式选模 → 参数错误', async () => {
+    const invoke = vi.fn();
+    const { plugin, repo } = makeAiPlugin(invoke);
+    const { productId, assetId } = await seedProductImage(repo, 'https://cdn.example.com/a.jpg');
+    await expect(
+      generateVideo(plugin, { productId, assetIds: [assetId], llmService: 'svc', model: 'm' }),
+    ).rejects.toMatchObject({ code: 'MEDIA_PARAM_INVALID' });
+    await expect(generateVideo(plugin, { productId, assetIds: [assetId, assetId] })).rejects.toMatchObject({
+      code: 'MEDIA_PARAM_INVALID',
+    });
   });
 });

@@ -64,6 +64,19 @@ export async function downloadToStorage(plugin: Plugin, sourceUrl: string): Prom
   }
 }
 
+// 本地文件直接落存储(多图成片拼接产物等):复用附件管线,返回附件 id + 访问 url。调用方负责清理源文件。
+// 注意:附件的 url 不是存储列(record.get('url') 为空),必须经 getFileURL 按 storage 计算。
+export async function storeLocalFile(plugin: Plugin, filePath: string, mimetype?: string): Promise<StoredFile> {
+  const fileManager = plugin.app.pm.get('file-manager') as PluginFileManagerServer;
+  const created = await fileManager.createFileRecord({
+    collectionName: 'attachments',
+    filePath,
+    values: { mimetype },
+  });
+  const url = await fileManager.getFileURL(created as never);
+  return { fileId: created.get('id') as number, url: url ? String(url) : undefined, mimetype };
+}
+
 export interface DownloadStats {
   total: number;
   ok: number;

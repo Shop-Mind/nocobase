@@ -336,6 +336,7 @@ export function setupMedia(plugin: Plugin): void {
           llmService?: string;
           model?: string;
           textToVideo?: boolean;
+          assetIds?: number[];
         };
         try {
           const result = await generateVideo(plugin, {
@@ -349,6 +350,7 @@ export function setupMedia(plugin: Plugin): void {
             llmService: v.llmService || undefined,
             model: v.model || undefined,
             textToVideo: v.textToVideo === true,
+            assetIds: Array.isArray(v.assetIds) ? v.assetIds.map(Number).filter(Boolean) : undefined,
             // 无 env 公网基址时用请求 origin 兜底(生产应配 AI_LISTING_PUBLIC_BASE_URL)
             publicBaseUrl: `${ctx.protocol}://${ctx.host}`,
           });

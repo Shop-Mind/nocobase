@@ -15,6 +15,9 @@ ARG BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:v2-20260704-
 FROM ${BASE_IMAGE}
 WORKDIR /app/nocobase
 
+# 多图 AI 成片依赖 ffmpeg 拼接段视频(流拷贝);bookworm 源直装,层可被后续增量复用
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
 COPY packages/plugins/@nocobase/plugin-ai /app/nocobase/packages/plugins/@nocobase/plugin-ai
 COPY packages/plugins/@crossborder/plugin-ai-listing /app/nocobase/packages/plugins/@crossborder/plugin-ai-listing
 

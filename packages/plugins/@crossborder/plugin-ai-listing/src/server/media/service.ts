@@ -12,12 +12,14 @@
 // 落 File Manager 并建 mediaAssets 资产行、逐次审计。复用现有表,不新增字段:任务细节存 mediaJobs.metadata,
 // 资产细节存 mediaAssets.meta。
 
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { Application } from '@nocobase/server';
 import { createDashScopeProvider } from './providers/dashscope';
 import type { MediaProvider } from './providers/types';
-import { downloadToStorage } from './download';
+import { downloadToStorage, storeLocalFile } from './download';
+import { concatMp4 } from './video-concat';
 import { buildScenePrompt, getMediaScene, listMediaScenes, type MediaScene } from './scenes';
 import { toPublicUrl } from './public-url';
 import { estimateCost } from './pricing';
@@ -742,6 +744,8 @@ export interface GenerateVideoInput {
   model?: string;
   // 纯文生视频(t2v):不带源图,仅 prompt(grok imagine 等 t2v 模型)
   textToVideo?: boolean;
+  // 多图 AI 成片:2-5 张源图逐图生成动态镜头,服务端拼接成一条(需显式 imagine 系模型,万相线不支持)
+  assetIds?: number[];
 }
 
 const I2V_DEFAULT_PROMPT = '让画面自然地轻微运动:商品缓慢旋转/镜头缓缓推近,展示细节,光影真实,不改变商品本身。';
@@ -859,6 +863,220 @@ async function runExplicitVideoTask(
   }
 }
 
+// 多图 AI 成片后台推进(不 await):逐图串行生成动态镜头段(单账号并发限制,严禁并行)→ 段产物落临时文件 →
+// ffmpeg 流拷贝拼接 → 落 File Manager + 单条视频候选 → job success/failed。全程 try/catch 不抛出。
+async function runMultiVideoTask(
+  plugin: PluginLike,
+  args: {
+    jobId: number;
+    llmService: string;
+    model: string;
+    prompt: string;
+    parameters: Record<string, unknown>;
+    productId: number | null;
+    segments: Array<{ assetId: number; sourceUrl: string; publicImgUrl: string }>;
+    duration: number | null;
+    resolution: string | null;
+    beans: number;
+    baseMeta: Record<string, unknown>;
+  },
+): Promise<void> {
+  const { app } = plugin;
+  const Jobs = app.db.getRepository('aiListingMediaJobs');
+  const Assets = app.db.getRepository('aiListingMediaAssets');
+  const startedAt = Date.now();
+  const tmpFiles: string[] = [];
+  try {
+    const { provider: llm } = await getAIPlugin(app).aiManager.getLLMService({
+      llmService: args.llmService,
+      model: args.model,
+    });
+    const segmentPaths: string[] = [];
+    for (let i = 0; i < args.segments.length; i++) {
+      const seg = args.segments[i];
+      const inline = /^grok-imagine/i.test(args.model) && isLoopbackHttpUrl(seg.publicImgUrl);
+      const images = [inline ? (await sourceImageInfo(seg.sourceUrl)).dataUri : seg.publicImgUrl];
+      const output = await llm.invokeMediaTask({
+        task: 'video_gen',
+        model: args.model,
+        prompt: args.prompt,
+        images,
+        audios: [],
+        options: { parameters: args.parameters },
+      });
+      const url = output.urls?.[0];
+      if (!url) {
+        throw new MediaServiceError('MEDIA_GENERATE_FAILED', `第 ${i + 1}/${args.segments.length} 段未返回视频`);
+      }
+      // 段产物两种形态:plugin-ai 已转存本地存储(相对 /storage/...,直接读文件)/ 远端 http URL(下载)
+      let segBuf: Buffer;
+      if (/^https?:/i.test(url)) {
+        const resp = await fetch(url, { signal: AbortSignal.timeout(120000) });
+        if (!resp.ok) {
+          throw new MediaServiceError('MEDIA_GENERATE_FAILED', `第 ${i + 1} 段下载失败 HTTP ${resp.status}`);
+        }
+        segBuf = Buffer.from(await resp.arrayBuffer());
+      } else {
+        segBuf = await readFile(path.join(process.cwd(), url.replace(/^\//, '')));
+      }
+      const segPath = path.join(os.tmpdir(), `ai-listing-seg-${args.jobId}-${i}.mp4`);
+      await writeFile(segPath, segBuf);
+      tmpFiles.push(segPath);
+      segmentPaths.push(segPath);
+      // 段进度落 job metadata(轮询/创作历史可见"第 N/M 段")
+      await Jobs.update({
+        filterByTk: args.jobId,
+        values: { metadata: { ...args.baseMeta, segmentsDone: i + 1 } },
+      });
+    }
+    const outPath = path.join(os.tmpdir(), `ai-listing-multi-${args.jobId}.mp4`);
+    tmpFiles.push(outPath);
+    await concatMp4(segmentPaths, outPath);
+    const stored = await storeLocalFile(plugin as never, outPath, 'video/mp4');
+    const finalUrl = stored.url || '';
+    const asset = await Assets.create({
+      values: {
+        productId: args.productId,
+        assetType: 'video',
+        role: 'video',
+        origin: 'ai_candidate',
+        finalSelected: false,
+        discarded: false,
+        parentAssetId: args.segments[0]?.assetId ?? null,
+        sourceUrl: finalUrl,
+        sourceFileId: stored.fileId ?? null,
+        processStatus: 'success',
+        processType: 'ai_video',
+        genParams: {
+          mode: 'multi_i2v',
+          prompt: args.prompt,
+          duration: args.duration,
+          resolution: args.resolution,
+          model: args.model,
+          llmService: args.llmService,
+          sourceAssetIds: args.segments.map((x) => x.assetId),
+          segments: args.segments.length,
+          estimatedBeans: args.beans,
+        },
+        meta: { storedUrl: finalUrl, prompt: args.prompt, model: args.model },
+      },
+    });
+    await Jobs.update({
+      filterByTk: args.jobId,
+      values: {
+        status: 'success',
+        durationMs: Date.now() - startedAt,
+        metadata: {
+          ...args.baseMeta,
+          segmentsDone: args.segments.length,
+          storedUrl: finalUrl,
+          assetId: asset.get('id'),
+        },
+      },
+    });
+  } catch (e) {
+    try {
+      await Jobs.update({
+        filterByTk: args.jobId,
+        values: {
+          status: 'failed',
+          errorMessage: String((e as Error)?.message || '多图成片失败').slice(0, 500),
+          retryable: true,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+    } catch {
+      // job 更新失败只能放弃(极端情况)
+    }
+  } finally {
+    await Promise.all(tmpFiles.map((f) => rm(f, { force: true }).catch(() => undefined)));
+  }
+}
+
+// 多图 AI 成片入口:校验 2-5 张同商品源图 + 显式模型,建单个 job 立即返回,后台逐段生成再拼接。
+async function generateMultiVideo(
+  plugin: PluginLike,
+  input: GenerateVideoInput,
+  assetIds: number[],
+): Promise<{ jobId: number; providerTaskId: string; model: string }> {
+  const { app } = plugin;
+  if (assetIds.length < 2 || assetIds.length > 5) {
+    throw new MediaServiceError('MEDIA_PARAM_INVALID', '多图成片需选择 2-5 张源图');
+  }
+  if (!input.llmService || !input.model) {
+    throw new MediaServiceError('MEDIA_PARAM_INVALID', '多图成片需显式选择视频模型(grok 线);「自动」暂不支持');
+  }
+  const Assets = app.db.getRepository('aiListingMediaAssets');
+  const segments: Array<{ assetId: number; sourceUrl: string; publicImgUrl: string }> = [];
+  let productId: number | null = input.productId ?? null;
+  for (const assetId of assetIds) {
+    const asset = await Assets.findOne({ filterByTk: assetId });
+    if (!asset) throw new MediaServiceError('MEDIA_SOURCE_NOT_FOUND', `源图资产 ${assetId} 不存在`);
+    if (input.productId && Number(asset.get('productId')) !== Number(input.productId)) {
+      throw new MediaServiceError('MEDIA_SOURCE_NOT_FOUND', `源图 ${assetId} 不属于该商品`);
+    }
+    productId ??= (asset.get('productId') as number | undefined) ?? null;
+    const meta = (asset.get('meta') as Record<string, unknown>) || {};
+    const sourceUrl = (meta.storedUrl as string) || (asset.get('sourceUrl') as string) || '';
+    const pub = await toPublicUrl(app, { url: sourceUrl }, { baseUrl: input.publicBaseUrl });
+    if (!pub.public) {
+      throw new MediaServiceError(
+        'MEDIA_SOURCE_NOT_PUBLIC',
+        '多图成片要求源图可公网访问:请配置 AI_LISTING_PUBLIC_BASE_URL(如 https://app.xuanwu.space)。',
+      );
+    }
+    segments.push({ assetId, sourceUrl, publicImgUrl: pub.url });
+  }
+  const prompt = (input.prompt || '').trim() || I2V_DEFAULT_PROMPT;
+  const parameters: Record<string, unknown> = {};
+  if (input.resolution) parameters.resolution = input.resolution;
+  if (input.duration) parameters.duration = input.duration;
+  if (input.size) parameters.size = input.size;
+  const beans = estimateCost({ scene: 'video', count: 1, sources: segments.length }).beans;
+  const Jobs = app.db.getRepository('aiListingMediaJobs');
+  const traceId = `media-multi-i2v-${Date.now()}`;
+  const baseMeta: Record<string, unknown> = {
+    mode: 'multi_i2v',
+    prompt,
+    duration: input.duration ?? null,
+    resolution: input.resolution ?? null,
+    size: input.size ?? null,
+    segmentAssetIds: segments.map((x) => x.assetId),
+    segmentsTotal: segments.length,
+    estimatedBeans: beans,
+  };
+  const job = await Jobs.create({
+    values: {
+      jobType: JOB_TYPE_VIDEO,
+      status: 'running',
+      traceId,
+      productId,
+      assetId: segments[0].assetId,
+      provider: input.llmService,
+      model: input.model,
+      prompt,
+      metadata: baseMeta,
+    },
+  });
+  const jobId = job.get('id') as number;
+  await writeAudit(app, 'ai.video_generate', prompt, traceId);
+  // 后台推进,不 await:N 段 × 每段 1-2 分钟,HTTP 层立即返回 jobId,前端沿用 videoJobStatus 轮询
+  runMultiVideoTask(plugin, {
+    jobId,
+    llmService: input.llmService,
+    model: input.model,
+    prompt,
+    parameters,
+    productId,
+    segments,
+    duration: input.duration ?? null,
+    resolution: input.resolution ?? null,
+    beans,
+    baseMeta,
+  });
+  return { jobId, providerTaskId: `multi-${jobId}`, model: input.model };
+}
+
 // 图生视频:源图经 toPublicUrl 落公网 URL → DashScope 万相 i2v 异步任务 → 建 JOB_TYPE_VIDEO(带 productId)。
 // 立即返回 jobId,不阻塞(视频耗时数分钟);完成由 pollVideoJob 推进并落视频候选。
 export async function generateVideo(
@@ -867,6 +1085,12 @@ export async function generateVideo(
 ): Promise<{ jobId: number; providerTaskId: string; model: string }> {
   const { app } = plugin;
   await checkDailyLimit(app, JOB_TYPE_VIDEO, VIDEO_DAILY_LIMIT);
+
+  // 多图 AI 成片:assetIds ≥2 时走逐段生成+拼接线(单图/文生沿用下方原流程)
+  const multiIds = (input.assetIds || []).map((v) => Number(v)).filter(Boolean);
+  if (multiIds.length) {
+    return generateMultiVideo(plugin, input, multiIds);
+  }
 
   const Assets = app.db.getRepository('aiListingMediaAssets');
   let sourceAsset: { get: (k: string) => unknown } | null = null;

@@ -614,6 +614,24 @@ HTTP/2 流被代理节点掐断(mihomo 单节点);上午并发报错=号池仅 1
 
 ---
 
+## 增量 · 多图 AI 成片（2026-07-10 用户点名:多张图生成一个视频,方式仍是 AI 生成）
+
+单段模型只吃一张图 → 方案:**逐图各生成一段 AI 动态镜头(现有 i2v),服务端 ffmpeg 流拷贝无缝拼接成一条**。
+- **服务端**:`GenerateVideoInput.assetIds`(2-5 张,需显式 imagine 模型;万相线明确拒绝)→ 单 job
+  (metadata.mode=multi_i2v,segmentsDone 逐段回写)→ `runMultiVideoTask` 严格串行逐段生成(单账号并发)→
+  段产物落临时文件(相对 /storage 路径直接读本地,http 才下载——E2E 抓出的真 bug)→ `video-concat.ts`
+  concatMp4(ffmpeg -f concat -c copy,env AI_LISTING_FFMPEG 可指二进制)→ `storeLocalFile` 落 File Manager
+  (⚠️ 附件 url 非存储列,必须 `fileManager.getFileURL()` 计算——第二个 E2E 抓出的 bug)→ 单条视频候选
+  (genParams.mode=multi_i2v + sourceAssetIds);计价 = 段数 × 视频单价,记入 estimatedBeans。
+- **前端**:源图缩略卡左上新增绿色勾选框(与右上单选✓独立,上限 5 张);勾满 2 张生成按钮变
+  「🎬 生成多图成片 (N)」+「N 段逐图生成后自动拼接成一条成片」提示;仅 grok 线可用(自动线拦截提示)。
+- **镜像**:Dockerfile.incremental 增 `apt-get install ffmpeg` 层(bookworm)。
+- 验收:单测 video 12/12(多图 happy path 断言逐段调用×2/拼接×1/genParams + 参数错误负例);
+  真机 E2E:2 段 grok i2v 共 142s → 拼接成片 **12.11s·720×1280·9.9MB** 落候选可播放(净零清理);
+  UI 探针:34 个勾选框/按钮切「生成多图成片 (2)」/拼接提示,全绿。
+
+---
+
 ## WB · Backlog（另排期，不阻塞本轮）
 
 1. **智能视频 tab 对齐**：阿里 tab 内清单未确认——待你在真实后台截图后逐项对（候补功能池：营销视频/视频
