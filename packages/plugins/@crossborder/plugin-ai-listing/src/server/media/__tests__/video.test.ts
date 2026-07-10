@@ -12,7 +12,7 @@
 // + 假 downloadToStorage,不触真实网络/存储/账号(零成本验证全链路,与"提交即验"的真机 E2E 互补)。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { adoptAsset, generateVideo, pollVideoJob } from '../service';
+import { adoptAsset, generateVideo, isLoopbackHttpUrl, pollVideoJob } from '../service';
 import { selectPublishableVideo } from '../../publish';
 
 vi.mock('../download', () => ({
@@ -121,6 +121,12 @@ afterEach(() => {
 });
 
 describe('generateVideo', () => {
+  it('recognizes container-only loopback reference URLs', () => {
+    expect(isLoopbackHttpUrl('http://127.0.0.1:13001/storage/uploads/main.jpg')).toBe(true);
+    expect(isLoopbackHttpUrl('http://localhost:13001/storage/uploads/main.jpg')).toBe(true);
+    expect(isLoopbackHttpUrl('https://cdn.example.com/main.jpg')).toBe(false);
+  });
+
   it('rejects a non-public source (video endpoint needs a fetchable URL)', async () => {
     const { plugin, repo } = makePlugin();
     await seedDashScope(repo);

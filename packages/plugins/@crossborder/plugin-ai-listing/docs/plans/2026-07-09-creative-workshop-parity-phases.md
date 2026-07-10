@@ -602,6 +602,18 @@ size: 720x1280|1280x720|1024x1024|1024x1792|1792x1024, resolution_name: 480p/720
 
 ---
 
+## 增量 · 编辑线路复活（2026-07-10 下午,修的是自有中转 grok2api,应用侧零改动）
+
+grok2api(120.76.157.51:/opt/app/grok2api,用户自有)对图像编辑结果的取回 URL 拼错:自拼
+`users/<uid>/<assetId>/content`(永久 404),上游流里其实给了真实地址 `users/<uid>/generated/<assetId>/image.jpg`。
+修复=补丁挂载 `patches/images.py`(`_resolve_edit_final_url` 改 imageUrl 优先)+`patches/assets.py`(下载 404
+退避重试);compose 已收全 4 个补丁(headers/asset_upload 原有)。实测:直连编辑 11.7s 白底成图、
+工坊 white_bg E2E 14.1s 落候选净零。**编辑类(白底/场景/换色/擦除/翻译/Logo/模特)全部复活**;
+挂起的编辑真实回归/换色抽验/gen-hero-samples.js 解锁。诊断过程还定位:视频抖动=中转→grok.com 的
+HTTP/2 流被代理节点掐断(mihomo 单节点);上午并发报错=号池仅 1 账号。
+
+---
+
 ## WB · Backlog（另排期，不阻塞本轮）
 
 1. **智能视频 tab 对齐**：阿里 tab 内清单未确认——待你在真实后台截图后逐项对（候补功能池：营销视频/视频
