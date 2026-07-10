@@ -469,6 +469,7 @@ function WorkshopBody({
   onBack,
   onSwitchProduct,
   freeMode,
+  allowSwitch,
 }: WorkshopBodyProps) {
   const { message } = AntdApp.useApp();
   const t = useMemo(() => makeT(app), [app]);
@@ -1365,21 +1366,24 @@ function WorkshopBody({
           flexShrink: 0,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontWeight: 600, fontSize: 15 }}>
-          <span
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 7,
-              background: 'linear-gradient(135deg,#a06bff,#1677ff)',
-              display: 'grid',
-              placeItems: 'center',
-            }}
-          >
-            🎨
-          </span>
-          {t('Creative Workshop')}
-        </div>
+        {/* 独立页(allowSwitch)时页面标题已是「创意工坊」,块内不再重复;Modal 承载无页面标题才显示 */}
+        {allowSwitch ? null : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontWeight: 600, fontSize: 15 }}>
+            <span
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: 7,
+                background: 'linear-gradient(135deg,#a06bff,#1677ff)',
+                display: 'grid',
+                placeItems: 'center',
+              }}
+            >
+              🎨
+            </span>
+            {t('Creative Workshop')}
+          </div>
+        )}
         <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
           <Segmented
             size="small"
