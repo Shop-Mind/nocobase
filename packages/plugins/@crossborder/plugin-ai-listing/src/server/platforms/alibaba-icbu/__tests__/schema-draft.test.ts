@@ -381,4 +381,43 @@ describe('buildDraftXml', () => {
     expect(notes.join('；')).toContain('已剔除');
     expect(notes.join('；')).toContain('仅带入前 4 档');
   });
+
+  it('阶梯价相等档剔除（平台 CHK_STEP_PRICE 要求严格递减，等价档也会被拒）', () => {
+    const payload = {
+      ...PAYLOAD,
+      ladder: [
+        { minQuantity: 50, price: 6.99 },
+        { minQuantity: 500, price: 6.99 }, // 与前档等价 → 剔除
+        { minQuantity: 2000, price: 5.99 },
+      ],
+    };
+    const { xml, notes } = buildDraftXml(payload, SCHEMA_XML);
+    expect(xml).toContain('<field id="ladderPrice_1" type="complex">');
+    expect(xml).not.toContain('<field id="ladderPrice_2"');
+    expect(xml).not.toContain('<value>500</value>');
+    expect(xml).toContain('<value>2000</value>');
+    expect(notes.join('；')).toContain('已剔除');
+  });
+});
+
+describe('SKU 平台判重（解析值不区分大小写）', () => {
+  it('green/Green 大小写变体解析到同一平台值：SKU 合并、saleProp 不重复、库存求和', () => {
+    const payload: PublishPayload = {
+      ...PAYLOAD,
+      variants: [
+        { sku: 'g1', attrs: [{ name: 'color', value: 'green' }], stock: 10, price: 6 },
+        { sku: 'g2', attrs: [{ name: 'color', value: 'Green' }], stock: 5, price: 7 },
+        { sku: 'w1', attrs: [{ name: 'color', value: 'White' }], stock: 3, price: 6 },
+      ],
+    };
+    const { xml, notes } = buildDraftXml(payload, SCHEMA_XML);
+    // 3 变体 → 2 个 SKU（green/Green 合并）
+    expect((xml.match(/<complex-values>/g) || []).length).toBe(2);
+    // saleProp 只保留首个写法 green,不再出现 Green 的独立值
+    expect((xml.match(/inputValue="green"/g) || []).length).toBe(1);
+    expect(xml).not.toContain('inputValue="Green"');
+    // 合并后库存求和 10+5=15(multiInput 仓库格式)
+    expect(xml).toContain('warehouseCode="CN_LOCAL_01">15</value>');
+    expect(notes.join('；')).toContain('已合并');
+  });
 });

@@ -292,8 +292,9 @@ function normalizeLadder(
   }
   const kept: Array<{ quantity: number; price: number }> = [];
   for (const t of [...byQty.values()].sort((a, b) => a.quantity - b.quantity)) {
-    if (kept.length && t.price > kept[kept.length - 1].price) {
-      notes.push(`阶梯价「≥${t.quantity}」档价格高于前一档，已剔除（平台要求价格随数量增加而不升）`);
+    // 平台 CHK_STEP_PRICE_PRICE_VALUE_ERROR 要求档价严格递减,价格相等的档也会被拒,一并剔除
+    if (kept.length && t.price >= kept[kept.length - 1].price) {
+      notes.push(`阶梯价「≥${t.quantity}」档价格未低于前一档，已剔除（平台要求价格随数量增加严格递减）`);
       continue;
     }
     kept.push(t);
@@ -420,22 +421,28 @@ export function buildDraftXml(payload: PublishPayload, schemaXml: string, media?
         : []
     : [];
   if (priceTiers.length) {
-    const inner = priceTiers
+    // 平台校验的是折算 USD 保留两位后的档价(严格递减):汇率换算舍入可能把相邻档抹平,按最终写入值再过一遍
+    const emitted: Array<{ quantity: number; usd: string }> = [];
+    for (const t of priceTiers) {
+      const usd = toUsd(t.price).toFixed(2);
+      if (emitted.length && Number(usd) >= Number(emitted[emitted.length - 1].usd)) {
+        notes.push(`阶梯价「≥${t.quantity}」档折算后（$${usd}）未低于前一档，已剔除（平台要求严格递减）`);
+        continue;
+      }
+      emitted.push({ quantity: t.quantity, usd });
+    }
+    const inner = emitted
       .map(
         (t, i) =>
           `<field id="ladderPrice_${i}" type="complex"><complex-value>` +
           `<field id="quantity" type="input"><value>${t.quantity}</value></field>` +
-          `<field id="price" type="input"><value>${toUsd(t.price).toFixed(2)}</value></field>` +
+          `<field id="price" type="input"><value>${t.usd}</value></field>` +
           `</complex-value></field>`,
       )
       .join('');
     parts.push(`<field id="ladderPrice" type="complex"><complex-value>${inner}</complex-value></field>`);
     if (ladderTiers.length > 1) {
-      notes.push(
-        `阶梯价 ${priceTiers.length} 档随草稿写入：${priceTiers
-          .map((t) => `≥${t.quantity}→$${toUsd(t.price).toFixed(2)}`)
-          .join('、')}`,
-      );
+      notes.push(`阶梯价 ${emitted.length} 档随草稿写入：${emitted.map((t) => `≥${t.quantity}→$${t.usd}`).join('、')}`);
     }
   }
 
@@ -720,7 +727,8 @@ function buildSaleAndSku(
   let nextCustomId = -1;
   const idOf = new Map<string, { id: string; label: string } | null>();
   const resolveValue = (field: SchemaField, label: string): { id: string; label: string } | null => {
-    const key = `${field.id}${label}`;
+    // 缓存键按小写归一:平台选项匹配不区分大小写,同一字段下 green/Green 必须解析到同一个值(含自定义负数编号),否则平台按解析值判重报 Duplicate SKU values
+    const key = `${field.id}${label.toLowerCase()}`;
     if (idOf.has(key)) return idOf.get(key) ?? null;
     const opt = field.options.find((o) => o.name.toLowerCase() === label.toLowerCase());
     let resolved: { id: string; label: string } | null = null;
@@ -731,22 +739,48 @@ function buildSaleAndSku(
     return resolved;
   };
 
-  // saleProp：每字段列全部去重值；带色卡的维度（变体图所在维度）value 加 img 属性。每字段上限 40 值。
+  // 平台按解析后的规格值组合判重:源站 green/Green 这类大小写变体解析到同一平台值,必须按解析结果二次合并
+  // （库存求和、售价取低、编码/色卡取首个非空），否则平台报 PUB_BIZCHECK_PRODUCT_SKU_INVALID（Duplicate SKU values）。
+  const byResolvedCombo = new Map<string, (typeof aligned)[number]>();
+  for (const row of aligned) {
+    const combo = matched
+      .map(({ field }, di) => {
+        const r = resolveValue(field, row.labels[di]);
+        return r ? `${field.id}=${r.id}` : `${field.id}=${row.labels[di]}`;
+      })
+      .join('|');
+    const exist = byResolvedCombo.get(combo);
+    if (!exist) {
+      byResolvedCombo.set(combo, row);
+      continue;
+    }
+    exist.stock += row.stock;
+    if (row.price != null && row.price > 0 && (exist.price == null || row.price < exist.price)) exist.price = row.price;
+    if (!exist.sku && row.sku) exist.sku = row.sku;
+    if (!exist.imageUrl && row.imageUrl) exist.imageUrl = row.imageUrl;
+  }
+  const rows = [...byResolvedCombo.values()];
+  if (rows.length !== aligned.length) {
+    notes.push(`${aligned.length - rows.length} 个规格组合与其他变体解析为同一平台值（如大小写差异），已合并`);
+  }
+
+  // saleProp：每字段列全部去重值（按解析后的平台值 ID 去重，保留首个写法）；带色卡的维度（变体图所在维度）
+  // value 加 img 属性。每字段上限 40 值。
   const salePropInner = matched
     .map(({ field, dim }, di) => {
-      const seen = new Map<string, string | undefined>();
-      for (const row of aligned) {
+      const seen = new Map<string, { label: string; img?: string }>();
+      for (const row of rows) {
         const label = row.labels[di];
-        if (!seen.has(label)) seen.set(label, di === 0 ? row.imageUrl : undefined);
+        const r = resolveValue(field, label);
+        if (!r || seen.has(r.id)) continue;
+        seen.set(r.id, { label, img: di === 0 ? row.imageUrl : undefined });
       }
       const entries = [...seen.entries()].slice(0, 40);
       if (seen.size > 40) notes.push(`销售属性「${dim}」超过平台 40 个值上限，仅带入前 40 个`);
       const values = entries
-        .map(([label, img]) => {
-          const r = resolveValue(field, label);
-          if (!r) return '';
-          return `<value${img ? ` img="${escXml(img)}"` : ''} inputValue="${escXml(label)}">${r.id}</value>`;
-        })
+        .map(
+          ([id, v]) => `<value${v.img ? ` img="${escXml(v.img)}"` : ''} inputValue="${escXml(v.label)}">${id}</value>`,
+        )
         .join('');
       return values ? `<field id="${field.id}" type="multiCheck"><values>${values}</values></field>` : '';
     })
@@ -758,8 +792,8 @@ function buildSaleAndSku(
   // 定价模式：设了发布阶梯（ladderMode）→ 阶梯价优先（平台上阶梯价与规格价二选一）；
   // 否则类目支持 SKU 规格价（scPrice 选项含 3）且全部 SKU 有正售价 → 逐 SKU price（USD）。
   const supportsSkuPricing = !!byId.get('scPrice')?.options.some((o) => o.value === '3');
-  const skuPricing = !ladderMode && supportsSkuPricing && aligned.every((r) => r.price != null && r.price > 0);
-  if (aligned.some((r) => r.price != null && r.price > 0) && !skuPricing) {
+  const skuPricing = !ladderMode && supportsSkuPricing && rows.every((r) => r.price != null && r.price > 0);
+  if (rows.some((r) => r.price != null && r.price > 0) && !skuPricing) {
     notes.push(
       ladderMode
         ? '已设置发布阶梯价，SKU 售价未带入（平台上阶梯价与规格价二选一；清空阶梯后重发可走规格价）'
@@ -771,7 +805,7 @@ function buildSaleAndSku(
 
   // sku 矩阵：官方 multiComplex 格式（每 SKU 一个 complex-values，字段直挂）。
   const skuRows: string[] = [];
-  for (const row of aligned) {
+  for (const row of rows) {
     const props = matched
       .map(({ field }, di) => {
         const r = resolveValue(field, row.labels[di]);
