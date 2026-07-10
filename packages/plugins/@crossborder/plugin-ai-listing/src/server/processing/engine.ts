@@ -304,10 +304,20 @@ export function applyRule(
       .filter((t) => Number.isInteger(t.minQuantity) && t.minQuantity > 0 && Number.isFinite(t.price) && t.price > 0)
       .sort((a, b) => a.minQuantity - b.minQuantity);
     if (srcLadder.length >= 2) {
-      const ladderTarget = srcLadder.map((t) => ({
-        minQuantity: t.minQuantity,
-        price: convertPrice(t.price, priceCfg, t.currency || product.currencyOriginal).price,
-      }));
+      // 逐档换算后必须严格递减(平台 CHK_STEP_PRICE 校验,相等档也被拒):.99 尾数策略会把相邻成本档抹平
+      // (6.3/6.0 都变 6.99)。撞档的档位退回精确两位小数换算保住档数;仍不低于前一档时压到前一档 -0.01。
+      const ladderTarget: Array<{ minQuantity: number; price: number }> = [];
+      for (const t of srcLadder) {
+        const cur = t.currency || product.currencyOriginal;
+        let price = convertPrice(t.price, priceCfg, cur).price;
+        const prev = ladderTarget[ladderTarget.length - 1]?.price;
+        if (prev != null && price >= prev) {
+          price = convertPrice(t.price, { ...priceCfg, ending: '' }, cur).price;
+        }
+        if (prev != null && price >= prev) price = Math.round((prev - 0.01) * 100) / 100;
+        if (price <= 0) continue;
+        ladderTarget.push({ minQuantity: t.minQuantity, price });
+      }
       patch.ladderTarget = ladderTarget;
       changes.push({
         stage: STAGES.priceConvert,

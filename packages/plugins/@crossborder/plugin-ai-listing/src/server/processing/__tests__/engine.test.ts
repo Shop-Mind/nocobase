@@ -155,6 +155,30 @@ describe('processing engine — 专业化规则', () => {
       ]);
     });
 
+    it('.99 尾数把相邻成本档抹平时保档不丢：撞档退回两位小数换算，全程严格递减', () => {
+      const r = applyRule(
+        {
+          ...baseProduct,
+          currencyOriginal: 'USD',
+          priceOriginal: 6.3,
+          ladderOriginal: [
+            { minQuantity: 50, price: 6.3, currency: 'USD' },
+            { minQuantity: 500, price: 6.0, currency: 'USD' },
+            { minQuantity: 2000, price: 5.8, currency: 'USD' },
+          ],
+        },
+        { price: { fromCurrency: 'USD', toCurrency: 'USD', rate: 1, markupPct: 0, ending: '.99' } },
+        [],
+        't',
+      );
+      // 6.3→6.99;6.0 套 .99 也是 6.99(撞档)→退回精确换算 6.00;5.8→5.99。三档保留且严格递减。
+      expect(r.patch.ladderTarget).toEqual([
+        { minQuantity: 50, price: 6.99 },
+        { minQuantity: 500, price: 6.0 },
+        { minQuantity: 2000, price: 5.99 },
+      ]);
+    });
+
     it('源站固定价（无阶梯或仅单档）不生成 ladderTarget，草稿保持固定价形态', () => {
       const none = applyRule(baseProduct, priceCfg, [], 't');
       expect(none.patch.ladderTarget).toBeUndefined();
