@@ -569,5 +569,12 @@
   "Video model": "Video model",
   "Text-to-video needs no source image — describe the scene in the prompt below.": "Text-to-video needs no source image — describe the scene in the prompt below.",
   "Describe the video you want first": "Describe the video you want first",
-  "Text to video": "Text to video"
+  "Text to video": "Text to video",
+  "Quick templates": "Quick templates",
+  "Smart suggest (recommended)": "Smart suggest (recommended)",
+  "Product detail showcase": "Product detail showcase",
+  "Usage demonstration": "Usage demonstration",
+  "360° panorama showcase": "360° panorama showcase",
+  "Lifestyle & outfit showcase": "Lifestyle & outfit showcase",
+  "AI is composing recommendations — one moment…": "AI is composing recommendations — one moment…"
 }

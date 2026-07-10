@@ -496,43 +496,45 @@
 
 ---
 
-## 增量 · 智能视频对齐 + 视频线路复活（2026-07-10 用户反馈,截图实测阿里场景视频面板）
+## 增量 · 智能视频对齐 + grok 视频线路接通（2026-07-10 用户反馈；两会话并行提交已合并为本节）
 
-用户给出阿里「场景视频生成」真实截图(WB-1 待实测项就此落定):上传商品图(小缩略)→ 模版风格选择
-(**推荐提示词/自定义模版两 tab**)→ 提示词描述 → 时长 → 生成。对齐改造 + 三点反馈全部落地:
+用户拿阿里「场景视频生成」真实截图(#66/#69)对齐(WB-1 待实测项就此落定),三点反馈全部落地:
 - **源图改小**:VideoPane 大网格 → 64px 横排缩略条(与图片 tab/阿里一致)。
-- **视频版模版风格选择两 tab**:推荐提示词 = suggest 三级链加 `scene='video'` 分支(短视频导演人格,
-  40-90 字含镜头运动/光影,parsePrompts 上限放宽 160;实测 deepseek-v4-flash 13s 出 3 条高质量运镜文案)
-  + **模型可选下拉**(listModels task=chat);自定义模版 = W2 模版体系 scene='video'(点卡填充/新建/删除)。
-- **模型可选**(用户点名):新 action `listModels`(按 capability task 过滤);视频生成模型下拉(video_gen)+
-  推荐词模型下拉(chat),suggestPrompts/generateVideo 都支持显式 llmService/model。
-- **🎉 视频线路复活(grok imagine)**:generateVideo 显式模型分支走 plugin-ai 通用媒体通道
-  (video_gen chat 形状;media-task 超时 video_gen 放宽 600s——首测 180s 超时即此因)、后台推进不阻塞 HTTP
-  (立即回 jobId,pollVideoJob 对无 providerTaskId 的任务按 job 状态即答,前端轮询零改动)。
-  **实测:i2v 45s 出片(2MB mp4 落库)、t2v 纯文生 45s 也成**;「文生视频」模式就此启用(自动选 imagine 系
-  模型,无源图,prompt 必填)。视频模型默认选中 grok(当前唯一活线路;DashScope Key 恢复后可随时切换)。
-- 现状与遗留:DashScope Key 仍 blocked(`API-key is blocked`,自动线路/万相 i2v 待换 Key);
-  **首尾帧/数字人**需专用端点(万相 first-last-frame / 数字人产品),继续占位。
+- **模版风格选择两 tab**:推荐提示词 = suggest 三级链加 `scene='video'` 分支(短视频导演人格,40-90 字
+  含镜头运动/光影,parsePrompts 上限放宽 160;实测 deepseek 13-21s 出 3 条高质量运镜文案);自定义模版 =
+  W2 模版体系 scene='video'(mine 列表/点卡填充/新建/删除)。
+- **模型可选**(用户点名):新 action `listModels`(按 capability task 过滤+去重);视频生成模型下拉
+  (video_gen)+ 推荐词模型下拉(chat),suggestPrompts/generateVideo 均支持显式 llmService/model。
+- **🎉 grok 视频线路接通(视频从此可用)**:generateVideo 显式模型分支走 plugin-ai 通用媒体通道
+  (video_gen chat/completions 形状;media-task 超时 video_gen 放宽 600s——首测 180s 超时即此因)、
+  **后台推进不阻塞 HTTP**(立即回 jobId,pollVideoJob 对无 providerTaskId 的任务按 job 状态即答,前端轮询
+  零改动)。实测 grok-imagine-video:i2v 42-54s/条、t2v 43s,720×1280 h264 带音轨落库;用户从 UI 发起的
+  两次也全部成功。**文生视频模式(t2v)就此启用**(无源图,提示词必填);视频模型下拉默认优先 grok
+  (DashScope Key 被封期间开箱即用,Key 恢复后可切「自动」走万相异步任务)。首尾帧/数字人仍占位(需专用端点)。
 - 测试:media-task 25/25、video 9/9;实测 i2v job1879/t2v job1880 全链路(提交→轮询→mp4 落库→净零弃用);
-  UI 探针:缩略条 35 张小图、两 tab、双模型下拉、t2v 提示+自动选模全绿。
+  UI 探针:缩略条 35 张小图/两 tab/推荐词 AI 标+模型下拉/视频模型默认 grok/t2v 隐藏源图区,全绿。
+
+**⚠️ 线路波动记录(2026-07-10 上午)**:09:22 起 grok 视频上游连续 500(150-183s 后失败,与图/提示词/我方
+代码无关;期间账号级并发报错 "too many media generations in progress",图片视频共享额度)——中转侧故障,
+诊断法:t2i 探针 2s 便宜逼出完整报错。同账号 t2i 09:43 恢复。
 
 ---
 
-## 增量 · 智能视频 tab 对齐 + grok 视频线路接通（2026-07-10 用户反馈）
+## 增量 · 视频快捷模板（2026-07-10 用户反馈,参考旧版「视频参数设置」弹窗）
 
-用户拿阿里「场景视频生成」真实截图(#66/#69)对齐:①源图大网格改 64px 横排缩略条;②加「模版风格选择」
-两 tab——推荐提示词(scene='video' 走三级链,deepseek 按标题产带镜头语言的运镜文案,40-90 字,parsePrompts
-放宽 160)+ 自定义模版(scene='video' 复用 W2 模版体系:mine 列表/点卡填充/新建/删除);③提示词模型与
-视频模型都可显式选择(新 action `listModels` 按 task 过滤+去重;suggestPrompts/generateVideo 均支持
-llmService/model 显式入参)。
+用户要求把旧版商品视频的「快捷模板」搬进智能视频 tab 并按专业电商产品视频优化。落地:
+- **快捷模板 chip 行**(提示词框上方,i2v/t2v 两模式都有):`智能推理(推荐)` + 4 个专业运镜预设
+  (商品细节展示/功能使用演示/旋转全景展示/场景穿搭展示,与旧版同名)。预设话术按专业电商视频重写,
+  每条都带商品保护约束(真实/不变形/外观一致)——图生视频最常见的翻车是商品被模型改样。
+- **智能推理 = 推荐词三级链同源**:点击填入 AI 推荐词首条;已是推荐词时再点循环换下一条;未出词现场拉一次;
+  加载中点击给 toast 不落空。其余预设点击整填提示词、再点取消,可再手改。fetchRecos 改为返回词表
+  (供 applySmart 直接消费,避免旧闭包)。
+- i18n +7 键(en/zh 578 对齐);a11y:chips 可 Tab 聚焦 + Enter 触发。
 
-**grok 视频线路接通(视频从此可用)**:generateVideo 增显式模型分支——非 DashScope 模型经 plugin-ai
-通用媒体通道(chat/completions 形状)同步等待,产物下载落库建视频候选,job 同步记 success/failed;
-`textToVideo` 支持纯文生视频。实测 grok-imagine-video:i2v 42-54s/条、t2v 43s,720×1280 h264 带音轨,
-用户从 UI 发起的两次也全部成功。**文生视频模式(t2v)就此启用**(无源图,提示词必填);视频模型下拉默认
-优先 grok(DashScope Key 被封期间开箱即用,Key 恢复后可切「自动」走万相异步任务)。首尾帧/数字人仍占位
-(需专用端点)。video.test.ts 9/9 无回归;浏览器探针:小缩略条 35 张/两 tab/推荐词 AI 标+模型下拉/
-视频模型默认 grok/t2v 隐藏源图区,全绿。
+**✅ 验收记录(2026-07-10)**:UI 探针全绿——5 chips 渲染(智能推理紫色选中态)/点「商品细节展示」整填、
+再点清空/智能推理填入 deepseek 真 AI 运镜词且再点循环换词/t2v 模式同样 5 chips/0 控制台报错;截图确认
+布局与旧版弹窗同构(chips 行在提示词框上方)。真实出片验证依赖 grok 视频线路(上午故障中),线路恢复后
+用「旋转全景展示」模板补一条 i2v 即闭环。
 
 ---
 

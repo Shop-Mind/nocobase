@@ -569,5 +569,12 @@
   "Video model": "视频模型",
   "Text-to-video needs no source image — describe the scene in the prompt below.": "文生视频无需源图,直接在下方提示词里描述画面即可。",
   "Describe the video you want first": "先在提示词里描述想要的视频画面",
-  "Text to video": "文生视频"
+  "Text to video": "文生视频",
+  "Quick templates": "快捷模板",
+  "Smart suggest (recommended)": "智能推理（推荐）",
+  "Product detail showcase": "商品细节展示",
+  "Usage demonstration": "功能使用演示",
+  "360° panorama showcase": "旋转全景展示",
+  "Lifestyle & outfit showcase": "场景穿搭展示",
+  "AI is composing recommendations — one moment…": "AI 推荐词生成中，请稍候…"
 }

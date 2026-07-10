@@ -59,6 +59,36 @@ const DURATIONS = [3, 5];
 const RESOLUTIONS = ['720P', '1080P'];
 const POLL_MS = 5000;
 
+// 快捷模板(对齐旧版「视频参数设置」弹窗的快捷模板,话术按专业电商产品视频重写):点击整填提示词,可再手改。
+// 每条都带商品保护约束(真实/不变形/外观一致)——图生视频最常见的翻车是商品被模型改样。
+// 「智能推理(推荐)」不在此列:它复用推荐提示词三级链(看图/看标题),在组件内单独处理。
+const QUICK_TEMPLATES: Array<{ key: string; labelKey: string; prompt: string }> = [
+  {
+    key: 'detail',
+    labelKey: 'Product detail showcase',
+    prompt:
+      '微距特写镜头沿商品表面缓慢平移,逐一展示材质纹理、缝线与工艺细节,焦点精准,柔和棚拍侧光,背景虚化,商品保持真实不变形',
+  },
+  {
+    key: 'usage',
+    labelKey: 'Usage demonstration',
+    prompt:
+      '真人手部自然入镜,演示商品核心使用方式,动作流畅清晰,中景切换特写,明亮生活化光线,突出使用效果与便利性,商品保持真实原貌',
+  },
+  {
+    key: 'rotate',
+    labelKey: '360° panorama showcase',
+    prompt:
+      '商品置于纯色摄影棚背景中央,360度匀速旋转完整展示各个角度,专业三点布光,台面倒影细腻,画面稳定无抖动,商品比例真实',
+  },
+  {
+    key: 'lifestyle',
+    labelKey: 'Lifestyle & outfit showcase',
+    prompt:
+      '真实生活场景中自然使用与穿搭商品,镜头缓慢环绕或平滑跟随,氛围光影层次丰富,突出上身与使用效果,商品外观细节保持一致',
+  },
+];
+
 type JobState = 'idle' | 'running' | 'success' | 'failed';
 
 export function VideoPane({ app, productId, sources, loadingSources, t }: VideoPaneProps) {
@@ -117,10 +147,11 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
     refresh();
   }, [refresh]);
 
-  // 推荐提示词(视频运镜创意,scene='video' 走 suggest 三级链):选中源图变化即重新出词
-  const fetchRecos = useCallback(async () => {
+  // 推荐提示词(视频运镜创意,scene='video' 走 suggest 三级链):选中源图变化即重新出词。
+  // 返回本次拿到的词列表,供「智能推理」快捷模板直接消费(避免读 state 的旧闭包)。
+  const fetchRecos = useCallback(async (): Promise<string[]> => {
     const src = sources.find((x) => x.key === sel);
-    if (!src) return;
+    if (!src) return [];
     setRecosLoading(true);
     const [recoSvc, recoModel] = recoModelKey ? recoModelKey.split(/:(.+)/) : [undefined, undefined];
     const res = await callMediaApi<{
@@ -141,8 +172,26 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
       setRecos(res.data.prompts || []);
       setRecosBasis(res.data.basis || (res.data.fallback ? 'static' : 'image'));
       setRecosModel(res.data.model || null);
+      return res.data.prompts || [];
     }
+    return [];
   }, [app, sources, sel, recoModelKey]);
+
+  // 快捷模板「智能推理(推荐)」:填入 AI 推荐词首条;已是推荐词时再点循环换下一条;还没出词就现场拉一次
+  const applySmart = useCallback(async () => {
+    if (recosLoading) {
+      message.info(t('AI is composing recommendations — one moment…'));
+      return;
+    }
+    let list = recos;
+    if (!list.length) list = await fetchRecos();
+    if (!list.length) {
+      message.warning(t('No recommendations — enter manually below'));
+      return;
+    }
+    const idx = list.indexOf(prompt);
+    setPrompt(list[(idx + 1) % list.length]);
+  }, [recos, recosLoading, prompt, fetchRecos, message, t]);
 
   useEffect(() => {
     if (sel) fetchRecos();
@@ -670,6 +719,37 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
               ]}
             />
           </div>
+        </div>
+
+        {/* 快捷模板(参考旧版视频参数设置):智能推理=推荐词三级链;其余为专业运镜预设,点击整填、再点取消 */}
+        <div style={{ marginBottom: 6 }}>
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            ⚡ {t('Quick templates')}
+          </Typography.Text>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }} data-testid="ws-video-quick-tpl">
+          <Tag.CheckableTag
+            checked={Boolean(prompt) && recos.includes(prompt)}
+            onChange={() => applySmart()}
+            tabIndex={0}
+            onKeyDown={(e) => (e.key === 'Enter' ? applySmart() : undefined)}
+            style={{ border: '1px solid #d3adf7', borderRadius: 14, padding: '2px 10px', fontSize: 12 }}
+          >
+            🪄 {t('Smart suggest (recommended)')}
+            {recosLoading ? ' …' : ''}
+          </Tag.CheckableTag>
+          {QUICK_TEMPLATES.map((q) => (
+            <Tag.CheckableTag
+              key={q.key}
+              checked={prompt === q.prompt}
+              onChange={(on) => setPrompt(on ? q.prompt : '')}
+              tabIndex={0}
+              onKeyDown={(e) => (e.key === 'Enter' ? setPrompt(prompt === q.prompt ? '' : q.prompt) : undefined)}
+              style={{ border: '1px solid #e5e7eb', borderRadius: 14, padding: '2px 10px', fontSize: 12 }}
+            >
+              {t(q.labelKey)}
+            </Tag.CheckableTag>
+          ))}
         </div>
 
         {/* 提示词描述(对齐阿里;含运镜/画面要求) */}
