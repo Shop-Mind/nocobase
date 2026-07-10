@@ -577,5 +577,5 @@
   "360° panorama showcase": "360° panorama showcase",
   "Lifestyle & outfit showcase": "Lifestyle & outfit showcase",
   "AI is composing recommendations — one moment…": "AI is composing recommendations — one moment…",
-  "This model decides clip length itself (~6s)": "This model decides clip length itself (~6s)"
+  "This model line ignores duration and resolution — fixed output ~6s · 720×1280 portrait": "This model line ignores duration and resolution — fixed output ~6s · 720×1280 portrait"
 }

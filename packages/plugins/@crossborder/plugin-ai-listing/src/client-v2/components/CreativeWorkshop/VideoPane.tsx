@@ -212,15 +212,8 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
     loadMyTpls();
   }, [loadMyTpls]);
 
-  // 默认选中 imagine 系视频模型(当前唯一实测可用线路;DashScope Key 恢复后用户可随时切换):
-  // t2v 更是必须显式模型(「自动」是 dashscope i2v 原生流,不支持无图)
-  useEffect(() => {
-    if (!videoModelKey && videoModels.length) {
-      const imagine = videoModels.find((m) => /imagine/i.test(m.model)) || videoModels[0];
-      setVideoModelKey(`${imagine.llmService}:${imagine.model}`);
-    }
-  }, [videoModelKey, videoModels]);
-
+  // 默认选中只在模型列表加载完成时做一次(load() 里 prev || …):这里绝不能再放「videoModelKey 为空就回填」
+  // 的 effect——那会把用户手选的「自动选模型」('')瞬间弹回 grok,导致自动线永远选不上
   useEffect(() => {
     const load = async () => {
       const vm = await callMediaApi<{ models: Array<{ llmService: string; model: string; label: string }> }>(
@@ -376,6 +369,8 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
   );
 
   const activeMode = VIDEO_MODES.find((m) => m.key === mode) || VIDEO_MODES[0];
+  // imagine 系(grok)经 chat 形状调用,时长/分辨率参数无通道送达模型:控件置灰,固定输出 ~6s·720×1280
+  const imagineFixed = /grok|imagine/i.test(videoModelKey);
 
   return (
     <div style={{ display: 'flex', minHeight: 560 }}>
@@ -735,7 +730,8 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
           style={{ margin: '8px 0 16px' }}
         />
 
-        {/* 时长 + 分辨率 */}
+        {/* 时长 + 分辨率:imagine 系走 chat 形状,时长/分辨率参数无通道送达模型(固定 ~6s·720×1280),
+            两个控件置灰并说明,避免「选了 10s 却出 6s」的误导;万相线真透传,切模型即恢复可选 */}
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 16 }}>
           <div>
             <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
@@ -743,20 +739,21 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             </Typography.Text>
             <Segmented
               value={duration}
+              disabled={imagineFixed}
               onChange={(v) => setDuration(Number(v))}
               options={DURATIONS.map((d) => ({ value: d, label: `${d}s` }))}
             />
-            {/grok|imagine/i.test(videoModelKey) ? (
-              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
-                {t('This model decides clip length itself (~6s)')}
-              </Typography.Text>
-            ) : null}
           </div>
           <div>
             <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
               🖥️ {t('Resolution')}
             </Typography.Text>
-            <Segmented value={resolution} onChange={(v) => setResolution(String(v))} options={RESOLUTIONS} />
+            <Segmented
+              value={resolution}
+              disabled={imagineFixed}
+              onChange={(v) => setResolution(String(v))}
+              options={RESOLUTIONS}
+            />
           </div>
           <div style={{ minWidth: 220 }}>
             <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
@@ -775,6 +772,11 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             />
           </div>
         </div>
+        {imagineFixed ? (
+          <Typography.Text type="secondary" style={{ display: 'block', fontSize: 11, margin: '-8px 0 14px' }}>
+            ℹ️ {t('This model line ignores duration and resolution — fixed output ~6s · 720×1280 portrait')}
+          </Typography.Text>
+        ) : null}
 
         {/* 生成 + 进度态 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, borderTop: '1px solid #f0f0f0', paddingTop: 14 }}>

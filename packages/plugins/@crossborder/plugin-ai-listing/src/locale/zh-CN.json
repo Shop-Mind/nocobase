@@ -577,5 +577,5 @@
   "360° panorama showcase": "旋转全景展示",
   "Lifestyle & outfit showcase": "场景穿搭展示",
   "AI is composing recommendations — one moment…": "AI 推荐词生成中，请稍候…",
-  "This model decides clip length itself (~6s)": "该模型自行决定出片时长（约 6 秒）"
+  "This model line ignores duration and resolution — fixed output ~6s · 720×1280 portrait": "该模型线不接收时长/分辨率参数，固定输出约 6 秒 · 720×1280 竖版"
 }
