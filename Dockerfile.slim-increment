@@ -1,0 +1,24 @@
+# slim 运行镜像的增量发版(生产在用的路线):以线上 slim 镜像为基底,两个业务插件用本机构建好的 dist 直接覆盖。
+#
+# 为什么不用 Dockerfile.incremental(全量基底+镜像内构建):
+# 1. slim 镜像才是线上真实运行的代码快照;经全量旧镜像重建会把其余包回退,曾导致 plugin-mobile 客户端错配白屏。
+# 2. slim 裁掉了 devDependencies(无 ts-node),镜像内 yarn build 必失败。
+#
+# slim 布局:无 packages/,插件是 /app/nocobase/node_modules/<pkg> 下的真实目录;COPY 为合并语义,直接覆盖。
+# 不覆盖 CMD:沿用 slim 的 docker-entrypoint(容器内 :80 服务),compose/nginx 均按 :80 接线。
+#
+# 发版前必须:本机跑过 `yarn build @nocobase/plugin-ai` 与 `yarn build @crossborder/plugin-ai-listing`
+# (dist/node_modules 打包的运行时依赖要一起进构建上下文,tar 只排除插件根下的 node_modules)。
+#
+# 用法:
+#   docker build -f Dockerfile.slim-increment \
+#     --build-arg BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<线上slim tag> \
+#     -t registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<新tag> .
+ARG BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:v2-slim-001
+FROM ${BASE_IMAGE}
+
+# 多图 AI 成片依赖 ffmpeg 拼接段视频(流拷贝)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
+COPY packages/plugins/@nocobase/plugin-ai /app/nocobase/node_modules/@nocobase/plugin-ai
+COPY packages/plugins/@crossborder/plugin-ai-listing /app/nocobase/node_modules/@crossborder/plugin-ai-listing
