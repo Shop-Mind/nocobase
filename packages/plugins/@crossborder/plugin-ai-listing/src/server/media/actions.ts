@@ -161,9 +161,13 @@ export function setupMedia(plugin: Plugin): void {
         let models: Array<{ llmService: string; model: string; label: string }> = [];
         try {
           const svcs = (await ai?.aiManager?.listAllEnabledModels?.()) || [];
+          const seen = new Set<string>();
           for (const s of svcs) {
             for (const m of s.enabledModels) {
-              if (m.capability?.task === task) {
+              // 按 服务:模型 去重(用户配置里可能重复录入同一模型)
+              const key = `${s.llmService}:${m.value}`;
+              if (m.capability?.task === task && !seen.has(key)) {
+                seen.add(key);
                 models.push({
                   llmService: s.llmService,
                   model: m.value,

@@ -518,6 +518,24 @@
 
 ---
 
+## 增量 · 智能视频 tab 对齐 + grok 视频线路接通（2026-07-10 用户反馈）
+
+用户拿阿里「场景视频生成」真实截图(#66/#69)对齐:①源图大网格改 64px 横排缩略条;②加「模版风格选择」
+两 tab——推荐提示词(scene='video' 走三级链,deepseek 按标题产带镜头语言的运镜文案,40-90 字,parsePrompts
+放宽 160)+ 自定义模版(scene='video' 复用 W2 模版体系:mine 列表/点卡填充/新建/删除);③提示词模型与
+视频模型都可显式选择(新 action `listModels` 按 task 过滤+去重;suggestPrompts/generateVideo 均支持
+llmService/model 显式入参)。
+
+**grok 视频线路接通(视频从此可用)**:generateVideo 增显式模型分支——非 DashScope 模型经 plugin-ai
+通用媒体通道(chat/completions 形状)同步等待,产物下载落库建视频候选,job 同步记 success/failed;
+`textToVideo` 支持纯文生视频。实测 grok-imagine-video:i2v 42-54s/条、t2v 43s,720×1280 h264 带音轨,
+用户从 UI 发起的两次也全部成功。**文生视频模式(t2v)就此启用**(无源图,提示词必填);视频模型下拉默认
+优先 grok(DashScope Key 被封期间开箱即用,Key 恢复后可切「自动」走万相异步任务)。首尾帧/数字人仍占位
+(需专用端点)。video.test.ts 9/9 无回归;浏览器探针:小缩略条 35 张/两 tab/推荐词 AI 标+模型下拉/
+视频模型默认 grok/t2v 隐藏源图区,全绿。
+
+---
+
 ## WB · Backlog（另排期，不阻塞本轮）
 
 1. **智能视频 tab 对齐**：阿里 tab 内清单未确认——待你在真实后台截图后逐项对（候补功能池：营销视频/视频

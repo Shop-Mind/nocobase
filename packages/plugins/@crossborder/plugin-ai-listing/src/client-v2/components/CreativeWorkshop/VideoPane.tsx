@@ -177,7 +177,14 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
         'aiListingMedia:listModels',
         { task: 'video_gen' },
       );
-      if (vm.ok && vm.data?.models) setVideoModels(vm.data.models);
+      if (vm.ok && vm.data?.models) {
+        setVideoModels(vm.data.models);
+        // 默认优先 grok imagine(实测可用线路);否则首个。DashScope Key 恢复后可切回「自动」走万相异步任务
+        if (vm.data.models.length) {
+          const preferred = vm.data.models.find((m) => /grok|imagine/i.test(m.model)) || vm.data.models[0];
+          setVideoModelKey((prev) => prev || `${preferred.llmService}:${preferred.model}`);
+        }
+      }
       const cm = await callMediaApi<{ models: Array<{ llmService: string; model: string; label: string }> }>(
         app,
         'aiListingMedia:listModels',
@@ -376,7 +383,7 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
       {/* 中:图生视频表单 */}
       <div style={{ flex: 1, minWidth: 0, padding: '18px 22px', borderRight: '1px solid #f0f0f0', overflowY: 'auto' }}>
         <Typography.Title level={4} style={{ margin: '0 0 4px' }}>
-          🎬 {t('Image to video')} <Tag color="purple">{t('Advanced tier')}</Tag>
+          🎬 {mode === 't2v' ? t('Text to video') : t('Image to video')} <Tag color="purple">{t('Advanced tier')}</Tag>
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 16 }}>
           {t('Turn a product image into a short dynamic showcase video.')}
