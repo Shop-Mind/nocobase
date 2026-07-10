@@ -709,27 +709,38 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
           </Typography.Text>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }} data-testid="ws-video-quick-tpl">
-          <Tag.CheckableTag
-            checked={Boolean(prompt) && recos.includes(prompt)}
-            onChange={() => applySmart()}
+          {/* CheckableTag 类型不收 tabIndex/onKeyDown,键盘可达性放外层 span */}
+          <span
+            role="button"
             tabIndex={0}
             onKeyDown={(e) => (e.key === 'Enter' ? applySmart() : undefined)}
-            style={{ border: '1px solid #d3adf7', borderRadius: 14, padding: '2px 10px', fontSize: 12 }}
+            style={{ display: 'inline-block' }}
           >
-            🪄 {t('Smart suggest (recommended)')}
-            {recosLoading ? ' …' : ''}
-          </Tag.CheckableTag>
-          {QUICK_TEMPLATES.map((q) => (
             <Tag.CheckableTag
+              checked={Boolean(prompt) && recos.includes(prompt)}
+              onChange={() => applySmart()}
+              style={{ border: '1px solid #d3adf7', borderRadius: 14, padding: '2px 10px', fontSize: 12 }}
+            >
+              🪄 {t('Smart suggest (recommended)')}
+              {recosLoading ? ' …' : ''}
+            </Tag.CheckableTag>
+          </span>
+          {QUICK_TEMPLATES.map((q) => (
+            <span
               key={q.key}
-              checked={prompt === q.prompt}
-              onChange={(on) => setPrompt(on ? q.prompt : '')}
+              role="button"
               tabIndex={0}
               onKeyDown={(e) => (e.key === 'Enter' ? setPrompt(prompt === q.prompt ? '' : q.prompt) : undefined)}
-              style={{ border: '1px solid #e5e7eb', borderRadius: 14, padding: '2px 10px', fontSize: 12 }}
+              style={{ display: 'inline-block' }}
             >
-              {t(q.labelKey)}
-            </Tag.CheckableTag>
+              <Tag.CheckableTag
+                checked={prompt === q.prompt}
+                onChange={(on) => setPrompt(on ? q.prompt : '')}
+                style={{ border: '1px solid #e5e7eb', borderRadius: 14, padding: '2px 10px', fontSize: 12 }}
+              >
+                {t(q.labelKey)}
+              </Tag.CheckableTag>
+            </span>
           ))}
         </div>
 

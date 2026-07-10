@@ -1,12 +1,17 @@
-# 日常发版增量镜像:基于上一版全量镜像,只重编本次发版改动的插件(约 3-6 分钟)。
+# 日常发版增量镜像:基于上一版**全量**镜像,重编本次发版改动的插件(约 3-6 分钟)。
 # 适用:仅改动 plugin-ai / plugin-ai-listing 源码的常规发布(改核心框架/升级依赖时用 Dockerfile.aliyun 全量重建)。
-# 注意:plugin-ai 必须完整构建(含 dts)——它的 dist d.ts 是 ai-listing 声明构建的上游依赖;构建顺序也因此固定。
+#
+# ⚠️ BASE_IMAGE 必须用全量镜像(如 v2-20260704-007),不能用 slim(如 v2-slim-001):
+# slim 裁掉了 devDependencies(含 ts-node),任何 in-image `yarn build` 都会报
+# "Please install all dependencies" 直接退出。slim 只能作运行镜像,不能作构建基底。
+#
+# plugin-ai 必须完整构建(含 dts)——它的 dist d.ts 是 ai-listing 声明构建的上游依赖;构建顺序因此固定。
 #
 # 用法:
 #   docker build -f Dockerfile.incremental \
-#     --build-arg BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<上一版tag> \
+#     --build-arg BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<上一版全量tag> \
 #     -t registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:<新tag> .
-ARG BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:v2-20260703-001
+ARG BASE_IMAGE=registry.cn-shenzhen.aliyuncs.com/wuzhixuan/nocobase:v2-20260704-007
 FROM ${BASE_IMAGE}
 WORKDIR /app/nocobase
 
