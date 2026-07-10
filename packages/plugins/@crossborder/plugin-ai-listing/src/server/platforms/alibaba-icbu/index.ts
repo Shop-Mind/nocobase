@@ -10,6 +10,9 @@
 // Alibaba.com（1688 国际站 / ICBU）连接器。IOP 家族，走 openapi/ 传输层。
 // OAuth 三方法 delegate 到 openapi/oauth（已真机验证）。fetchProduct 用 /alibaba/icbu/product/get/v2 拉真实商品。
 
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import { parseAlibabaProductId } from '../../adapters';
 import { callIop, callIopUpload, type IopParamValue } from '../../openapi/iop-client';
 import { friendlyMessage, OpenApiError } from '../../openapi/errors';
@@ -84,7 +87,7 @@ const PHOTOBANK_MAX_BYTES = 5 * 1024 * 1024;
 // 把源站图片搬进卖家自己的图片银行：平台发布不接受外链图（即使是 alicdn，属别家卖家资产），
 // 必须先经 photobank.upload 落自己图片银行，再用返回的 photobank_url 发布。
 // 逐张处理：拉源图字节 → 上传 → 换 URL；单张失败保留原 URL 并记 notes（不阻断整单发布）。
-async function uploadImagesToPhotobank(
+export async function uploadImagesToPhotobank(
   cfg: ReturnType<typeof getIopConfig>,
   accessToken: string,
   urls: string[],
@@ -96,9 +99,15 @@ async function uploadImagesToPhotobank(
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
     try {
-      const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
-      if (!resp.ok) throw new Error(`源图下载失败 HTTP ${resp.status}`);
-      const buf = new Uint8Array(await resp.arrayBuffer());
+      // 采纳的 AI 图常是本地存储相对路径(/storage/uploads/...):直接读文件;相对 URL 交给 fetch 必抛 URL 解析错误
+      let buf: Uint8Array;
+      if (/^https?:\/\//i.test(url)) {
+        const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
+        if (!resp.ok) throw new Error(`源图下载失败 HTTP ${resp.status}`);
+        buf = new Uint8Array(await resp.arrayBuffer());
+      } else {
+        buf = new Uint8Array(await readFile(path.join(process.cwd(), url.split('?')[0].replace(/^\//, ''))));
+      }
       if (buf.byteLength > PHOTOBANK_MAX_BYTES) throw new Error('源图超过 5MB 上限');
       const ext = (url.match(/\.(jpe?g|png|webp)(?:_|$|\?)/i)?.[1] || 'jpg').toLowerCase();
       const fileName = `ai-listing-${Date.now()}-${i}.${ext === 'webp' ? 'jpg' : ext}`;
@@ -151,6 +160,15 @@ async function uploadVideoToBank(
   videoName: string,
   notes: string[],
 ): Promise<string | undefined> {
+  // 采纳的 AI 视频是本地存储相对路径:video/upload 由平台回拉,必须给公网绝对 URL(生产配 AI_LISTING_PUBLIC_BASE_URL)
+  if (!/^https?:\/\//i.test(videoUrl)) {
+    const base = (process.env.AI_LISTING_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+    if (!base) {
+      notes.push('主图视频为本地存储且未配置公网基址(AI_LISTING_PUBLIC_BASE_URL),未带入,请在编辑页手动上传');
+      return undefined;
+    }
+    videoUrl = `${base}${videoUrl.startsWith('/') ? '' : '/'}${videoUrl}`;
+  }
   try {
     const directUrl = await resolveDirectVideoUrl(videoUrl);
     const up = await callIop(cfg, {
@@ -558,8 +576,16 @@ export const alibabaIcbuConnector: PlatformConnector = {
       ? await uploadVideoToBank(cfg, accessToken, payload.videoUrl, payload.title || 'product-video', notes)
       : undefined;
 
+    // schema 主图必须带图片银行 fileId,没拿到 fileId 的图送上去平台必报 CHK_IMAGE_FILE_ID_EMPTY——直接剔除
+    const usableMainImages = mainImages.filter((m) => m.fileId);
+    if (mainImages.length && !usableMainImages.length) {
+      throw new OpenApiError('PUBLISH_IMAGES_UPLOAD_FAILED', `主图搬入图片银行全部失败,无法发布:${notes.join(';')}`);
+    }
+    if (usableMainImages.length < mainImages.length) {
+      notes.push(`${mainImages.length - usableMainImages.length} 张主图未拿到图片银行 fileId,已从草稿剔除`);
+    }
     const built = buildDraftXml(payload, schemaXml, {
-      mainImages,
+      mainImages: usableMainImages,
       detailImages: detailImages.map((d) => d.url),
       videoId,
     });
