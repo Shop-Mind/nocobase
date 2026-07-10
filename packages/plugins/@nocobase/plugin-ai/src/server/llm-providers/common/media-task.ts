@@ -132,11 +132,26 @@ export function openAICompatibleMediaGeneration(opts: MediaTaskEndpointOptions):
       ...input.images.map((url) => ({ type: 'image_url', image_url: { url } })),
       { type: 'text', text: input.prompt },
     ];
+    // 视频参数通道(grok2api 系中转的 video_config):chat 形状本身没有时长/分辨率字段,grok2api 约定顶层
+    // video_config = { seconds, resolution_name, size };把通用 parameters 映射过去。标准 OpenAI 兼容服务
+    // 忽略未知顶层字段,对不支持该约定的网关无副作用。
+    const params = (input.options?.parameters as Record<string, unknown>) || {};
+    const videoConfig: Record<string, unknown> = {};
+    if (input.task === 'video_gen') {
+      if (Number(params.duration) > 0) videoConfig.seconds = Number(params.duration);
+      if (params.resolution) videoConfig.resolution_name = String(params.resolution).toLowerCase();
+      if (params.size) videoConfig.size = String(params.size);
+    }
     // 视频生成显著慢于图像(实测 grok imagine 视频 >3 分钟),video_gen 放宽到 10 分钟;其余任务维持 3 分钟
     const resp = await fetch(`${opts.baseURL.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: jsonHeaders(opts.apiKey),
-      body: JSON.stringify({ model: input.model, messages: [{ role: 'user', content }], stream: false }),
+      body: JSON.stringify({
+        model: input.model,
+        messages: [{ role: 'user', content }],
+        stream: false,
+        ...(Object.keys(videoConfig).length ? { video_config: videoConfig } : {}),
+      }),
       signal: taskSignal(input.task === 'video_gen' ? 600000 : 180000, input.signal),
     });
     const json = (await resp.json()) as ErrorPayload & {

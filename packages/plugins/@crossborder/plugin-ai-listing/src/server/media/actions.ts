@@ -332,6 +332,7 @@ export function setupMedia(plugin: Plugin): void {
           prompt?: string;
           duration?: number;
           resolution?: string;
+          size?: string;
           llmService?: string;
           model?: string;
           textToVideo?: boolean;
@@ -344,6 +345,7 @@ export function setupMedia(plugin: Plugin): void {
             prompt: v.prompt,
             duration: Number(v.duration) || undefined,
             resolution: v.resolution || undefined,
+            size: v.size || undefined,
             llmService: v.llmService || undefined,
             model: v.model || undefined,
             textToVideo: v.textToVideo === true,

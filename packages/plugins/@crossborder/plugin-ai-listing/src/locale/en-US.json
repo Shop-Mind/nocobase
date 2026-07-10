@@ -577,5 +577,8 @@
   "360° panorama showcase": "360° panorama showcase",
   "Lifestyle & outfit showcase": "Lifestyle & outfit showcase",
   "AI is composing recommendations — one moment…": "AI is composing recommendations — one moment…",
-  "This model line ignores duration and resolution — fixed output ~6s · 720×1280 portrait": "This model line ignores duration and resolution — fixed output ~6s · 720×1280 portrait"
+  "Aspect": "Aspect",
+  "9:16 portrait": "9:16 portrait",
+  "16:9 landscape": "16:9 landscape",
+  "1:1 square": "1:1 square"
 }

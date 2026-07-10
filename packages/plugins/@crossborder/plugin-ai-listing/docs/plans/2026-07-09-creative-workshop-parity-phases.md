@@ -582,6 +582,26 @@
 
 ---
 
+## 增量 · grok 视频参数真实可控（2026-07-10 用户对照官方 Imagine 界面提出,调研+实装）
+
+调研:中转即 chenyme/grok2api,chat/completions 顶层支持 `video_config: { seconds: 6/10/12/16/20,
+size: 720x1280|1280x720|1024x1024|1024x1792|1792x1024, resolution_name: 480p/720p, preset?(可选,缺省 None) }`
+——时长/分辨率/画幅全部有通道。**直连实测确证:seconds 10 → 10.04s 成片,size 1280x720 → 真横屏**(此前固定
+6.04s·720×1280)。
+
+- **plugin-ai media-task**:openAICompatibleMediaGeneration 在 video_gen 时把通用 parameters 映射成
+  video_config(duration→seconds/resolution 小写→resolution_name/size 透传);非视频任务与空参不发该字段,
+  标准 OpenAI 兼容服务忽略未知顶层字段无副作用。media-task 单测 +2(映射/不误发)27/27。
+- **ai-listing**:GenerateVideoInput/action 增 `size`;parameters.size 透传;job metadata 记 size(重试还原)。
+- **VideoPane 分线参数集**:imagine 线 = 6s/10s + 480p/720p + 画幅三档(9:16 竖屏/16:9 横屏/1:1 方形,
+  对齐官方 Imagine);万相线 = 5s/10s + 720P/1080P(无画幅,按源图)。控件恢复可选,撤掉「不接收参数」提示;
+  切线时自动校正到该线合法档。i18n ±5 键。
+- 验收:UI 探针两线参数集/画幅有无/切换全绿;edit-adopt 28/28、video 10/10 无回归。
+  ⚠️ 走本系统的 10s E2E 提交时恰逢视频线再度抖动(500/502 交替,与上午同款;带/不带 preset 直连重放均挂,
+  排除请求差异),video_config 配方本身已被直连成功片证死——线路稳定后 UI 直接可用,无需改码。
+
+---
+
 ## WB · Backlog（另排期，不阻塞本轮）
 
 1. **智能视频 tab 对齐**：阿里 tab 内清单未确认——待你在真实后台截图后逐项对（候补功能池：营销视频/视频

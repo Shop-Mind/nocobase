@@ -66,6 +66,28 @@ describe('shape 1: OpenAI chat/completions media output', () => {
     expect(result.urls).toEqual(['https://x/img.png']);
     expect(calls[0].url).toBe('https://api.example.com/v1/chat/completions');
   });
+
+  it('maps video_gen parameters to grok2api video_config (seconds/resolution_name/size)', async () => {
+    mockFetch(() => jsonResp({ choices: [{ message: { content: 'https://x/v.mp4' } }] }));
+    await openAICompatibleMediaGeneration(OPTS)(
+      taskInput({
+        task: 'video_gen',
+        options: { parameters: { duration: 10, resolution: '720P', size: '1280x720' } },
+      }),
+    );
+    const body = JSON.parse(String(calls[0].init.body));
+    expect(body.video_config).toEqual({ seconds: 10, resolution_name: '720p', size: '1280x720' });
+  });
+
+  it('omits video_config for non-video tasks and empty parameters', async () => {
+    mockFetch(() => jsonResp({ choices: [{ message: { content: '' } }] }));
+    await openAICompatibleMediaGeneration(OPTS)(
+      taskInput({ options: { parameters: { duration: 10, size: '1280x720' } } }),
+    );
+    await openAICompatibleMediaGeneration(OPTS)(taskInput({ task: 'video_gen' }));
+    expect(JSON.parse(String(calls[0].init.body)).video_config).toBeUndefined();
+    expect(JSON.parse(String(calls[1].init.body)).video_config).toBeUndefined();
+  });
 });
 
 describe('shape 2a: OpenAI images/generations', () => {

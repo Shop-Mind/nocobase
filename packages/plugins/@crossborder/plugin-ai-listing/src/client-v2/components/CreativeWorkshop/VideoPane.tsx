@@ -55,10 +55,17 @@ const VIDEO_MODES: Array<{ key: string; label: string; enabled: boolean }> = [
   { key: 'keyframe', label: '首尾帧', enabled: false },
   { key: 'digital_human', label: '数字人', enabled: false },
 ];
-// 5/10 对齐阿里(其后端万相即 5s/10s 两档);grok imagine 线不接收时长参数(chat 形状),实测固定出 ~6s 片,
-// 选中 imagine 系模型时在时长控件下方给出诚实提示。万相 10s 档待 DashScope Key 恢复后按所用版本核验。
-const DURATIONS = [5, 10];
-const RESOLUTIONS = ['720P', '1080P'];
+// 分线参数集:imagine(grok2api video_config 实测生效:seconds/resolution_name/size)vs 万相(dashscope 原生)
+const IMAGINE_DURATIONS = [6, 10];
+const WAN_DURATIONS = [5, 10];
+const IMAGINE_RESOLUTIONS = ['480p', '720p'];
+const WAN_RESOLUTIONS = ['720P', '1080P'];
+// 画幅(imagine 线 video_config.size):电商三常用档;万相线按源图画幅,不出此控件
+const IMAGINE_SIZES = [
+  { key: '9:16', size: '720x1280', labelKey: '9:16 portrait' },
+  { key: '16:9', size: '1280x720', labelKey: '16:9 landscape' },
+  { key: '1:1', size: '1024x1024', labelKey: '1:1 square' },
+];
 const POLL_MS = 5000;
 
 // 快捷模板(对齐旧版「视频参数设置」弹窗的快捷模板,话术按专业电商产品视频重写):点击整填提示词,可再手改。
@@ -97,8 +104,9 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
   const { message } = AntdApp.useApp();
   const [mode, setMode] = useState<string>('i2v');
   const [sel, setSel] = useState<string>(''); // 选中源图 key(单选)
-  const [duration, setDuration] = useState<number>(5);
-  const [resolution, setResolution] = useState<string>('720P');
+  const [duration, setDuration] = useState<number>(6);
+  const [resolution, setResolution] = useState<string>('720p');
+  const [aspect, setAspect] = useState<string>('9:16');
   const [prompt, setPrompt] = useState<string>('');
   const [jobId, setJobId] = useState<number | null>(null);
   const [jobState, setJobState] = useState<JobState>('idle');
@@ -123,6 +131,8 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
   // 模型可选(用户反馈):视频生成模型(video_gen)与推荐词模型(chat)都可显式指定,'' = 自动
   const [videoModels, setVideoModels] = useState<Array<{ llmService: string; model: string; label: string }>>([]);
   const [videoModelKey, setVideoModelKey] = useState<string>('');
+  // imagine 系(grok2api 线):video_config 通道实测生效(seconds 10→10.04s 片、size 1280x720→横屏),参数真实可控
+  const isImagine = /grok|imagine/i.test(videoModelKey);
   const [chatModels, setChatModels] = useState<Array<{ llmService: string; model: string; label: string }>>([]);
   const [recoModelKey, setRecoModelKey] = useState<string>('');
 
@@ -239,6 +249,17 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
     load();
   }, [app]);
 
+  // 切换模型线时把时长/分辨率校正到该线的合法档(两线档位命名不同:6s/10s·480p/720p vs 5s/10s·720P/1080P)
+  useEffect(() => {
+    if (isImagine) {
+      setDuration((d) => (IMAGINE_DURATIONS.includes(d) ? d : 6));
+      setResolution((r) => (IMAGINE_RESOLUTIONS.includes(r) ? r : '720p'));
+    } else {
+      setDuration((d) => (WAN_DURATIONS.includes(d) ? d : 5));
+      setResolution((r) => (WAN_RESOLUTIONS.includes(r) ? r : '720P'));
+    }
+  }, [isImagine]);
+
   const saveNewTpl = useCallback(async () => {
     const title = newTpl.title.trim();
     const tplPrompt = newTpl.prompt.trim();
@@ -325,6 +346,7 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
       prompt: prompt.trim() || undefined,
       duration,
       resolution,
+      size: isImagine ? IMAGINE_SIZES.find((s) => s.key === aspect)?.size : undefined,
       llmService: vSvc,
       model: vModel,
     });
@@ -338,7 +360,7 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
       setErrorMsg(res.message || t('Video generation failed'));
       message.error(res.message || t('Video generation failed'));
     }
-  }, [app, productId, sources, sel, mode, prompt, duration, resolution, videoModelKey, message, t]);
+  }, [app, productId, sources, sel, mode, prompt, duration, resolution, aspect, isImagine, videoModelKey, message, t]);
 
   const doAdopt = useCallback(
     async (asset: MediaAsset) => {
@@ -369,8 +391,6 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
   );
 
   const activeMode = VIDEO_MODES.find((m) => m.key === mode) || VIDEO_MODES[0];
-  // imagine 系(grok)经 chat 形状调用,时长/分辨率参数无通道送达模型:控件置灰,固定输出 ~6s·720×1280
-  const imagineFixed = /grok|imagine/i.test(videoModelKey);
 
   return (
     <div style={{ display: 'flex', minHeight: 560 }}>
@@ -739,9 +759,8 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             </Typography.Text>
             <Segmented
               value={duration}
-              disabled={imagineFixed}
               onChange={(v) => setDuration(Number(v))}
-              options={DURATIONS.map((d) => ({ value: d, label: `${d}s` }))}
+              options={(isImagine ? IMAGINE_DURATIONS : WAN_DURATIONS).map((d) => ({ value: d, label: `${d}s` }))}
             />
           </div>
           <div>
@@ -750,11 +769,22 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             </Typography.Text>
             <Segmented
               value={resolution}
-              disabled={imagineFixed}
               onChange={(v) => setResolution(String(v))}
-              options={RESOLUTIONS}
+              options={isImagine ? IMAGINE_RESOLUTIONS : WAN_RESOLUTIONS}
             />
           </div>
+          {isImagine ? (
+            <div>
+              <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                🎞️ {t('Aspect')}
+              </Typography.Text>
+              <Segmented
+                value={aspect}
+                onChange={(v) => setAspect(String(v))}
+                options={IMAGINE_SIZES.map((s) => ({ value: s.key, label: t(s.labelKey) }))}
+              />
+            </div>
+          ) : null}
           <div style={{ minWidth: 220 }}>
             <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
               ⚙️ {t('Video model')}
@@ -772,11 +802,6 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             />
           </div>
         </div>
-        {imagineFixed ? (
-          <Typography.Text type="secondary" style={{ display: 'block', fontSize: 11, margin: '-8px 0 14px' }}>
-            ℹ️ {t('This model line ignores duration and resolution — fixed output ~6s · 720×1280 portrait')}
-          </Typography.Text>
-        ) : null}
 
         {/* 生成 + 进度态 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, borderTop: '1px solid #f0f0f0', paddingTop: 14 }}>

@@ -294,6 +294,15 @@ function getAIPlugin(app: Application): AIPluginLike {
   return ai;
 }
 
+export function isLoopbackHttpUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === 'localhost' || hostname === '::1' || hostname.startsWith('127.');
+  } catch {
+    return false;
+  }
+}
+
 // 解析图像编辑用的服务+模型:env AI_LISTING_IMAGE_EDIT_MODEL(`<llmService>:<model>` 或裸模型名)优先,
 // 否则扫描全部已启用模型,取能力=image_gen 者按路由选型:route='function'(超分/扩图等专项)只有
 // wanx imageedit 系的 image2image 通道支持;route='instruct'(指令改图)qwen-image-edit 系效果最好,
@@ -720,9 +729,11 @@ export interface GenerateVideoInput {
   sourceImageUrl?: string;
   // 运镜/画面描述(可选;i2v 缺省给通用运镜)
   prompt?: string;
-  // 目标时长(秒)与分辨率(如 '720P'/'1080P');透传服务商 parameters
+  // 目标时长(秒)与分辨率(如 '720P'/'1080P';grok2api 线用 '480p'/'720p');透传服务商 parameters
   duration?: number;
   resolution?: string;
+  // 画幅尺寸(grok2api video_config.size,如 '720x1280'/'1280x720'/'1024x1024');万相线忽略
+  size?: string;
   // toPublicUrl 无 env 基址时的兜底基址(通常取请求 origin)
   publicBaseUrl?: string;
   // 显式指定视频模型(前端「指定模型」):dashscope 走原生异步任务;其余(如 grok-imagine-video 经中转)
@@ -763,9 +774,11 @@ async function runExplicitVideoTask(
       llmService: args.llmService,
       model: args.model,
     });
-    // 中转取公网图更稳;本地图退 data URI;t2v 无图
+    // Grok2API 在另一个容器内运行，127.0.0.1/localhost 会指向它自身而不是 NocoBase。
+    // 这类地址改为内联源图，避免中转服务回拉不存在的容器内端点。
+    const shouldInlineLoopbackImage = /^grok-imagine/i.test(args.model) && isLoopbackHttpUrl(args.publicImgUrl);
     const images = args.publicImgUrl
-      ? [/^https?:/i.test(args.publicImgUrl) ? args.publicImgUrl : (await sourceImageInfo(args.sourceUrl)).dataUri]
+      ? [shouldInlineLoopbackImage ? (await sourceImageInfo(args.sourceUrl)).dataUri : args.publicImgUrl]
       : [];
     const output = await llm.invokeMediaTask({
       task: 'video_gen',
@@ -889,6 +902,7 @@ export async function generateVideo(
   const parameters: Record<string, unknown> = {};
   if (input.resolution) parameters.resolution = input.resolution;
   if (input.duration) parameters.duration = input.duration;
+  if (input.size) parameters.size = input.size;
 
   // —— 显式指定模型分支:经 plugin-ai 通用媒体通道(chat/completions 形状)同步等待,产物直接落视频候选。
   // grok imagine 视频经中转即走此路;dashscope 模型不指定时仍走下方原生异步任务流(有断点续查)。
@@ -911,6 +925,7 @@ export async function generateVideo(
           prompt,
           duration: input.duration ?? null,
           resolution: input.resolution ?? null,
+          size: input.size ?? null,
           sourceUrl,
           publicImgUrl: publicImgUrl || null,
           parentAssetId: (sourceAsset?.get('id') as number | undefined) ?? null,
