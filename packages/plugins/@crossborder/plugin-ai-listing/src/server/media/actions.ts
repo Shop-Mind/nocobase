@@ -51,6 +51,7 @@ const MEDIA_ACTIONS = [
   'deleteStyleTemplate',
   'history',
   'estimateCost',
+  'listModels',
 ] as const;
 
 // 服务层错误码 → HTTP 状态:限额 429、找不到 404、越权 403、状态锁 409,其余按参数/配置错误 400
@@ -126,6 +127,43 @@ export function setupMedia(plugin: Plugin): void {
           for (const s of svcs) {
             for (const m of s.enabledModels) {
               if (m.capability?.task === 'image_gen') {
+                models.push({
+                  llmService: s.llmService,
+                  model: m.value,
+                  label: `${m.label || m.value} · ${s.llmServiceTitle || s.llmService}`,
+                });
+              }
+            }
+          }
+        } catch {
+          models = [];
+        }
+        ctx.body = { ok: true, data: { models }, warnings: [], errors: [], traceId };
+        await next();
+      },
+
+      // 通用模型清单(W6+ 用户反馈):按能力过滤(video_gen=视频模型下拉;chat=推荐词模型下拉);imageModels 保留兼容
+      listModels: async (ctx: Context, next: Next) => {
+        const traceId = ctx.reqId || `srv-${Date.now()}`;
+        const v = (ctx.action?.params?.values || {}) as { task?: string };
+        const task = v.task || 'chat';
+        const ai = app.pm.get('ai') as unknown as {
+          aiManager?: {
+            listAllEnabledModels: () => Promise<
+              Array<{
+                llmService: string;
+                llmServiceTitle?: string;
+                enabledModels: Array<{ value: string; label?: string; capability?: { task?: string } }>;
+              }>
+            >;
+          };
+        };
+        let models: Array<{ llmService: string; model: string; label: string }> = [];
+        try {
+          const svcs = (await ai?.aiManager?.listAllEnabledModels?.()) || [];
+          for (const s of svcs) {
+            for (const m of s.enabledModels) {
+              if (m.capability?.task === task) {
                 models.push({
                   llmService: s.llmService,
                   model: m.value,
@@ -246,6 +284,8 @@ export function setupMedia(plugin: Plugin): void {
           sourceImageUrl?: string;
           scene?: string;
           n?: number;
+          llmService?: string;
+          model?: string;
         };
         try {
           const result = await suggestPrompts(app, {
@@ -253,6 +293,8 @@ export function setupMedia(plugin: Plugin): void {
             sourceImageUrl: v.sourceImageUrl,
             scene: v.scene,
             n: v.n,
+            llmService: v.llmService || undefined,
+            model: v.model || undefined,
           });
           ctx.body = { ok: true, data: result, warnings: [], errors: [], traceId };
         } catch (e) {
@@ -286,6 +328,9 @@ export function setupMedia(plugin: Plugin): void {
           prompt?: string;
           duration?: number;
           resolution?: string;
+          llmService?: string;
+          model?: string;
+          textToVideo?: boolean;
         };
         try {
           const result = await generateVideo(plugin, {
@@ -295,6 +340,9 @@ export function setupMedia(plugin: Plugin): void {
             prompt: v.prompt,
             duration: Number(v.duration) || undefined,
             resolution: v.resolution || undefined,
+            llmService: v.llmService || undefined,
+            model: v.model || undefined,
+            textToVideo: v.textToVideo === true,
             // 无 env 公网基址时用请求 origin 兜底(生产应配 AI_LISTING_PUBLIC_BASE_URL)
             publicBaseUrl: `${ctx.protocol}://${ctx.host}`,
           });

@@ -565,5 +565,8 @@
   "Cost breakdown": "消耗明细",
   "{{unit}} beans/image × {{count}} per source × {{sources}} source(s) = {{beans}} beans": "{{unit}} i豆/张 × 每源图 {{count}} 张 × {{sources}} 张源图 = {{beans}} i豆",
   "Priced by function × tier; recorded per generation, no balance deduction yet.": "按 功能×档位 定价;每次生成记账,当前不扣减余额。",
-  "This batch will generate {{n}} images — it may take a while.": "本次将生成 {{n}} 张,预计耗时较久,可随进度逐张回流查看。"
+  "This batch will generate {{n}} images — it may take a while.": "本次将生成 {{n}} 张,预计耗时较久,可随进度逐张回流查看。",
+  "Video model": "视频模型",
+  "Text-to-video needs no source image — describe the scene in the prompt below.": "文生视频无需源图,直接在下方提示词里描述画面即可。",
+  "Describe the video you want first": "先在提示词里描述想要的视频画面"
 }

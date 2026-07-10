@@ -565,5 +565,8 @@
   "Cost breakdown": "Cost breakdown",
   "{{unit}} beans/image × {{count}} per source × {{sources}} source(s) = {{beans}} beans": "{{unit}} beans/image × {{count}} per source × {{sources}} source(s) = {{beans}} beans",
   "Priced by function × tier; recorded per generation, no balance deduction yet.": "Priced by function × tier; recorded per generation, no balance deduction yet.",
-  "This batch will generate {{n}} images — it may take a while.": "This batch will generate {{n}} images — it may take a while."
+  "This batch will generate {{n}} images — it may take a while.": "This batch will generate {{n}} images — it may take a while.",
+  "Video model": "Video model",
+  "Text-to-video needs no source image — describe the scene in the prompt below.": "Text-to-video needs no source image — describe the scene in the prompt below.",
+  "Describe the video you want first": "Describe the video you want first"
 }

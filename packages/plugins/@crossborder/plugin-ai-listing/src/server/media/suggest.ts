@@ -20,9 +20,12 @@ import { MediaServiceError, sourceImageInfo } from './service';
 export interface SuggestPromptsInput {
   assetId?: number;
   sourceImageUrl?: string;
-  // 'scene_gen'(场景描述)| 'selling_point'(卖点文案)| 其它=通用场景
+  // 'scene_gen'(场景描述)| 'selling_point'(卖点文案)| 'video'(视频运镜创意)| 其它=通用场景
   scene?: string;
   n?: number;
+  // 显式指定产词模型(前端「模型」下拉):跳过三级链自动挑选,只试这一个(失败仍落静态)
+  llmService?: string;
+  model?: string;
 }
 
 export interface SuggestPromptsResult {
@@ -115,6 +118,12 @@ function buildSpec(scene: string | undefined, n: number): { system: string; ask:
       ask: `请仔细观察这张商品图,提炼 ${n} 条不同的营销卖点文案,用于生成营销卖点主图。每条 6-16 个汉字,中文,突出材质/功能/适用场景/差异化,不要出现具体品牌名。只返回一个 JSON 字符串数组,例如 ["卖点一","卖点二"],不要任何多余文字。`,
     };
   }
+  if (scene === 'video') {
+    return {
+      system: '你是资深电商短视频导演,擅长为商品设计有吸引力的动态展示镜头。',
+      ask: `请仔细观察这张商品图,产出 ${n} 条不同的「商品场景视频」创意描述,用于 AI 图生视频。每条 40-90 个汉字,中文,包含:场景氛围、商品呈现方式、镜头运动(如缓慢推近/环绕/平移/固定)与光影变化,画面真实可信,不要出现具体品牌名。只返回一个 JSON 字符串数组,不要任何多余文字。`,
+    };
+  }
   return {
     system: '你是资深电商视觉运营,擅长为商品设计有代入感的使用场景。',
     ask: `请仔细观察这张商品图,产出 ${n} 条不同的「使用场景」描述,用于 AI 生成商品场景图。每条 15-40 个汉字,中文,具体到环境/材质/光线/氛围,画面真实可信,不要出现具体品牌名。只返回一个 JSON 字符串数组,例如 ["场景一","场景二"],不要任何多余文字。`,
@@ -129,6 +138,12 @@ function buildTextSpec(scene: string | undefined, n: number, title: string): { s
       ask: `商品标题是「${title}」。请提炼 ${n} 条不同的营销卖点文案,用于生成营销卖点主图。每条 6-16 个汉字,中文,突出材质/功能/适用场景/差异化,不要出现具体品牌名。只返回一个 JSON 字符串数组,例如 ["卖点一","卖点二"],不要任何多余文字。`,
     };
   }
+  if (scene === 'video') {
+    return {
+      system: '你是资深电商短视频导演,擅长为商品设计有吸引力的动态展示镜头。',
+      ask: `商品标题是「${title}」。请为该商品产出 ${n} 条不同的「商品场景视频」创意描述,用于 AI 图生视频。每条 40-90 个汉字,中文,包含:场景氛围、商品呈现方式、镜头运动与光影变化,不要出现具体品牌名。只返回一个 JSON 字符串数组,不要任何多余文字。`,
+    };
+  }
   return {
     system: '你是资深电商视觉运营,擅长为商品设计有代入感的使用场景。',
     ask: `商品标题是「${title}」。请为该商品产出 ${n} 条不同的「使用场景」描述,用于 AI 生成商品场景图。每条 15-40 个汉字,中文,具体到环境/材质/光线/氛围,画面真实可信,不要出现具体品牌名。只返回一个 JSON 字符串数组,例如 ["场景一","场景二"],不要任何多余文字。`,
@@ -136,7 +151,8 @@ function buildTextSpec(scene: string | undefined, n: number, title: string): { s
 }
 
 // 解析模型输出为提示词数组:优先 JSON 数组,退化到按行拆(去项目符号/序号/引号),去空去重截断到 n。
-function parsePrompts(text: string, n: number): string[] {
+// maxLen:视频创意文案(40-90 字)比图片场景词长,按场景放宽。
+function parsePrompts(text: string, n: number, maxLen = 60): string[] {
   if (!text) return [];
   let s = text.trim();
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -167,7 +183,7 @@ function parsePrompts(text: string, n: number): string[] {
   const out: string[] = [];
   for (const p of arr) {
     const v = String(p).trim();
-    if (v && v.length <= 60 && !seen.has(v)) {
+    if (v && v.length <= maxLen && !seen.has(v)) {
       seen.add(v);
       out.push(v);
     }
@@ -185,7 +201,12 @@ function fallbackPrompts(scene: string | undefined, n: number): string[] {
     '极简纯色背景,柔和均匀布光,聚焦商品本身,电商主图风',
   ];
   const spPool = ['精选材质 品质之选', '大容量设计 实用耐用', '简约百搭 场景通用', '细节考究 做工精良'];
-  return (scene === 'selling_point' ? spPool : scenePool).slice(0, n);
+  const videoPool = [
+    '商品静置于原木桌面,晨光透过窗帘洒落,镜头从正面缓慢推近,展示材质细节,光影随时间轻柔移动',
+    '纯色影棚背景,商品居中,镜头围绕商品缓慢环绕一周,顶光勾勒轮廓,质感突出',
+    '生活化使用场景,商品被自然拿起展示,镜头轻微平移跟随,背景虚化,氛围温暖真实',
+  ];
+  return (scene === 'selling_point' ? spPool : scene === 'video' ? videoPool : scenePool).slice(0, n);
 }
 
 // 单次模型调用(带每级短超时):视觉级带图,文本级带标题;成功返回提示词数组,失败抛给上层换下一级。
@@ -214,7 +235,7 @@ async function attemptTarget(
     setTimeout(() => reject(new Error('SUGGEST_TIMEOUT')), ATTEMPT_TIMEOUT_MS),
   );
   const res = await Promise.race([invocation, timeout]);
-  const prompts = parsePrompts(contentToText(res?.content), opts.n);
+  const prompts = parsePrompts(contentToText(res?.content), opts.n, opts.scene === 'video' ? 160 : 60);
   if (!prompts.length) throw new Error('模型未返回可用提示词');
   return prompts;
 }
@@ -252,7 +273,10 @@ export async function suggestPrompts(app: Application, input: SuggestPromptsInpu
 
   const aiManager = getVisionAiManager(app);
   if (!aiManager) return staticResult();
-  const targets = await resolveSuggestTargets(aiManager);
+  const targets =
+    input.llmService && input.model
+      ? [{ llmService: input.llmService, model: input.model, vision: VISION_MODEL_NAME.test(input.model) }]
+      : await resolveSuggestTargets(aiManager);
 
   // 视觉输入图:优先公网 http(s) URL(载荷小、模型直接取图,更快更稳);否则退回本地图 base64 data URI。
   let imageUrl = [remoteUrl, sourceUrl].find((u) => /^https?:\/\//i.test(u)) || '';

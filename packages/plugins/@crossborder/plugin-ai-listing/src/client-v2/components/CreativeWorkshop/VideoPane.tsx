@@ -13,7 +13,22 @@
 // 视频端点(DashScope 万相 i2v)强制公网 img_url,源图由后端 toPublicUrl 归一化(生产配 AI_LISTING_PUBLIC_BASE_URL)。
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { App as AntdApp, Button, Empty, Input, Segmented, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import {
+  App as AntdApp,
+  Button,
+  Empty,
+  Input,
+  Modal,
+  Popconfirm,
+  Segmented,
+  Select,
+  Space,
+  Spin,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+} from 'antd';
 import { callMediaApi, type MediaAsset, type MediaStudioApp } from '../MediaStudio/types';
 
 // 与 CreativeWorkshop.CarryImage 结构兼容(只取视频源需要的字段)
@@ -29,14 +44,15 @@ interface VideoPaneProps {
   productId: number;
   sources: VideoSource[];
   loadingSources?: boolean;
-  t: (key: string) => string;
+  t: (key: string, options?: Record<string, unknown>) => string;
 }
 
 // 视频子类型(对标官方):i2v 已上线,其余占位置灰。
 const VIDEO_MODES: Array<{ key: string; label: string; enabled: boolean }> = [
   { key: 'i2v', label: '图生视频', enabled: true },
+  // t2v 经 grok imagine 实测可用(2026-07-10);首尾帧/数字人需专用端点,待账号/线路就绪
+  { key: 't2v', label: '文生视频', enabled: true },
   { key: 'keyframe', label: '首尾帧', enabled: false },
-  { key: 't2v', label: '文生视频', enabled: false },
   { key: 'digital_human', label: '数字人', enabled: false },
 ];
 const DURATIONS = [3, 5];
@@ -59,6 +75,24 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
   const [videoAdopted, setVideoAdopted] = useState<MediaAsset[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [adoptingId, setAdoptingId] = useState<number | null>(null);
+  // 模版风格选择(对齐阿里场景视频:推荐提示词 / 自定义模版 两 tab)
+  const [tplTab, setTplTab] = useState<string>('reco');
+  const [recos, setRecos] = useState<string[]>([]);
+  const [recosLoading, setRecosLoading] = useState(false);
+  const [recosBasis, setRecosBasis] = useState<'image' | 'title' | 'static'>('static');
+  const [recosModel, setRecosModel] = useState<string | null>(null);
+  const [myTpls, setMyTpls] = useState<Array<{ id: number; title: string; prompt: string; thumbUrl: string | null }>>(
+    [],
+  );
+  const [tplSelected, setTplSelected] = useState<number | null>(null);
+  const [newTplOpen, setNewTplOpen] = useState(false);
+  const [newTpl, setNewTpl] = useState<{ title: string; prompt: string }>({ title: '', prompt: '' });
+  const [newTplSaving, setNewTplSaving] = useState(false);
+  // 模型可选(用户反馈):视频生成模型(video_gen)与推荐词模型(chat)都可显式指定,'' = 自动
+  const [videoModels, setVideoModels] = useState<Array<{ llmService: string; model: string; label: string }>>([]);
+  const [videoModelKey, setVideoModelKey] = useState<string>('');
+  const [chatModels, setChatModels] = useState<Array<{ llmService: string; model: string; label: string }>>([]);
+  const [recoModelKey, setRecoModelKey] = useState<string>('');
 
   // 默认选中主图(或第一张)
   useEffect(() => {
@@ -82,6 +116,116 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // 推荐提示词(视频运镜创意,scene='video' 走 suggest 三级链):选中源图变化即重新出词
+  const fetchRecos = useCallback(async () => {
+    const src = sources.find((x) => x.key === sel);
+    if (!src) return;
+    setRecosLoading(true);
+    const [recoSvc, recoModel] = recoModelKey ? recoModelKey.split(/:(.+)/) : [undefined, undefined];
+    const res = await callMediaApi<{
+      prompts: string[];
+      fallback: boolean;
+      model: string | null;
+      basis?: 'image' | 'title' | 'static';
+    }>(app, 'aiListingMedia:suggestPrompts', {
+      assetId: src.assetId,
+      sourceImageUrl: src.assetId ? undefined : src.url || undefined,
+      scene: 'video',
+      n: 3,
+      llmService: recoSvc,
+      model: recoModel,
+    });
+    setRecosLoading(false);
+    if (res.ok && res.data) {
+      setRecos(res.data.prompts || []);
+      setRecosBasis(res.data.basis || (res.data.fallback ? 'static' : 'image'));
+      setRecosModel(res.data.model || null);
+    }
+  }, [app, sources, sel, recoModelKey]);
+
+  useEffect(() => {
+    if (sel) fetchRecos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel]);
+
+  // 自定义模版(scene='video' 的个人模版,复用 W2 模版体系)
+  const loadMyTpls = useCallback(async () => {
+    const res = await callMediaApi<{
+      mine: Array<{ id: number; title: string; prompt: string; thumbUrl: string | null }>;
+    }>(app, 'aiListingMedia:styleTemplates', { scene: 'video' });
+    if (res.ok && res.data) setMyTpls(res.data.mine || []);
+  }, [app]);
+
+  useEffect(() => {
+    loadMyTpls();
+  }, [loadMyTpls]);
+
+  // 默认选中 imagine 系视频模型(当前唯一实测可用线路;DashScope Key 恢复后用户可随时切换):
+  // t2v 更是必须显式模型(「自动」是 dashscope i2v 原生流,不支持无图)
+  useEffect(() => {
+    if (!videoModelKey && videoModels.length) {
+      const imagine = videoModels.find((m) => /imagine/i.test(m.model)) || videoModels[0];
+      setVideoModelKey(`${imagine.llmService}:${imagine.model}`);
+    }
+  }, [videoModelKey, videoModels]);
+
+  useEffect(() => {
+    const load = async () => {
+      const vm = await callMediaApi<{ models: Array<{ llmService: string; model: string; label: string }> }>(
+        app,
+        'aiListingMedia:listModels',
+        { task: 'video_gen' },
+      );
+      if (vm.ok && vm.data?.models) setVideoModels(vm.data.models);
+      const cm = await callMediaApi<{ models: Array<{ llmService: string; model: string; label: string }> }>(
+        app,
+        'aiListingMedia:listModels',
+        { task: 'chat' },
+      );
+      if (cm.ok && cm.data?.models) setChatModels(cm.data.models);
+    };
+    load();
+  }, [app]);
+
+  const saveNewTpl = useCallback(async () => {
+    const title = newTpl.title.trim();
+    const tplPrompt = newTpl.prompt.trim();
+    if (!title || !tplPrompt) {
+      message.warning(t('Template title and prompt are required'));
+      return;
+    }
+    setNewTplSaving(true);
+    const res = await callMediaApi(app, 'aiListingMedia:saveStyleTemplate', {
+      title,
+      category: 'general',
+      scene: 'video',
+      prompt: tplPrompt,
+    });
+    setNewTplSaving(false);
+    if (res.ok) {
+      message.success(t('Template saved'));
+      setNewTplOpen(false);
+      setNewTpl({ title: '', prompt: '' });
+      loadMyTpls();
+    } else if (res.message) {
+      message.error(res.message);
+    }
+  }, [app, newTpl, message, t, loadMyTpls]);
+
+  const deleteTpl = useCallback(
+    async (id: number) => {
+      const res = await callMediaApi(app, 'aiListingMedia:deleteStyleTemplate', { id });
+      if (res.ok) {
+        message.success(t('Template deleted'));
+        if (tplSelected === id) setTplSelected(null);
+        loadMyTpls();
+      } else if (res.message) {
+        message.error(res.message);
+      }
+    },
+    [app, message, t, loadMyTpls, tplSelected],
+  );
 
   // 轮询任务态(video 耗时数分钟):running 时每 5s 查一次;成功/失败停轮询并刷新候选
   useEffect(() => {
@@ -109,20 +253,29 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
   }, [jobState, jobId, app, message, t, refresh]);
 
   const doGenerate = useCallback(async () => {
+    const isT2V = mode === 't2v';
     const src = sources.find((s) => s.key === sel);
-    if (!src) {
+    if (!isT2V && !src) {
       message.warning(t('Select a source image first'));
+      return;
+    }
+    if (isT2V && !prompt.trim()) {
+      message.warning(t('Describe the video you want first'));
       return;
     }
     setSubmitting(true);
     setErrorMsg('');
+    const [vSvc, vModel] = videoModelKey ? videoModelKey.split(/:(.+)/) : [undefined, undefined];
     const res = await callMediaApi<{ jobId: number }>(app, 'aiListingMedia:generateVideo', {
       productId,
-      assetId: src.assetId,
-      sourceImageUrl: src.assetId ? undefined : src.url || undefined,
+      assetId: isT2V ? undefined : src?.assetId,
+      sourceImageUrl: isT2V ? undefined : src?.assetId ? undefined : src?.url || undefined,
+      textToVideo: isT2V || undefined,
       prompt: prompt.trim() || undefined,
       duration,
       resolution,
+      llmService: vSvc,
+      model: vModel,
     });
     setSubmitting(false);
     if (res.ok && res.data?.jobId) {
@@ -134,7 +287,7 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
       setErrorMsg(res.message || t('Video generation failed'));
       message.error(res.message || t('Video generation failed'));
     }
-  }, [app, productId, sources, sel, prompt, duration, resolution, message, t]);
+  }, [app, productId, sources, sel, mode, prompt, duration, resolution, videoModelKey, message, t]);
 
   const doAdopt = useCallback(
     async (asset: MediaAsset) => {
@@ -229,71 +382,252 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
           {t('Turn a product image into a short dynamic showcase video.')}
         </Typography.Paragraph>
 
-        {/* 选源图(单选) */}
-        <Typography.Text strong style={{ fontSize: 13 }}>
-          🖼️ {t('Source image')}{' '}
-          <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
-            {t('single image · click to switch')}
-          </Typography.Text>
-        </Typography.Text>
-        <Spin spinning={Boolean(loadingSources)}>
-          {sources.length ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, margin: '8px 0 16px' }}>
-              {sources.map((s) => {
-                const on = s.key === sel;
-                return (
-                  <div
-                    key={s.key}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSel(s.key)}
-                    onKeyDown={(e) => (e.key === 'Enter' ? setSel(s.key) : undefined)}
-                    style={{
-                      position: 'relative',
-                      aspectRatio: '1 / 1',
-                      borderRadius: 8,
-                      overflow: 'hidden',
-                      border: on ? '2px solid #722ed1' : '1px solid #e5e7eb',
-                      boxShadow: on ? '0 0 0 2px rgba(114,46,209,.12)' : 'none',
-                      cursor: 'pointer',
-                      background: '#f4f5f7',
-                    }}
-                  >
-                    {s.url ? (
-                      <img
-                        src={s.url}
-                        alt={String(s.role || s.key)}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                    ) : null}
-                    {on ? (
-                      <span
-                        aria-hidden
+        {/* 选源图(单选);t2v 无需源图 */}
+        {mode === 't2v' ? (
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '4px 0 14px' }}>
+            💡 {t('Text-to-video needs no source image — describe the scene in the prompt below.')}
+          </Typography.Paragraph>
+        ) : null}
+        {mode !== 't2v' ? (
+          <>
+            <Typography.Text strong style={{ fontSize: 13 }}>
+              🖼️ {t('Source image')}{' '}
+              <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
+                {t('single image · click to switch')}
+              </Typography.Text>
+            </Typography.Text>
+            {/* 对齐阿里+用户反馈「图片改小」:64px 横排缩略条(横向滚动),不再整屏大网格 */}
+            <Spin spinning={Boolean(loadingSources)}>
+              {sources.length ? (
+                <div style={{ display: 'flex', gap: 8, margin: '8px 0 16px', overflowX: 'auto', paddingBottom: 4 }}>
+                  {sources.map((s) => {
+                    const on = s.key === sel;
+                    return (
+                      <div
+                        key={s.key}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSel(s.key)}
+                        onKeyDown={(e) => (e.key === 'Enter' ? setSel(s.key) : undefined)}
                         style={{
-                          position: 'absolute',
-                          right: 4,
-                          top: 4,
-                          width: 17,
-                          height: 17,
-                          borderRadius: 5,
-                          background: '#722ed1',
-                          color: '#fff',
-                          fontSize: 11,
-                          lineHeight: '17px',
-                          textAlign: 'center',
+                          position: 'relative',
+                          width: 64,
+                          height: 64,
+                          flexShrink: 0,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: on ? '2px solid #722ed1' : '1px solid #e5e7eb',
+                          boxShadow: on ? '0 0 0 2px rgba(114,46,209,.12)' : 'none',
+                          cursor: 'pointer',
+                          background: '#f4f5f7',
                         }}
                       >
-                        ✓
-                      </span>
-                    ) : null}
+                        {s.url ? (
+                          <img
+                            src={s.url}
+                            alt={String(s.role || s.key)}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        ) : null}
+                        {on ? (
+                          <span
+                            aria-hidden
+                            style={{
+                              position: 'absolute',
+                              right: 3,
+                              top: 3,
+                              width: 15,
+                              height: 15,
+                              borderRadius: 4,
+                              background: '#722ed1',
+                              color: '#fff',
+                              fontSize: 10,
+                              lineHeight: '15px',
+                              textAlign: 'center',
+                            }}
+                          >
+                            ✓
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={t('No images yet')}
+                  style={{ margin: '12px 0' }}
+                />
+              )}
+            </Spin>
+          </>
+        ) : null}
+
+        {/* 模版风格选择(对齐阿里场景视频):推荐提示词(AI 看图出运镜创意)/ 自定义模版(scene='video' 个人库) */}
+        <div style={{ marginBottom: 16 }} data-testid="ws-video-tpl-tabs">
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            🎨 {t('Template styles')}
+          </Typography.Text>
+          <Tabs
+            size="small"
+            activeKey={tplTab}
+            onChange={setTplTab}
+            style={{ marginTop: 2 }}
+            tabBarGutter={14}
+            items={[
+              {
+                key: 'reco',
+                label: t('Recommended prompts'),
+                children: (
+                  <div style={{ background: '#f9f0ff', border: '1px solid #efdbff', borderRadius: 10, padding: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 9, flexWrap: 'wrap' }}>
+                      <Tag
+                        color={recosBasis === 'static' && !recosLoading ? 'default' : 'purple'}
+                        style={{ margin: 0 }}
+                      >
+                        {recosBasis === 'static' && !recosLoading ? t('Examples') : 'AI'}
+                      </Tag>
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        {recosLoading
+                          ? ''
+                          : recosBasis === 'static'
+                            ? t('vision model unavailable — static examples, editable')
+                            : recosBasis === 'title'
+                              ? `${t('based on the product title (image not analyzed)')} · ${recosModel || ''}`
+                              : `${t('based on this product image')} · ${recosModel || ''}`}
+                      </Typography.Text>
+                      <Select
+                        size="small"
+                        style={{ marginLeft: 'auto', minWidth: 132, maxWidth: 200 }}
+                        value={recoModelKey}
+                        onChange={setRecoModelKey}
+                        options={[
+                          { value: '', label: t('Auto model') },
+                          ...chatModels.map((m) => ({ value: `${m.llmService}:${m.model}`, label: m.label })),
+                        ]}
+                      />
+                      <a onClick={() => fetchRecos()} style={{ fontSize: 11.5, color: '#722ed1' }}>
+                        🔄 {t('Refresh')}
+                      </a>
+                    </div>
+                    {recosLoading ? (
+                      <div style={{ padding: '8px 0' }}>
+                        <Spin size="small" />
+                      </div>
+                    ) : recos.length ? (
+                      <Space direction="vertical" style={{ width: '100%' }} size={7}>
+                        {recos.map((p, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex',
+                              gap: 8,
+                              alignItems: 'center',
+                              background: '#fff',
+                              border: '1px solid #efdbff',
+                              borderRadius: 8,
+                              padding: '8px 10px',
+                            }}
+                          >
+                            <Typography.Text style={{ flex: 1, fontSize: 12.5 }}>{p}</Typography.Text>
+                            <Button
+                              size="small"
+                              onClick={() => setPrompt(p)}
+                              style={{ color: '#722ed1', borderColor: '#d3adf7' }}
+                            >
+                              {t('Fill in')}
+                            </Button>
+                          </div>
+                        ))}
+                      </Space>
+                    ) : (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {t('No recommendations — enter manually below')}
+                      </Typography.Text>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('No images yet')} style={{ margin: '12px 0' }} />
-          )}
-        </Spin>
+                ),
+              },
+              {
+                key: 'mine',
+                label: t('My templates'),
+                children: (
+                  <div data-testid="ws-video-tpl-mine">
+                    {myTpls.length ? (
+                      <Space direction="vertical" style={{ width: '100%' }} size={7}>
+                        {myTpls.map((tpl) => (
+                          <div
+                            key={tpl.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              if (tplSelected === tpl.id) {
+                                setTplSelected(null);
+                                setPrompt((prev) => (prev === tpl.prompt ? '' : prev));
+                              } else {
+                                setTplSelected(tpl.id);
+                                setPrompt(tpl.prompt);
+                              }
+                            }}
+                            onKeyDown={(e) => (e.key === 'Enter' ? setPrompt(tpl.prompt) : undefined)}
+                            style={{
+                              display: 'flex',
+                              gap: 8,
+                              alignItems: 'center',
+                              border: tplSelected === tpl.id ? '2px solid #7a5cff' : '1px solid #e5e7eb',
+                              borderRadius: 8,
+                              padding: '8px 10px',
+                              cursor: 'pointer',
+                              background: '#fff',
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <Typography.Text strong style={{ fontSize: 12.5, display: 'block' }}>
+                                {tpl.title}
+                              </Typography.Text>
+                              <Typography.Text type="secondary" style={{ fontSize: 11.5 }} ellipsis>
+                                {tpl.prompt}
+                              </Typography.Text>
+                            </div>
+                            <Popconfirm
+                              title={t('Delete this template?')}
+                              okText={t('Delete')}
+                              cancelText={t('Cancel')}
+                              onConfirm={(e) => {
+                                e?.stopPropagation();
+                                deleteTpl(tpl.id);
+                              }}
+                              onCancel={(e) => e?.stopPropagation()}
+                            >
+                              <Button size="small" danger type="text" onClick={(e) => e.stopPropagation()}>
+                                ✕
+                              </Button>
+                            </Popconfirm>
+                          </div>
+                        ))}
+                      </Space>
+                    ) : (
+                      <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                        {t('No custom templates yet — save a good result as a template, or create one below.')}
+                      </Typography.Text>
+                    )}
+                    <Button
+                      size="small"
+                      style={{ marginTop: 10 }}
+                      onClick={() => {
+                        setNewTpl({ title: '', prompt: prompt || '' });
+                        setNewTplOpen(true);
+                      }}
+                    >
+                      ＋ {t('New template')}
+                    </Button>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </div>
 
         {/* 时长 + 分辨率 */}
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 16 }}>
@@ -313,11 +647,27 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             </Typography.Text>
             <Segmented value={resolution} onChange={(v) => setResolution(String(v))} options={RESOLUTIONS} />
           </div>
+          <div style={{ minWidth: 220 }}>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+              ⚙️ {t('Video model')}
+            </Typography.Text>
+            <Select
+              size="small"
+              style={{ width: '100%' }}
+              value={videoModelKey}
+              onChange={setVideoModelKey}
+              data-testid="ws-video-model"
+              options={[
+                { value: '', label: t('Auto model') },
+                ...videoModels.map((m) => ({ value: `${m.llmService}:${m.model}`, label: m.label })),
+              ]}
+            />
+          </div>
         </div>
 
-        {/* 运镜 / 画面描述 */}
+        {/* 提示词描述(对齐阿里;含运镜/画面要求) */}
         <Typography.Text strong style={{ fontSize: 13 }}>
-          🎥 {t('Camera / motion')}{' '}
+          🎥 {t('Prompt')}{' '}
           <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 11 }}>
             {t('optional')}
           </Typography.Text>
@@ -326,9 +676,9 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder={t('e.g. slowly rotate the product, camera pushes in to show detail')}
-          maxLength={300}
+          maxLength={500}
           showCount
-          rows={3}
+          rows={4}
           style={{ margin: '8px 0 16px' }}
         />
 
@@ -338,7 +688,7 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
             type="primary"
             size="large"
             loading={submitting || jobState === 'running'}
-            disabled={!sel || !activeMode.enabled}
+            disabled={mode === 't2v' ? !prompt.trim() || !videoModelKey : !sel || !activeMode.enabled}
             onClick={doGenerate}
           >
             🎬 {jobState === 'running' ? t('Generating…') : t('Generate video')}
@@ -425,6 +775,46 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
           {t('Adopting sets the product video (audit as user); publish carries the adopted video.')}
         </Typography.Paragraph>
       </div>
+
+      {/* 新建视频自定义模版(scene='video',复用 W2 模版体系) */}
+      <Modal
+        title={t('New template')}
+        open={newTplOpen}
+        onCancel={() => setNewTplOpen(false)}
+        onOk={() => saveNewTpl()}
+        okText={t('Save')}
+        cancelText={t('Cancel')}
+        confirmLoading={newTplSaving}
+        width={460}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+          <div>
+            <Typography.Text strong style={{ fontSize: 12.5 }}>
+              {t('Template title')} <span style={{ color: '#ff4d4f' }}>*</span>
+            </Typography.Text>
+            <Input
+              value={newTpl.title}
+              maxLength={30}
+              showCount
+              onChange={(e) => setNewTpl((prev) => ({ ...prev, title: e.target.value }))}
+              style={{ marginTop: 6 }}
+            />
+          </div>
+          <div>
+            <Typography.Text strong style={{ fontSize: 12.5 }}>
+              {t('Template prompt')} <span style={{ color: '#ff4d4f' }}>*</span>
+            </Typography.Text>
+            <Input.TextArea
+              value={newTpl.prompt}
+              maxLength={500}
+              showCount
+              rows={4}
+              onChange={(e) => setNewTpl((prev) => ({ ...prev, prompt: e.target.value }))}
+              style={{ marginTop: 6 }}
+            />
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

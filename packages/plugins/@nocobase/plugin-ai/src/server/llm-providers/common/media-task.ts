@@ -132,11 +132,12 @@ export function openAICompatibleMediaGeneration(opts: MediaTaskEndpointOptions):
       ...input.images.map((url) => ({ type: 'image_url', image_url: { url } })),
       { type: 'text', text: input.prompt },
     ];
+    // 视频生成显著慢于图像(实测 grok imagine 视频 >3 分钟),video_gen 放宽到 10 分钟;其余任务维持 3 分钟
     const resp = await fetch(`${opts.baseURL.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: jsonHeaders(opts.apiKey),
       body: JSON.stringify({ model: input.model, messages: [{ role: 'user', content }], stream: false }),
-      signal: taskSignal(180000, input.signal),
+      signal: taskSignal(input.task === 'video_gen' ? 600000 : 180000, input.signal),
     });
     const json = (await resp.json()) as ErrorPayload & {
       choices?: Array<{ message?: { content?: unknown; images?: Array<{ image_url?: { url?: string } }> } }>;

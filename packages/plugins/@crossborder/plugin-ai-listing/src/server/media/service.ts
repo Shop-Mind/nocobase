@@ -725,9 +725,126 @@ export interface GenerateVideoInput {
   resolution?: string;
   // toPublicUrl 无 env 基址时的兜底基址(通常取请求 origin)
   publicBaseUrl?: string;
+  // 显式指定视频模型(前端「指定模型」):dashscope 走原生异步任务;其余(如 grok-imagine-video 经中转)
+  // 走 plugin-ai 通用媒体通道同步等待
+  llmService?: string;
+  model?: string;
+  // 纯文生视频(t2v):不带源图,仅 prompt(grok imagine 等 t2v 模型)
+  textToVideo?: boolean;
 }
 
 const I2V_DEFAULT_PROMPT = '让画面自然地轻微运动:商品缓慢旋转/镜头缓缓推近,展示细节,光影真实,不改变商品本身。';
+
+// 显式模型视频任务的后台推进(不 await 调用):经 plugin-ai 通用媒体通道(video_gen,10 分钟超时)生成 →
+// 产物落 File Manager + 视频候选资产 → job success/failed。全程 try/catch,绝不抛出到调用方。
+async function runExplicitVideoTask(
+  plugin: PluginLike,
+  args: {
+    jobId: number;
+    llmService: string;
+    model: string;
+    prompt: string;
+    parameters: Record<string, unknown>;
+    productId: number | null;
+    sourceUrl: string;
+    publicImgUrl: string;
+    parentAssetId: number | null;
+    duration: number | null;
+    resolution: string | null;
+    beans: number;
+  },
+): Promise<void> {
+  const { app } = plugin;
+  const Jobs = app.db.getRepository('aiListingMediaJobs');
+  const Assets = app.db.getRepository('aiListingMediaAssets');
+  const startedAt = Date.now();
+  try {
+    const { provider: llm } = await getAIPlugin(app).aiManager.getLLMService({
+      llmService: args.llmService,
+      model: args.model,
+    });
+    // 中转取公网图更稳;本地图退 data URI;t2v 无图
+    const images = args.publicImgUrl
+      ? [/^https?:/i.test(args.publicImgUrl) ? args.publicImgUrl : (await sourceImageInfo(args.sourceUrl)).dataUri]
+      : [];
+    const output = await llm.invokeMediaTask({
+      task: 'video_gen',
+      model: args.model,
+      prompt: args.prompt,
+      images,
+      audios: [],
+      options: { parameters: args.parameters },
+    });
+    const url = output.urls?.[0];
+    if (!url) throw new MediaServiceError('MEDIA_GENERATE_FAILED', '模型未返回视频');
+    let fileId = output.files?.find((f) => f.url === url)?.fileId;
+    let finalUrl = url;
+    if (fileId == null && /^https?:/i.test(url)) {
+      try {
+        const stored = await downloadToStorage(plugin as never, url);
+        fileId = stored.fileId;
+        finalUrl = stored.url || url;
+      } catch {
+        // 保留远端 URL,不阻断
+      }
+    }
+    const asset = await Assets.create({
+      values: {
+        productId: args.productId,
+        assetType: 'video',
+        role: 'video',
+        origin: 'ai_candidate',
+        finalSelected: false,
+        discarded: false,
+        parentAssetId: args.parentAssetId,
+        sourceUrl: finalUrl,
+        sourceFileId: fileId ?? null,
+        processStatus: 'success',
+        processType: 'ai_video',
+        genParams: {
+          mode: args.publicImgUrl ? 'i2v' : 't2v',
+          prompt: args.prompt,
+          duration: args.duration,
+          resolution: args.resolution,
+          model: args.model,
+          llmService: args.llmService,
+          sourceImageUrl: args.sourceUrl || null,
+          sourceAssetId: args.parentAssetId,
+          estimatedBeans: args.beans,
+        },
+        meta: { storedUrl: finalUrl, prompt: args.prompt, model: args.model },
+      },
+    });
+    await Jobs.update({
+      filterByTk: args.jobId,
+      values: {
+        status: 'success',
+        durationMs: Date.now() - startedAt,
+        metadata: {
+          mode: args.publicImgUrl ? 'i2v' : 't2v',
+          prompt: args.prompt,
+          storedUrl: finalUrl,
+          assetId: asset.get('id'),
+          estimatedBeans: args.beans,
+        },
+      },
+    });
+  } catch (e) {
+    try {
+      await Jobs.update({
+        filterByTk: args.jobId,
+        values: {
+          status: 'failed',
+          errorMessage: String((e as Error)?.message || '视频生成失败').slice(0, 500),
+          retryable: true,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+    } catch {
+      // job 更新失败只能放弃(极端情况)
+    }
+  }
+}
 
 // 图生视频:源图经 toPublicUrl 落公网 URL → DashScope 万相 i2v 异步任务 → 建 JOB_TYPE_VIDEO(带 productId)。
 // 立即返回 jobId,不阻塞(视频耗时数分钟);完成由 pollVideoJob 推进并落视频候选。
@@ -750,25 +867,80 @@ export async function generateVideo(
     const meta = (sourceAsset.get('meta') as Record<string, unknown>) || {};
     sourceUrl = (meta.storedUrl as string) || (sourceAsset.get('sourceUrl') as string) || '';
   }
-  if (!sourceUrl) throw new MediaServiceError('MEDIA_SOURCE_NOT_FOUND', '缺少源图(assetId 或 sourceImageUrl)');
+  if (!sourceUrl && !input.textToVideo) {
+    throw new MediaServiceError('MEDIA_SOURCE_NOT_FOUND', '缺少源图(assetId 或 sourceImageUrl)');
+  }
   const productId = input.productId ?? (sourceAsset?.get('productId') as number | undefined) ?? null;
 
-  // 视频端点强制公网 img_url:非公网(本地相对路径且无 env/兜底基址)直接拒,提示配置公网基址
-  const pub = await toPublicUrl(app, { url: sourceUrl }, { baseUrl: input.publicBaseUrl });
-  if (!pub.public) {
-    throw new MediaServiceError(
-      'MEDIA_SOURCE_NOT_PUBLIC',
-      '图生视频要求源图可公网访问:请配置 AI_LISTING_PUBLIC_BASE_URL(如 https://app.xuanwu.space)指向可对外访问的存储。',
-    );
+  // 视频端点强制公网 img_url:非公网(本地相对路径且无 env/兜底基址)直接拒,提示配置公网基址;t2v 无源图跳过
+  let publicImgUrl = '';
+  if (sourceUrl) {
+    const pub = await toPublicUrl(app, { url: sourceUrl }, { baseUrl: input.publicBaseUrl });
+    if (!pub.public) {
+      throw new MediaServiceError(
+        'MEDIA_SOURCE_NOT_PUBLIC',
+        '图生视频要求源图可公网访问:请配置 AI_LISTING_PUBLIC_BASE_URL(如 https://app.xuanwu.space)指向可对外访问的存储。',
+      );
+    }
+    publicImgUrl = pub.url;
   }
 
-  const provider = await resolveMediaProvider(app);
   const prompt = (input.prompt || '').trim() || I2V_DEFAULT_PROMPT;
   const parameters: Record<string, unknown> = {};
   if (input.resolution) parameters.resolution = input.resolution;
   if (input.duration) parameters.duration = input.duration;
 
-  const submitted = await provider.submitVideo({ prompt, sourceImageUrl: pub.url, parameters });
+  // —— 显式指定模型分支:经 plugin-ai 通用媒体通道(chat/completions 形状)同步等待,产物直接落视频候选。
+  // grok imagine 视频经中转即走此路;dashscope 模型不指定时仍走下方原生异步任务流(有断点续查)。
+  if (input.llmService && input.model) {
+    const beans = estimateCost({ scene: 'video', count: 1, sources: 1 }).beans;
+    const Jobs = app.db.getRepository('aiListingMediaJobs');
+    const traceId = `media-i2v-sync-${Date.now()}`;
+    const job = await Jobs.create({
+      values: {
+        jobType: JOB_TYPE_VIDEO,
+        status: 'running',
+        traceId,
+        productId,
+        assetId: input.assetId ?? null,
+        provider: input.llmService,
+        model: input.model,
+        prompt,
+        metadata: {
+          mode: input.textToVideo && !publicImgUrl ? 't2v' : 'i2v',
+          prompt,
+          duration: input.duration ?? null,
+          resolution: input.resolution ?? null,
+          sourceUrl,
+          publicImgUrl: publicImgUrl || null,
+          parentAssetId: (sourceAsset?.get('id') as number | undefined) ?? null,
+          estimatedBeans: beans,
+        },
+      },
+    });
+    const jobId = job.get('id') as number;
+    await writeAudit(app, 'ai.video_generate', prompt, traceId);
+    // 后台推进,不 await:视频生成可达 10 分钟,HTTP 层立即返回 jobId,前端沿用 videoJobStatus 轮询
+    runExplicitVideoTask(plugin, {
+      jobId,
+      llmService: input.llmService,
+      model: input.model,
+      prompt,
+      parameters,
+      productId,
+      sourceUrl,
+      publicImgUrl,
+      parentAssetId: (sourceAsset?.get('id') as number | undefined) ?? null,
+      duration: input.duration ?? null,
+      resolution: input.resolution ?? null,
+      beans,
+    });
+    return { jobId, providerTaskId: `sync-${jobId}`, model: input.model };
+  }
+
+  const provider = await resolveMediaProvider(app);
+
+  const submitted = await provider.submitVideo({ prompt, sourceImageUrl: publicImgUrl, parameters });
   const traceId = `media-i2v-${submitted.providerTaskId}`;
   const Jobs = app.db.getRepository('aiListingMediaJobs');
   const job = await Jobs.create({
@@ -789,7 +961,7 @@ export async function generateVideo(
         duration: input.duration ?? null,
         resolution: input.resolution ?? null,
         sourceUrl,
-        publicImgUrl: pub.url,
+        publicImgUrl,
         parentAssetId: (sourceAsset?.get('id') as number | undefined) ?? null,
         estimatedBeans: estimateCost({ scene: 'video', count: 1, sources: 1 }).beans,
       },
@@ -818,6 +990,8 @@ export async function pollVideoJob(
   if (status === 'failed') {
     return { status, errorMessage: (job.get('errorMessage') as string) || '视频生成失败' };
   }
+  // 显式模型分支(经 plugin-ai 通用通道)的任务无 providerTaskId:后台推进中,按 job 状态即答
+  if (!metadata.providerTaskId) return { status: 'running' };
 
   const provider = await resolveMediaProvider(app);
   const polled = await provider.pollTask(metadata.providerTaskId as string);
