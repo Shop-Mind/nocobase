@@ -445,6 +445,15 @@ export async function imageToDataURI(rawUrl: string): Promise<string> {
   return (await sourceImageInfo(rawUrl)).dataUri;
 }
 
+// grok 参考图内联专用:读源图转 dataUri,失败时退回公网 URL(公网 URL 至少还有中转站代理回抓这条兜底路)
+export async function inlineImageOrFallback(sourceUrl: string, publicUrl: string): Promise<string> {
+  try {
+    return (await sourceImageInfo(sourceUrl)).dataUri;
+  } catch {
+    return publicUrl;
+  }
+}
+
 // hd 超分目标尺寸:源图 × factor,整体等比夹进 [512, 2048];极端宽高比塞不进边界时返回 undefined
 export function upscaleSize(width: number, height: number, factor: number): string | undefined {
   let tw = width * factor;
@@ -778,11 +787,11 @@ async function runExplicitVideoTask(
       llmService: args.llmService,
       model: args.model,
     });
-    // Grok2API 在另一个容器内运行，127.0.0.1/localhost 会指向它自身而不是 NocoBase。
-    // 这类地址改为内联源图，避免中转服务回拉不存在的容器内端点。
-    const shouldInlineLoopbackImage = /^grok-imagine/i.test(args.model) && isLoopbackHttpUrl(args.publicImgUrl);
+    // grok 线参考图一律内联 dataUri:传 URL 时中转站要经海外代理出口回抓这张图(30s 超时,节点一抖整个任务就死,
+    // 实测 curl 28 "0 bytes received"),内联则完全绕开这一跳。读源图失败时退回公网 URL 兜底。
+    const shouldInlineImage = /^grok-imagine/i.test(args.model);
     const images = args.publicImgUrl
-      ? [shouldInlineLoopbackImage ? (await sourceImageInfo(args.sourceUrl)).dataUri : args.publicImgUrl]
+      ? [shouldInlineImage ? await inlineImageOrFallback(args.sourceUrl, args.publicImgUrl) : args.publicImgUrl]
       : [];
     const output = await llm.invokeMediaTask({
       task: 'video_gen',
@@ -894,30 +903,52 @@ async function runMultiVideoTask(
     const segmentPaths: string[] = [];
     for (let i = 0; i < args.segments.length; i++) {
       const seg = args.segments[i];
-      const inline = /^grok-imagine/i.test(args.model) && isLoopbackHttpUrl(seg.publicImgUrl);
-      const images = [inline ? (await sourceImageInfo(seg.sourceUrl)).dataUri : seg.publicImgUrl];
-      const output = await llm.invokeMediaTask({
-        task: 'video_gen',
-        model: args.model,
-        prompt: args.prompt,
-        images,
-        audios: [],
-        options: { parameters: args.parameters },
-      });
-      const url = output.urls?.[0];
-      if (!url) {
-        throw new MediaServiceError('MEDIA_GENERATE_FAILED', `第 ${i + 1}/${args.segments.length} 段未返回视频`);
-      }
-      // 段产物两种形态:plugin-ai 已转存本地存储(相对 /storage/...,直接读文件)/ 远端 http URL(下载)
-      let segBuf: Buffer;
-      if (/^https?:/i.test(url)) {
-        const resp = await fetch(url, { signal: AbortSignal.timeout(120000) });
-        if (!resp.ok) {
-          throw new MediaServiceError('MEDIA_GENERATE_FAILED', `第 ${i + 1} 段下载失败 HTTP ${resp.status}`);
+      // 同单图线:grok 参考图一律内联,避免中转站经代理回抓源图 URL 超时
+      const inline = /^grok-imagine/i.test(args.model);
+      const images = [inline ? await inlineImageOrFallback(seg.sourceUrl, seg.publicImgUrl) : seg.publicImgUrl];
+      // 段级重试:多段串行生成时,任何一段撞上代理节点抖动(流 60s 无字节、HTTP 5xx)都会废掉整部片子,
+      // 每段最多 3 次尝试把瞬时抖动隔离在段内。重复生成同段不会产生副作用(仅消耗上游配额)。
+      let segBuf: Buffer | undefined;
+      let lastErr: unknown;
+      const retryDelayMs = Number(process.env.AI_LISTING_SEGMENT_RETRY_DELAY_MS ?? 5000);
+      for (let attempt = 0; attempt < 3 && !segBuf; attempt++) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, attempt * retryDelayMs));
+        try {
+          const output = await llm.invokeMediaTask({
+            task: 'video_gen',
+            model: args.model,
+            prompt: args.prompt,
+            images,
+            audios: [],
+            options: { parameters: args.parameters },
+          });
+          const url = output.urls?.[0];
+          if (!url) {
+            throw new MediaServiceError('MEDIA_GENERATE_FAILED', `第 ${i + 1}/${args.segments.length} 段未返回视频`);
+          }
+          // 段产物两种形态:plugin-ai 已转存本地存储(相对 /storage/...,直接读文件)/ 远端 http URL(下载)
+          if (/^https?:/i.test(url)) {
+            const resp = await fetch(url, { signal: AbortSignal.timeout(120000) });
+            if (!resp.ok) {
+              throw new MediaServiceError('MEDIA_GENERATE_FAILED', `第 ${i + 1} 段下载失败 HTTP ${resp.status}`);
+            }
+            segBuf = Buffer.from(await resp.arrayBuffer());
+          } else {
+            segBuf = await readFile(path.join(process.cwd(), url.replace(/^\//, '')));
+          }
+        } catch (e) {
+          lastErr = e;
+          app.logger?.warn?.(
+            `[ai-listing] multi_i2v 第 ${i + 1}/${args.segments.length} 段第 ${attempt + 1} 次尝试失败: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
         }
-        segBuf = Buffer.from(await resp.arrayBuffer());
-      } else {
-        segBuf = await readFile(path.join(process.cwd(), url.replace(/^\//, '')));
+      }
+      if (!segBuf) {
+        throw lastErr instanceof Error
+          ? lastErr
+          : new MediaServiceError('MEDIA_GENERATE_FAILED', `第 ${i + 1}/${args.segments.length} 段生成失败`);
       }
       const segPath = path.join(os.tmpdir(), `ai-listing-seg-${args.jobId}-${i}.mp4`);
       await writeFile(segPath, segBuf);

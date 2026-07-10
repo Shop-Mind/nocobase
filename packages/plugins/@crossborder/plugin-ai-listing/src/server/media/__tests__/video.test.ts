@@ -311,10 +311,11 @@ describe('generateVideo · 多图 AI 成片', () => {
         meta: { storedUrl: 'https://cdn.example.com/b.jpg' },
       },
     });
-    // 段产物下载走全局 fetch:回可用的二进制
+    // 源图内联下载 + 段产物下载都走全局 fetch:回可用的二进制(带 headers,内联路径要读 content-type)
     global.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
+      headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'image/jpeg' : null) },
       arrayBuffer: async () => new Uint8Array([0, 0, 0, 1]).buffer,
     })) as never;
 
@@ -337,6 +338,10 @@ describe('generateVideo · 多图 AI 成片', () => {
     const job = tables['aiListingMediaJobs'].find((j) => j.id === res.jobId);
     expect(job?.status).toBe('success');
     expect(invoke).toHaveBeenCalledTimes(2);
+    // grok 线参考图必须内联为 dataUri(传 URL 会让中转站经代理回抓源图,节点抖动即 30s 超时)
+    for (const call of invoke.mock.calls as unknown as Array<[{ images: string[] }]>) {
+      expect(call[0].images[0]).toMatch(/^data:image\/jpeg;base64,/);
+    }
     expect(concatMock).toHaveBeenCalledTimes(1);
     expect((concatMock.mock.calls[0][0] as string[]).length).toBe(2);
     const video = tables['aiListingMediaAssets'].find((a) => a.assetType === 'video');
@@ -344,6 +349,55 @@ describe('generateVideo · 多图 AI 成片', () => {
     const gp = video?.genParams as Record<string, unknown>;
     expect(gp.mode).toBe('multi_i2v');
     expect((gp.sourceAssetIds as number[]).length).toBe(2);
+  });
+
+  it('某段瞬时失败(代理节点抖动)→ 段级重试后整片仍成功', async () => {
+    concatMock.mockClear();
+    process.env.AI_LISTING_SEGMENT_RETRY_DELAY_MS = '1';
+    // 第 2 段第一次调用模拟中转站 500(流 60s 无字节被掐),重试后成功
+    const invoke = vi
+      .fn(async () => ({ urls: ['https://relay.example.com/v1/files/video?id=seg'] }))
+      .mockImplementationOnce(async () => ({ urls: ['https://relay.example.com/v1/files/video?id=seg1'] }))
+      .mockImplementationOnce(async () => {
+        throw new Error('媒体生成失败(HTTP 500):Internal server error');
+      });
+    const { plugin, tables, repo } = makeAiPlugin(invoke);
+    const { productId, assetId } = await seedProductImage(repo, 'https://cdn.example.com/a.jpg');
+    const asset2 = await repo('aiListingMediaAssets').create({
+      values: {
+        productId,
+        assetType: 'image',
+        role: 'detail',
+        sourceUrl: 'https://cdn.example.com/b.jpg',
+        meta: { storedUrl: 'https://cdn.example.com/b.jpg' },
+      },
+    });
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k.toLowerCase() === 'content-type' ? 'image/jpeg' : null) },
+      arrayBuffer: async () => new Uint8Array([0, 0, 0, 1]).buffer,
+    })) as never;
+
+    const res = await generateVideo(plugin, {
+      productId,
+      assetIds: [assetId, asset2.get('id') as number],
+      prompt: '镜头缓慢推近',
+      duration: 6,
+      llmService: 'svc',
+      model: 'grok-imagine-video',
+    });
+    for (let i = 0; i < 40; i++) {
+      const job = tables['aiListingMediaJobs'].find((j) => j.id === res.jobId);
+      if (job?.status === 'success' || job?.status === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const job = tables['aiListingMediaJobs'].find((j) => j.id === res.jobId);
+    expect(job?.status).toBe('success');
+    // 段1 一次成功 + 段2 失败一次重试成功 = 3 次调用
+    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(concatMock).toHaveBeenCalledTimes(1);
+    delete process.env.AI_LISTING_SEGMENT_RETRY_DELAY_MS;
   });
 
   it('少于 2 张或未显式选模 → 参数错误', async () => {
