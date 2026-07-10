@@ -132,6 +132,19 @@ describe('suggestPrompts 3-tier chain', () => {
     expect(invoked).toEqual(['gpt-5.5']); // 文本级因无标题被跳过
   });
 
+  it('model returning an array of objects still yields text prompts (no "[object Object]")', async () => {
+    const { app } = makeApp({
+      services: [{ llmService: 'svc', models: [VISION, DEEPSEEK] }],
+      answers: {
+        'gpt-5.5': '[{"镜头":"柔光下商品静置桌面,镜头缓慢推近"},{"script":"影棚背景,镜头环绕一周"},{"n":1}]',
+      },
+      productTitle: '圣诞酒瓶套',
+    });
+    const res = await suggestPrompts(app, { assetId: 1, scene: 'scene_gen' });
+    expect(res.basis).toBe('image');
+    expect(res.prompts).toEqual(['柔光下商品静置桌面,镜头缓慢推近', '影棚背景,镜头环绕一周']);
+  });
+
   it('AI_LISTING_SUGGEST_MODEL pins a single model', async () => {
     process.env.AI_LISTING_SUGGEST_MODEL = 'qwen3.7-plus';
     const { app, invoked } = makeApp({

@@ -687,47 +687,6 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
           />
         </div>
 
-        {/* 时长 + 分辨率 */}
-        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 16 }}>
-          <div>
-            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-              ⏱️ {t('Duration')}
-            </Typography.Text>
-            <Segmented
-              value={duration}
-              onChange={(v) => setDuration(Number(v))}
-              options={DURATIONS.map((d) => ({ value: d, label: `${d}s` }))}
-            />
-            {/grok|imagine/i.test(videoModelKey) ? (
-              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
-                {t('This model decides clip length itself (~6s)')}
-              </Typography.Text>
-            ) : null}
-          </div>
-          <div>
-            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-              🖥️ {t('Resolution')}
-            </Typography.Text>
-            <Segmented value={resolution} onChange={(v) => setResolution(String(v))} options={RESOLUTIONS} />
-          </div>
-          <div style={{ minWidth: 220 }}>
-            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-              ⚙️ {t('Video model')}
-            </Typography.Text>
-            <Select
-              size="small"
-              style={{ width: '100%' }}
-              value={videoModelKey}
-              onChange={setVideoModelKey}
-              data-testid="ws-video-model"
-              options={[
-                { value: '', label: t('Auto model') },
-                ...videoModels.map((m) => ({ value: `${m.llmService}:${m.model}`, label: m.label })),
-              ]}
-            />
-          </div>
-        </div>
-
         {/* 快捷模板(参考旧版视频参数设置):智能推理=推荐词三级链;其余为专业运镜预设,点击整填、再点取消 */}
         <div style={{ marginBottom: 6 }}>
           <Typography.Text strong style={{ fontSize: 13 }}>
@@ -775,6 +734,47 @@ export function VideoPane({ app, productId, sources, loadingSources, t }: VideoP
           rows={4}
           style={{ margin: '8px 0 16px' }}
         />
+
+        {/* 时长 + 分辨率 */}
+        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 16 }}>
+          <div>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+              ⏱️ {t('Duration')}
+            </Typography.Text>
+            <Segmented
+              value={duration}
+              onChange={(v) => setDuration(Number(v))}
+              options={DURATIONS.map((d) => ({ value: d, label: `${d}s` }))}
+            />
+            {/grok|imagine/i.test(videoModelKey) ? (
+              <Typography.Text type="secondary" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
+                {t('This model decides clip length itself (~6s)')}
+              </Typography.Text>
+            ) : null}
+          </div>
+          <div>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+              🖥️ {t('Resolution')}
+            </Typography.Text>
+            <Segmented value={resolution} onChange={(v) => setResolution(String(v))} options={RESOLUTIONS} />
+          </div>
+          <div style={{ minWidth: 220 }}>
+            <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+              ⚙️ {t('Video model')}
+            </Typography.Text>
+            <Select
+              size="small"
+              style={{ width: '100%' }}
+              value={videoModelKey}
+              onChange={setVideoModelKey}
+              data-testid="ws-video-model"
+              options={[
+                { value: '', label: t('Auto model') },
+                ...videoModels.map((m) => ({ value: `${m.llmService}:${m.model}`, label: m.label })),
+              ]}
+            />
+          </div>
+        </div>
 
         {/* 生成 + 进度态 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, borderTop: '1px solid #f0f0f0', paddingTop: 14 }}>

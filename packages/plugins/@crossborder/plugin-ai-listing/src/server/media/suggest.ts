@@ -181,10 +181,20 @@ function parsePrompts(text: string, n: number, maxLen = 60): string[] {
       )
       .filter(Boolean);
   }
+  // 条目归一成纯文本:模型偶尔返回对象数组(如 [{"镜头":"..."}]),硬转 String 会变 "[object Object]"——
+  // 取对象里第一个字符串字段;仍取不到就丢弃该条
+  const toText = (p: unknown): string => {
+    if (typeof p === 'string') return p.trim();
+    if (p && typeof p === 'object') {
+      const v = Object.values(p as Record<string, unknown>).find((x) => typeof x === 'string');
+      return typeof v === 'string' ? v.trim() : '';
+    }
+    return '';
+  };
   const seen = new Set<string>();
   const out: string[] = [];
   for (const p of arr) {
-    const v = String(p).trim();
+    const v = toText(p);
     if (v && v.length <= maxLen && !seen.has(v)) {
       seen.add(v);
       out.push(v);
