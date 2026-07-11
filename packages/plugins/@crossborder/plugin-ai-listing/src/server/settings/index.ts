@@ -109,6 +109,7 @@ export function setupSettings(plugin: Plugin): void {
             config: {
               defaultPlatform: config.get('defaultPlatform') || null,
               defaultRuleId: defaultRuleId || null,
+              defaultStock: Number(config.get('defaultStock')) || null,
               crawl4aiEnabled: !!config.get('crawl4aiEnabled'),
               openApiIpWhitelisted: ipWhitelisted,
             },
@@ -140,6 +141,7 @@ export function setupSettings(plugin: Plugin): void {
         const v = (ctx.action?.params?.values || {}) as {
           defaultPlatform?: string;
           defaultRuleId?: number | null;
+          defaultStock?: number | null;
           crawl4aiEnabled?: boolean;
           openApiIpWhitelisted?: boolean;
         };
@@ -148,11 +150,20 @@ export function setupSettings(plugin: Plugin): void {
           ctx.body = fail('INVALID_DEFAULT_PLATFORM', '默认平台不在支持列表内', false, traceId);
           return await next();
         }
+        if (v.defaultStock !== undefined && v.defaultStock !== null) {
+          const n = Number(v.defaultStock);
+          if (!Number.isInteger(n) || n < 0 || n > 999999) {
+            ctx.status = 400;
+            ctx.body = fail('INVALID_DEFAULT_STOCK', '缺省库存必须是 0-999999 的整数（0 = 关闭）', false, traceId);
+            return await next();
+          }
+        }
         const { Config } = getRepos(db);
         const config = await loadConfig(Config);
         const patch: Record<string, unknown> = {};
         if (v.defaultPlatform !== undefined) patch.defaultPlatform = v.defaultPlatform || null;
         if (v.defaultRuleId !== undefined) patch.defaultRuleId = v.defaultRuleId || null;
+        if (v.defaultStock !== undefined) patch.defaultStock = Number(v.defaultStock) || null;
         if (v.crawl4aiEnabled !== undefined) patch.crawl4aiEnabled = !!v.crawl4aiEnabled;
         if (v.openApiIpWhitelisted !== undefined) patch.openApiIpWhitelisted = !!v.openApiIpWhitelisted;
         await Config.update({ filterByTk: config.get('id'), values: patch });

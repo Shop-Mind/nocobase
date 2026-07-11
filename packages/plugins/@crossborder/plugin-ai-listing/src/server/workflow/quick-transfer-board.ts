@@ -93,6 +93,8 @@ export function setupQuickTransferBoard(plugin: Plugin): void {
             if (errJob) {
               row.errorCode = errJob.result?.errorCode ?? null;
               row.errorMessage = errJob.result?.message ?? null;
+              // 下一步指引（QT4）：节点 ERROR result 里的 nextAction，看板 tooltip 直接展示。
+              row.nextAction = errJob.result?.nextAction ?? null;
             }
             const pending = jobs.find((j) => j.status === 0);
             if (pending) {

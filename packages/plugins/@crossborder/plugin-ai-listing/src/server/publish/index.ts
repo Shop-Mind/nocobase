@@ -132,6 +132,12 @@ export class PublishServiceError extends Error {
   }
 }
 
+// 幂等层①短路判定（QT4）：失败批次放行真重试，其余（success/running/skipped）短路防重。
+// running 必须短路——同 key 并发重入会双发；导出供单测覆盖语义。
+export function shouldShortCircuitBatch(batchStatus: string): boolean {
+  return !['failed', 'partial_failed'].includes(batchStatus);
+}
+
 // 服务化入口：创建发布批次并逐条发布（双层幂等、precheck、真实/mock 分流、限速）。
 // publish action 与工作流 listing-publish-draft 节点共用，行为与原 action 一致。
 export async function runPublishBatch(
@@ -148,10 +154,12 @@ export async function runPublishBatch(
   const repos = getRepos(plugin.app.db);
 
   // 幂等层 ①：idempotencyKey 命中近期批次则直接返回该批次（防重复点击重复建批次/记录）。
+  // QT4：只短路「成功/运行中/全跳过」批次；失败批次（failed/partial_failed）放行真重试——
+  // 已成功的商品由幂等层②（同商品+同店铺成功记录跳过）兜住，不会重复发布。
   if (input.idempotencyKey) {
     const recent = await repos.Batches.find({ sort: ['-id'], limit: 50 });
     const dup = recent.find((b: any) => (b.get('metadata') || {}).idempotencyKey === input.idempotencyKey);
-    if (dup) {
+    if (dup && shouldShortCircuitBatch(String(dup.get('status')))) {
       return {
         idempotent: true as const,
         batchId: dup.get('id') as number,
