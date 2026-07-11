@@ -33,6 +33,36 @@ export default defineCollection({
         },
       },
     },
+    // rule/targetStore 关联字段复用下面两个外键列——表单渲染成按名称选择的下拉（留空走工作流兜底链），
+    // 工作流节点仍读 {{$context.data.ruleId}}/{{$context.data.targetStoreId}}，行为不变。
+    {
+      type: 'belongsTo',
+      name: 'rule',
+      target: 'aiListingRules',
+      foreignKey: 'ruleId',
+      targetKey: 'id',
+      interface: 'm2o',
+      title: '处理规则',
+      uiSchema: {
+        title: '处理规则（留空用默认规则）',
+        'x-component': 'AssociationField',
+        'x-component-props': { multiple: false, fieldNames: { label: 'name', value: 'id' } },
+      },
+    },
+    {
+      type: 'belongsTo',
+      name: 'targetStore',
+      target: 'aiListingPlatformAccounts',
+      foreignKey: 'targetStoreId',
+      targetKey: 'id',
+      interface: 'm2o',
+      title: '目标店铺',
+      uiSchema: {
+        title: '目标店铺（留空用默认店铺）',
+        'x-component': 'AssociationField',
+        'x-component-props': { multiple: false, fieldNames: { label: 'storeName', value: 'id' } },
+      },
+    },
     {
       type: 'bigInt',
       name: 'ruleId',

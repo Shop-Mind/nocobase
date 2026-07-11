@@ -120,10 +120,11 @@ async function api(pathname, { method = 'post', body, query } = {}) {
         type: 'createForm',
         target: { uid: gridUid || tabUid },
         resourceInit: { dataSourceKey: 'main', collectionName: 'aiListingQuickTransferRequests' },
+        // rule/targetStore 是 belongsTo 关联字段（复用 ruleId/targetStoreId 外键列）→ 表单渲染成按名称选择的下拉。
         fields: [
           { key: 'fSourceUrl', fieldPath: 'sourceUrl' },
-          { key: 'fRuleId', fieldPath: 'ruleId' },
-          { key: 'fTargetStoreId', fieldPath: 'targetStoreId' },
+          { key: 'fRule', fieldPath: 'rule' },
+          { key: 'fTargetStore', fieldPath: 'targetStore' },
           { key: 'fSkipMedia', fieldPath: 'skipMedia' },
         ],
         actions: [{ type: 'submit', settings: { title: '开始搬运' } }],
@@ -173,6 +174,25 @@ async function api(pathname, { method = 'post', body, query } = {}) {
   opt.stepParams.jsSettings.runJs.code = code;
   await c.query(`update "flowModels" set options=$1 where uid=$2`, [opt, blockUid]);
   console.log(`board code synced: oldLen=${oldLen} newLen=${code.length}`);
+
+  // 3.5) 区块顺序：表单在上、看板在下（重建表单后新行会追加到末尾，rowOrder 调回）
+  if (gridUid && formUid && blockUid) {
+    const gridRow = (await q(`select options from "flowModels" where uid=$1`, [gridUid]))[0];
+    const gopt = gridRow.options;
+    const layout = gopt?.stepParams?.gridSettings?.grid || gopt?.props;
+    if (layout?.rows && Array.isArray(layout.rowOrder)) {
+      const rowOf = (uid) => Object.keys(layout.rows).find((rk) => (layout.rows[rk] || []).flat().includes(uid));
+      const formRow = rowOf(formUid);
+      const boardRow = rowOf(blockUid);
+      if (formRow && boardRow && layout.rowOrder.indexOf(formRow) > layout.rowOrder.indexOf(boardRow)) {
+        const newOrder = [formRow, ...layout.rowOrder.filter((rk) => rk !== formRow)];
+        if (gopt.props?.rowOrder) gopt.props.rowOrder = newOrder;
+        if (gopt.stepParams?.gridSettings?.grid?.rowOrder) gopt.stepParams.gridSettings.grid.rowOrder = newOrder;
+        await c.query(`update "flowModels" set options=$1 where uid=$2`, [gopt, gridUid]);
+        console.log(`grid rowOrder fixed: form row first (${newOrder.join(' > ')})`);
+      }
+    }
+  }
 
   // 4) tab 路由授权
   for (const role of ROLES) {

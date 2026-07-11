@@ -14,6 +14,10 @@ import { selectField } from '../shared/tracing-fields';
 // 且通过 ACL 仅允许管理员读取（运营/审核/只读角色不授予该字段权限）。
 export default defineCollection({
   dataCategory: 'business',
+  // uiManageable + titleField（快速搬运表单下拉）：db2cm 在 upgrade 时暴露到 UI 数据源，关联选择按名称显示。
+  // 平台账号敏感列已有全局护栏：*Enc 密文对所有角色剥离、credentialRef 仅特权角色可见（见 acl/index.ts）。
+  uiManageable: true,
+  titleField: 'storeName',
   name: 'aiListingPlatformAccounts',
   title: 'Platform accounts',
   fields: [

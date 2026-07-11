@@ -13,6 +13,9 @@ import { selectField } from '../shared/tracing-fields';
 // 处理规则表。承载翻译 / 价格 / 字段映射 / 媒体处理配置与 AI 提示词模板。
 export default defineCollection({
   dataCategory: 'business',
+  // uiManageable + titleField（快速搬运表单下拉）：db2cm 在 upgrade 时暴露到 UI 数据源，关联选择按规则名显示。
+  uiManageable: true,
+  titleField: 'name',
   name: 'aiListingRules',
   title: 'Rules',
   updatedBy: true,
