@@ -126,31 +126,47 @@
 - **审计**：各段沿用自身审计与 taskSteps；工作流执行记录天然多一层逐节点审计。manual 待办提交人 = 「确认继续」的真实操作者。
 - **与 wf_product_publish 的关系**：发布节点落 PublishBatches 终态后自然触发既有通知工作流，无需改动。
 
-## 5. Phase 拆分（v2，可执行/可测/可验收）
+## 5. 已完成基建（2026-07-11，commit 90d3449b53，E2E 已真实跑通）
 
-### Q0 — 服务函数抽取 + 4 个自定义节点（服务端）
-- 范围：runJob/approveDraft/publish 服务化抽取（回归单测保证 action 行为不变）；`src/server/workflow/instructions/` 四节点 + 注册（与 plugin-ai 同款时机拿 workflow 插件实例）；触发 collection `aiListingQuickTransferRequests`。
-- 测试：单测（每个 instruction mock processor 跑 RESOLVED/ERROR 两路）；既有 processing/review/publish 单测全绿。
-- 验收：服务端可见 4 节点注册；`yarn test` 相关套件全绿。
+Demo 验收通过（用户：「我觉得很完美了」）。已落地并提交：
 
-### Q1 — 画布可视 + 建链 + 真实跑通（demo 验收点）
-- 范围：客户端节点注册（画布渲染/配置表单/分组）；幂等建链脚本 `create-quick-transfer-workflow.js`（workflows + 节点链：capture→process→condition(skipMedia)→manual→approve→publishDraft）；快速搬运表单（原生 FormV2 绑触发 collection）。
-- 测试：E2E `verify-q1-workflow.js`（建行触发 → 轮询执行到 manual 待办 → 提交待办 → 执行 success 拿 draftUrl；skipMedia=true 直通分支）。
-- 验收：**用户在工作流页看到流程画布；贴一条真 URL，执行记录逐节点走完，拿到 Alibaba 草稿链接**。
+- **服务化抽取**（行为不变，原单测 16+8+3+28 全绿）：`runProcessingForProducts` / `approveProductDraft` / `runPublishBatch` 从 action 闭包提为导出函数，action 变薄壳。
+- **4 个自定义工作流节点**（服务端注册 + v1/v2 画布注册 + i18n）：`listingCapture` / `listingProcess` / `listingApprove` / `listingPublishDraft`；发布节点 strategy 锁 `draft`、幂等键=执行 id；规则兜底链（config → aiListingConfig.defaultRuleId → 首条启用规则）、店铺兜底链（config → isDefault → 首家 connected）。
+- **触发集合** `aiListingQuickTransferRequests`（uiManageable：sourceUrl/ruleId/targetStoreId/skipMedia）。
+- **工作流实例** `快速搬运流水线（URL→改图→上架草稿）` id=374711387553792（本地建，共库）：数据表事件 → 抓取 → 处理 → manual 人工卡点 → 提审 → 发布草稿；画布路径 `/admin/settings/workflow/workflows/<id>`。
+- **E2E 实证**：真实 URL → 39s 到人工卡点 →（卡点期间 saveFinal 补库存）→ 提交待办 → 真实 Alibaba 草稿（图片银行 6 主图+15 详情图）。失败路径同样验证过（PUBLISH_STOCK_INVALID 在执行记录节点上直读）。
+- Demo 数据已净零清理；工作流定义保留。
 
-### Q2 — 动线打磨
-- 范围：manual 待办文案/跳转（待办卡片带商品摘要 + 「去改图」链接携 productId）；表单默认值预填（defaultRuleId/isDefault 店铺）；AI 员工 formFiller 填表验证（Kai 填 URL 提交）。
-- 验收：用户实操「URL→待办改图→采纳→提交待办→草稿」，草稿主图为改后图。
+**执行约束（用户明示）**：① 既有功能已测试稳定，一律不动（只增不改）；② QT1–QT5 全部验收完成前**不打包发布生产**。
 
-### Q3 — 批量与看板
-- 范围：批量入口（多行 URL → 逐行建触发行）；执行看板业务视图（按商品聚合执行状态/草稿链接/失败重试）；并发节流。
-- 验收：一次贴 10 条链接，看板可追踪全部结果。
+## 6. 剩余 Phase 拆分（QT1–QT6，可执行/可测/可验收）
 
-### Q4 — 体验与健壮性收口
-- 范围：错误文案映射（errorCode→中文指引）；stock 缺省策略设置项；同 URL 防重；权限复核（工作流查看/待办指派角色矩阵）；i18n/a11y；生产部署（含 nginx reload 铁律 + 建链脚本生产幂等重放）。
-- 验收：全量回归（既有 4 页动线不受影响）+ 生产可用。
+### QT1 — 触发入口：商品抓取页「快速搬运」tab
+- **范围**：商品抓取页（canonical 25bklerklud）新增第 5 个 tab「快速搬运」（不动现有 4 个 tab）：上方原生 FormV2 绑 `aiListingQuickTransferRequests`（4 字段 + 提交）+ Kai aiEmployee 按钮（AI 代填，商品抓取页同范式）；下方 jsBlock「搬运看板」：最近请求 + 对应执行状态（executions:list 按 workflowId）+ 待办直达 + 草稿链接列 + 刷新。
+- **改动**：幂等建页脚本 `docs/plans/scripts/create-quick-transfer-tab.js`（add-tab → add-block 原生表单[resourceInit+fieldPath] → add-action 挂 Kai → add-block jsBlock；商品抓取页 enableTabs 已为 true）；jsBlock 真源 `docs/jsblocks/quick-transfer-board.js`。
+- **测试/验收**：表单提交 → 工作流执行启动（看板 6s 内出现新执行）；AI 填表可用；现有 URL/店铺/关键词/批量 4 tab 零回归（逐个打开+提交冒烟）。
 
-## 6. 风险与对策
+### QT2 — skipMedia 条件分支（工作流新版本）+ 建链脚本固化
+- **范围**：已执行的工作流版本被引擎锁定 → `workflows:revision` 复制新版 → 新版在处理节点后加官方 condition 节点（basic 引擎判 `{{$context.data.skipMedia}}`）：真分支直通提审、假分支走 manual 卡点 → 切换启用新版。把建链固化为幂等脚本 `docs/plans/scripts/create-quick-transfer-workflow.js`（进版本库，支持从零重建/生产重放；分支节点 branchIndex 语义照 plugin-workflow 约定）。
+- **测试/验收**：skipMedia=true 一条龙无待办直达草稿；false 停待办；两分支执行记录画布正确显示走向。
+
+### QT3 — 待办体验：改图卡点直达
+- **范围**：manual 节点 config 增强：待办标题模板带商品名；schema 渲染商品摘要（标题/主图/价格）+「去预览编辑改图」「去创意工坊」链接（携 productId，工坊回跳）；任务中心（/admin/workflow/tasks）与页面待办区块入口确认可用。
+- **测试/验收**：从待办一键直达改图页，改完回待办提交，工作流继续；待办卡片信息完整可读。
+
+### QT4 — 健壮性与缺省值
+- **范围**：① 发布重试语义：`runPublishBatch` 幂等层①改为只短路**成功**批次（失败批次放行真重试；publish action 行为回归单测护住）；② `aiListingConfig.defaultStock` 缺省库存（设置页加项，发布节点 precheck 前兜底写入，默认关闭——关闭时行为与现状完全一致）；③ 同 URL 防重（触发入口查同 URL 非终态执行给提示）；④ 节点 errorCode → 中文指引映射（执行记录 result 携带 nextAction）。
+- **测试/验收**：单测覆盖幂等新语义 + defaultStock 开/关两态；失败执行重跑能真重试；无库存商品在开启缺省时直通草稿。
+
+### QT5 — 批量与看板升级
+- **范围**：表单支持多行 URL 粘贴（逐行建请求行=逐行独立执行，publish 限速已内置）；看板升级：按请求聚合执行状态/失败原因/重跑按钮/草稿链接/耗时；批量场景防重与并发观测。
+- **测试/验收**：一次贴 10 条（含 1 条坏链）：9 成功 1 失败可单独重跑，看板全程可跟踪。
+
+### QT6 — 整体验收 + 上线发布（**须用户发话才打包**）
+- **范围**：E2E 脚本固化 `docs/plans/scripts/verify-qt-workflow.js`（gate/skip 两分支，净零清理）；全量回归（既有 4 页动线 + 全部单测）；打包 v2-slim-00x（slim-increment 流程 + compose up 后 nginx reload 铁律 + 全插件前端包 200 + 浏览器探针零报错验收）；生产侧确认：workflow 定义共库已在、新表由容器启动 upgrade 自动同步、生产跑通一条真实搬运。
+- **验收**：生产环境从「贴 URL」到「草稿链接」完整可用，既有功能零回归。
+
+## 7. 风险与对策
 
 | 风险 | 对策 |
 |---|---|
@@ -160,7 +176,7 @@
 | 用户重复点「开始搬运」重复建商品 | 同 URL 非终态 run 查重提示 + publish 幂等键双保险 |
 | 生产部署 | 走 slim-increment 流程；**compose up 后必须 nginx reload**；上线验收=全插件前端包 200 + 浏览器探针零报错 |
 
-## 7. 与铁律/权限的关系（不变式）
+## 8. 与铁律/权限的关系（不变式）
 
 - AI 只产候选（origin=ai_candidate），采纳/弃用是用户显式动作（audit actorType=user）——改图卡点原样保留；
 - 真实对外发布（含草稿创建）由用户点击触发，pipeline 不自动执行 Leg B；
