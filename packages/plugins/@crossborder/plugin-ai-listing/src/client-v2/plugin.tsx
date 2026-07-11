@@ -13,6 +13,7 @@ import { setupAssistantBridge } from './components/assistant-bridge';
 import { setupJsBlockAI } from './ai/jsblock-ai';
 import { setupMediaKit } from './components/MediaStudio';
 import { injectCreativeConsole } from './components/shared/inject-styles';
+import { registerQuickTransferWorkflowNodes } from './workflow/quick-transfer-nodes';
 
 // 业务页面采用 NocoBase 原生页面（在 admin 框架内，通过 flow-surfaces 菜单+页面创建），不再注册脱离框架的自定义路由。
 // 本插件客户端只保留：设置页注册，以及 components 下的 requestWithFriendlyError / ListingPageErrorBoundary 等工具，供后续自定义区块复用。
@@ -35,6 +36,13 @@ export class PluginAiListingClientV2 extends Plugin<any, Application> {
       setupMediaKit(this.app);
     } catch {
       // 桥接失败不影响主应用（jsBlock 可回退）。
+    }
+
+    // 快速搬运工作流节点的画布注册（节点标题/图标/输出变量；不注册画布会显示 Unsupported node 占位）。
+    try {
+      registerQuickTransferWorkflowNodes(this.app.pm);
+    } catch {
+      // plugin-workflow 客户端不可用时静默跳过。
     }
 
     // 设置页：/v/admin/settings/ai-listing。

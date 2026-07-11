@@ -7,6 +7,11 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
+// ⚠️ 构建器外部化锚点：nocobase-build 只用行首静态 import 的文本扫描来决定哪些包进 externals（动态
+// import() 不被识别）。没有这行 type-only import，`@nocobase/plugin-ai/client-v2` 会被从源码打进本插件
+// 客户端包（拖入 handlebars→fs/path 直接构建失败）。它在编译期被完全擦除，不改变下方懒加载行为。
+import type {} from '@nocobase/plugin-ai/client-v2';
+
 // 结构化最小类型：同时兼容 v1（@nocobase/client）与 v2（@nocobase/client-v2）的 Application 实例，
 // 使本桥可被两套 client 的插件 load() 复用（运行中的 /admin 应用加载的是本插件 src/client 即 v1 入口）。
 export type HostApp = {

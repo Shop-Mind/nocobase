@@ -16,6 +16,7 @@ import { setupJsBlockAI } from '../client-v2/ai/jsblock-ai';
 import { setupMediaKit } from '../client-v2/components/MediaStudio';
 import { setupWorkshopKit } from '../client-v2/components/CreativeWorkshop';
 import { injectCreativeConsole } from '../client-v2/components/shared/inject-styles';
+import { registerQuickTransferWorkflowNodes } from '../client-v2/workflow/quick-transfer-nodes';
 
 export class PluginAiListingClient extends Plugin {
   async load() {
@@ -39,6 +40,12 @@ export class PluginAiListingClient extends Plugin {
       setupWorkshopKit(this.app);
     } catch {
       // 安装失败静默（不阻断插件加载）。
+    }
+    // 快速搬运工作流节点的画布注册（节点标题/图标/输出变量；不注册画布会显示 Unknown node 占位）。
+    try {
+      registerQuickTransferWorkflowNodes(this.app.pm);
+    } catch {
+      // plugin-workflow 客户端不可用时静默跳过。
     }
   }
 }

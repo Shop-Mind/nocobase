@@ -284,6 +284,56 @@ async function runJob(
   return { total: productIds.length, success, failed, status, outcomes };
 }
 
+// 服务化错误：供非 HTTP 调用方（工作流节点等）拿到结构化错误码；action 层负责映射为 HTTP 状态与 fail() 信封。
+export class ProcessingServiceError extends Error {
+  constructor(
+    public code: string,
+    message: string,
+    public retryable = false,
+  ) {
+    super(message);
+    this.name = 'ProcessingServiceError';
+  }
+}
+
+// 服务化入口：按规则处理一批商品（校验规则 → 建 ProcessingJob → 逐条跑）。runRule action 与工作流 listing-process 节点共用。
+export async function runProcessingForProducts(
+  plugin: Plugin,
+  input: { productIds: number[]; ruleId: number; traceId: string },
+) {
+  const repos = getProcessRepos(plugin.app.db);
+  const ruleRow = await repos.Rules.findOne({ filterByTk: input.ruleId });
+  if (!ruleRow) {
+    throw new ProcessingServiceError('RULE_NOT_FOUND', '处理规则不存在');
+  }
+  if (!ruleRow.get('enabled')) {
+    throw new ProcessingServiceError('RULE_DISABLED', '该规则已禁用，请先启用或选择其它规则', true);
+  }
+  const rule = {
+    id: ruleRow.get('id'),
+    name: ruleRow.get('name'),
+    config: (ruleRow.get('config') || {}) as RuleConfig,
+    mappingRows: (ruleRow.get('mappingRows') || []) as MappingRow[],
+  };
+
+  const job = await repos.Jobs.create({
+    values: {
+      ruleId: input.ruleId,
+      productIds: input.productIds,
+      status: 'running',
+      currentStage: '参数替换',
+      totalCount: input.productIds.length,
+      successCount: 0,
+      failedCount: 0,
+      progress: 0,
+      traceId: input.traceId,
+    },
+  });
+  const jobId = job.get('id');
+  const stats = await runJob(repos, jobId, input.productIds, rule, input.traceId);
+  return { jobId, jobNo: job.get('jobNo'), ...stats };
+}
+
 export function setupProcessing(plugin: Plugin): void {
   const { app } = plugin;
   const db = app.db;
@@ -311,48 +361,25 @@ export function setupProcessing(plugin: Plugin): void {
           return await next();
         }
 
-        const repos = getProcessRepos(db);
-        const ruleRow = await repos.Rules.findOne({ filterByTk: ruleId });
-        if (!ruleRow) {
-          ctx.status = 404;
-          ctx.body = fail('RULE_NOT_FOUND', '处理规则不存在', false, traceId);
-          return await next();
+        let result: Awaited<ReturnType<typeof runProcessingForProducts>>;
+        try {
+          result = await runProcessingForProducts(plugin, { productIds, ruleId, traceId });
+        } catch (e) {
+          if (e instanceof ProcessingServiceError) {
+            ctx.status = e.code === 'RULE_NOT_FOUND' ? 404 : 400;
+            ctx.body = fail(e.code, e.message, e.retryable, traceId);
+            return await next();
+          }
+          throw e;
         }
-        if (!ruleRow.get('enabled')) {
-          ctx.status = 400;
-          ctx.body = fail('RULE_DISABLED', '该规则已禁用，请先启用或选择其它规则', true, traceId);
-          return await next();
-        }
-        const rule = {
-          id: ruleRow.get('id'),
-          name: ruleRow.get('name'),
-          config: (ruleRow.get('config') || {}) as RuleConfig,
-          mappingRows: (ruleRow.get('mappingRows') || []) as MappingRow[],
-        };
-
-        const job = await repos.Jobs.create({
-          values: {
-            ruleId,
-            productIds,
-            status: 'running',
-            currentStage: '参数替换',
-            totalCount: productIds.length,
-            successCount: 0,
-            failedCount: 0,
-            progress: 0,
-            traceId,
-          },
-        });
-        const jobId = job.get('id');
-
-        const stats = await runJob(repos, jobId, productIds, rule, traceId);
+        const { jobId, jobNo, ...stats } = result;
         ctx.logger?.info(`[ai-listing][${traceId}] processing job ${jobId} done`, {
           jobId,
           ...{ total: stats.total, success: stats.success, failed: stats.failed, status: stats.status },
         });
         ctx.body = {
           ok: true,
-          data: { jobId, jobNo: job.get('jobNo'), ...stats },
+          data: { jobId, jobNo, ...stats },
           warnings: stats.failed ? [`${stats.failed} 个商品处理失败，可在进度明细中重试`] : [],
           errors: [],
           traceId,

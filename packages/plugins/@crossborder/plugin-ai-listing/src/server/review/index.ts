@@ -120,6 +120,88 @@ function mockAttributes(existing: Record<string, any>): { attrs: Record<string, 
 
 const MOCK_NOTE = '当前未配置可用模型或模型调用失败，返回示例建议；配置模型后将由真实模型生成。';
 
+// 服务化错误：供非 HTTP 调用方（工作流节点等）拿到结构化错误码；action 层负责映射 HTTP 状态。
+export class ReviewServiceError extends Error {
+  constructor(
+    public code: string,
+    message: string,
+    public retryable = false,
+  ) {
+    super(message);
+    this.name = 'ReviewServiceError';
+  }
+}
+
+// 服务化入口：标记审核通过（含 titleFinal 自动兜底）。approveDraft action 与工作流 listing-approve 节点共用，逻辑保持一致。
+export async function approveProductDraft(
+  plugin: Plugin,
+  input: { productId: number; actor: { type: 'user' | 'system'; id: string | number }; traceId: string },
+): Promise<{ id: number; status: 'reviewed'; already: boolean; titleAutoFilled: string | null }> {
+  const { productId: id, actor, traceId } = input;
+  const { Products, AuditLogs } = getRepos(plugin.app.db);
+  const p = await Products.findOne({ filterByTk: id });
+  if (!p) {
+    throw new ReviewServiceError('PRODUCT_NOT_FOUND', '商品不存在');
+  }
+  if (p.get('status') === 'reviewed') {
+    return { id, status: 'reviewed', already: true, titleAutoFilled: null };
+  }
+  // 只允许从编辑流内的状态标记审核（publish_failed 可直接重新提审——失败原因在平台侧、本地无需改动时的快捷通道）。
+  if (!EDITABLE_STATUS.includes(p.get('status'))) {
+    throw new ReviewServiceError(
+      'REVIEW_STATUS_INVALID',
+      `商品状态「${p.get('status')}」不能标记审核。已发布/发布中的商品请先「退回编辑」。`,
+      true,
+    );
+  }
+  // 免采纳兜底：最终标题未填时自动沿用原标题（仅做平台合规清洗），不再强制先点「采纳」。
+  // 只有连原始标题都没有的商品才拒绝审核（发布必然失败，早拦截）。
+  let titleAutoFilled: string | null = null;
+  const titleFinal = p.get('titleFinal');
+  if (!titleFinal || !String(titleFinal).trim()) {
+    const fallbackTitle = cleanTitle(String(p.get('titleOriginal') || '')).trim();
+    if (!fallbackTitle) {
+      throw new ReviewServiceError(
+        'REVIEW_TITLE_REQUIRED',
+        '商品没有任何可用标题（原始标题为空），请先填写「商品标题」再标记审核。',
+        true,
+      );
+    }
+    titleAutoFilled = fallbackTitle;
+    await Products.update({ filterByTk: id, values: { titleFinal: fallbackTitle } });
+    await AuditLogs.create({
+      values: {
+        actorType: 'system',
+        actorId: 'rule-engine',
+        action: 'review.title_autofill',
+        resourceType: 'product',
+        resourceId: id,
+        fieldName: 'titleFinal',
+        oldValue: titleFinal ?? null,
+        newValue: fallbackTitle,
+        reason: '标记审核时最终标题未填，自动沿用原标题（合规清洗后）',
+        traceId,
+      },
+    });
+  }
+  await Products.update({ filterByTk: id, values: { status: 'reviewed', reviewStatus: 'reviewed' } });
+  await AuditLogs.create({
+    values: {
+      actorType: actor.type,
+      actorId: actor.id,
+      action: 'review.approve',
+      resourceType: 'product',
+      resourceId: id,
+      fieldName: 'status',
+      oldValue: p.get('status'),
+      newValue: 'reviewed',
+      reason: actor.type === 'user' ? '人工审核通过，关键字段锁定' : '快速搬运工作流确认后自动提审，关键字段锁定',
+      traceId,
+    },
+  });
+  return { id, status: 'reviewed', already: false, titleAutoFilled };
+}
+
 export function setupReview(plugin: Plugin): void {
   const { app } = plugin;
   const db = app.db;
@@ -446,80 +528,29 @@ export function setupReview(plugin: Plugin): void {
           ctx.body = fail('NO_PRODUCT_ID', '缺少商品 id', false, traceId);
           return await next();
         }
-        const { Products, AuditLogs } = getRepos(db);
-        const p = await Products.findOne({ filterByTk: id });
-        if (!p) {
-          ctx.status = 404;
-          ctx.body = fail('PRODUCT_NOT_FOUND', '商品不存在', false, traceId);
-          return await next();
+        let approved: Awaited<ReturnType<typeof approveProductDraft>>;
+        try {
+          approved = await approveProductDraft(plugin, {
+            productId: id,
+            actor: { type: 'user', id: currentUserId(ctx) },
+            traceId,
+          });
+        } catch (e) {
+          if (e instanceof ReviewServiceError) {
+            ctx.status = e.code === 'PRODUCT_NOT_FOUND' ? 404 : e.code === 'REVIEW_STATUS_INVALID' ? 409 : 400;
+            ctx.body = fail(e.code, e.message, e.retryable, traceId);
+            return await next();
+          }
+          throw e;
         }
-        if (p.get('status') === 'reviewed') {
+        if (approved.already) {
           ctx.body = { ok: true, data: { id, status: 'reviewed', already: true }, warnings: [], errors: [], traceId };
           return await next();
         }
-        // 只允许从编辑流内的状态标记审核（publish_failed 可直接重新提审——失败原因在平台侧、本地无需改动时的快捷通道）。
-        if (!EDITABLE_STATUS.includes(p.get('status'))) {
-          ctx.status = 409;
-          ctx.body = fail(
-            'REVIEW_STATUS_INVALID',
-            `商品状态「${p.get('status')}」不能标记审核。已发布/发布中的商品请先「退回编辑」。`,
-            true,
-            traceId,
-          );
-          return await next();
-        }
-        // 免采纳兜底：最终标题未填时自动沿用原标题（仅做平台合规清洗），不再强制先点「采纳」。
-        // 只有连原始标题都没有的商品才拒绝审核（发布必然失败，早拦截）。
-        let titleAutoFilled: string | null = null;
-        const titleFinal = p.get('titleFinal');
-        if (!titleFinal || !String(titleFinal).trim()) {
-          const fallbackTitle = cleanTitle(String(p.get('titleOriginal') || '')).trim();
-          if (!fallbackTitle) {
-            ctx.status = 400;
-            ctx.body = fail(
-              'REVIEW_TITLE_REQUIRED',
-              '商品没有任何可用标题（原始标题为空），请先填写「商品标题」再标记审核。',
-              true,
-              traceId,
-            );
-            return await next();
-          }
-          titleAutoFilled = fallbackTitle;
-          await Products.update({ filterByTk: id, values: { titleFinal: fallbackTitle } });
-          await AuditLogs.create({
-            values: {
-              actorType: 'system',
-              actorId: 'rule-engine',
-              action: 'review.title_autofill',
-              resourceType: 'product',
-              resourceId: id,
-              fieldName: 'titleFinal',
-              oldValue: titleFinal ?? null,
-              newValue: fallbackTitle,
-              reason: '标记审核时最终标题未填，自动沿用原标题（合规清洗后）',
-              traceId,
-            },
-          });
-        }
-        await Products.update({ filterByTk: id, values: { status: 'reviewed', reviewStatus: 'reviewed' } });
-        await AuditLogs.create({
-          values: {
-            actorType: 'user',
-            actorId: currentUserId(ctx),
-            action: 'review.approve',
-            resourceType: 'product',
-            resourceId: id,
-            fieldName: 'status',
-            oldValue: p.get('status'),
-            newValue: 'reviewed',
-            reason: '人工审核通过，关键字段锁定',
-            traceId,
-          },
-        });
         ctx.body = {
           ok: true,
-          data: { id, status: 'reviewed', titleAutoFilled: Boolean(titleAutoFilled) },
-          warnings: titleAutoFilled ? [`最终标题未填，已自动沿用原标题：「${titleAutoFilled}」`] : [],
+          data: { id, status: 'reviewed', titleAutoFilled: Boolean(approved.titleAutoFilled) },
+          warnings: approved.titleAutoFilled ? [`最终标题未填，已自动沿用原标题：「${approved.titleAutoFilled}」`] : [],
           errors: [],
           traceId,
         };

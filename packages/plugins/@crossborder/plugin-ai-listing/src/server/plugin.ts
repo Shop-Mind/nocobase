@@ -23,6 +23,7 @@ import { setupAssistant } from './assistant';
 import { setupOpenApi } from './openapi';
 import { setupMedia } from './media/actions';
 import { seedStyleTemplates } from './media/style-templates-seed';
+import { setupQuickTransferWorkflowNodes } from './workflow/quick-transfer-nodes';
 
 export class PluginAiListingServer extends Plugin {
   async afterAdd() {}
@@ -56,6 +57,13 @@ export class PluginAiListingServer extends Plugin {
     setupOpenApi(this);
     // 图片编辑闭环（Phase 0）：aiListingMedia candidates/generate/jobStatus/adopt/discard——AI 只产候选、用户显式采纳。
     setupMedia(this);
+    // 快速搬运工作流节点（listingCapture/Process/Approve/PublishDraft）：官方工作流可视化编排路线；
+    // plugin-workflow 不可用时安全跳过，不阻断插件加载。
+    try {
+      setupQuickTransferWorkflowNodes(this);
+    } catch (e) {
+      this.app.logger.warn(`[ai-listing] quick transfer workflow nodes skipped: ${(e as Error)?.message}`);
+    }
     // 创意工坊内置风格模版（W2）：启动后按 title+category 幂等补种（只补缺，不覆盖已有行），install/upgrade 之外的老库也能拿到。
     this.app.on('afterStart', async () => {
       try {

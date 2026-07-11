@@ -585,5 +585,10 @@
   "Generate multi-image film": "Generate multi-image film",
   "Multi-image film needs an explicit video model (grok line)": "Multi-image film needs an explicit video model (grok line)",
   "{{n}} segments, generated one by one then stitched into a single film": "{{n}} segments, generated one by one then stitched into a single film",
-  "tick 2-5 thumbnails for a multi-image film": "tick 2-5 thumbnails for a multi-image film"
+  "tick 2-5 thumbnails for a multi-image film": "tick 2-5 thumbnails for a multi-image film",
+  "Quick transfer · Capture": "Quick transfer · Capture",
+  "Quick transfer · Process": "Quick transfer · Process",
+  "Quick transfer · Approve": "Quick transfer · Approve",
+  "Quick transfer · Publish draft": "Quick transfer · Publish draft",
+  "AI listing transfer": "AI listing transfer"
 }

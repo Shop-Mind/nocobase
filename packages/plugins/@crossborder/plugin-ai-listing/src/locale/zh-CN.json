@@ -585,5 +585,10 @@
   "Generate multi-image film": "生成多图成片",
   "Multi-image film needs an explicit video model (grok line)": "多图成片需显式选择视频模型（grok 线）",
   "{{n}} segments, generated one by one then stitched into a single film": "{{n}} 段逐图生成后自动拼接成一条成片",
-  "tick 2-5 thumbnails for a multi-image film": "勾选 2-5 张可拼多图成片"
+  "tick 2-5 thumbnails for a multi-image film": "勾选 2-5 张可拼多图成片",
+  "Quick transfer · Capture": "快速搬运 · 抓取商品",
+  "Quick transfer · Process": "快速搬运 · 信息处理",
+  "Quick transfer · Approve": "快速搬运 · 提审锁定",
+  "Quick transfer · Publish draft": "快速搬运 · 发布草稿",
+  "AI listing transfer": "AI 商品搬运"
 }

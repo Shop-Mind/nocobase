@@ -5,7 +5,11 @@
   "displayName.zh-CN": "懂店:AI 商品搬运",
   "description": "Capture products from Alibaba.com and other platforms, process them with AI (translation, pricing, compliance), review in a visual editor, then publish to target platforms in one click. Includes capture history, rule management, publish tracking and AI-assisted editing.",
   "description.zh-CN": "从 Alibaba.com 等平台抓取商品,经 AI 信息处理(翻译、定价、合规),预览编辑人工确认后一键发布到目标平台。含抓取历史、规则管理、发布记录与 AI 员工协同编辑。",
-  "keywords": ["AI", "跨境电商", "商品搬运"],
+  "keywords": [
+    "AI",
+    "跨境电商",
+    "商品搬运"
+  ],
   "main": "dist/server/index.js",
   "dependencies": {},
   "peerDependencies": {
@@ -13,6 +17,7 @@
     "@nocobase/client": "2.x",
     "@nocobase/client-v2": "2.x",
     "@nocobase/plugin-ai": "2.x",
+    "@nocobase/plugin-workflow": "2.x",
     "@nocobase/server": "2.x",
     "@nocobase/test": "2.x",
     "zod": "3.x"
