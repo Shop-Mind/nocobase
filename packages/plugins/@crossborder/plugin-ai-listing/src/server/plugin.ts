@@ -24,6 +24,7 @@ import { setupOpenApi } from './openapi';
 import { setupMedia } from './media/actions';
 import { seedStyleTemplates } from './media/style-templates-seed';
 import { setupQuickTransferWorkflowNodes } from './workflow/quick-transfer-nodes';
+import { setupQuickTransferBoard } from './workflow/quick-transfer-board';
 
 export class PluginAiListingServer extends Plugin {
   async afterAdd() {}
@@ -64,6 +65,8 @@ export class PluginAiListingServer extends Plugin {
     } catch (e) {
       this.app.logger.warn(`[ai-listing] quick transfer workflow nodes skipped: ${(e as Error)?.message}`);
     }
+    // 快速搬运看板只读聚合（QT1）：请求行 → 执行状态/待办/草稿链接，供「快速搬运」tab 的 jsBlock 轮询。
+    setupQuickTransferBoard(this);
     // 创意工坊内置风格模版（W2）：启动后按 title+category 幂等补种（只补缺，不覆盖已有行），install/upgrade 之外的老库也能拿到。
     this.app.on('afterStart', async () => {
       try {
