@@ -69,6 +69,9 @@ export function setupQuickTransferBoard(plugin: Plugin): void {
           const row: Record<string, unknown> = {
             requestId,
             sourceUrl: r.get('sourceUrl'),
+            // 重跑按钮需要完整触发参数（QT5）：新建请求行 = 逐行独立重新执行。
+            ruleId: r.get('ruleId') ?? null,
+            targetStoreId: r.get('targetStoreId') ?? null,
             skipMedia: Boolean(r.get('skipMedia')),
             createdAt: r.get('createdAt'),
             state: 'queueing',
@@ -79,6 +82,9 @@ export function setupQuickTransferBoard(plugin: Plugin): void {
             const status = e.get('status') as number | null;
             row.executionId = executionId;
             row.state = executionState(status);
+            // 耗时（QT5）：进行中 = 前端按 startedAt 实时算；终态 = finishedAt - startedAt。
+            row.startedAt = e.get('createdAt');
+            row.finishedAt = status !== null && status !== 0 ? e.get('updatedAt') : null;
             const jobs = ((e.get('jobs') as ModelLike[]) || [])
               .map((j) => ({
                 nodeKey: String(j.get('nodeKey') || ''),
