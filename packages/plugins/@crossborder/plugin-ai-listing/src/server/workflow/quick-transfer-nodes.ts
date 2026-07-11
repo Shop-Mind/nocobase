@@ -110,9 +110,26 @@ export class ListingProcessInstruction extends Instruction {
           processingJobId: r.jobId,
         });
       }
+      // 商品展示字段（QT3）：供下游 manual 待办的标题模板/商品摘要引用（$jobsMapByNodeKey.<本节点key>.title 等）。
+      // 查询失败不阻断流程——摘要属于体验增强，缺失时待办仍可提交。
+      let display: { title?: string; image?: string; price?: number | null } = {};
+      try {
+        const db = this.plugin.app.db;
+        const product = await db.getRepository('aiListingProducts').findOne({ filterByTk: productId });
+        const mainImage = await db
+          .getRepository('aiListingMediaAssets')
+          .findOne({ filter: { productId, role: 'main' }, sort: ['sort', 'id'] });
+        display = {
+          title: String(product?.get('titleProcessed') || product?.get('titleOriginal') || `商品 #${productId}`),
+          image: mainImage ? String(mainImage.get('sourceUrl') || '') : '',
+          price: product?.get('priceTarget') != null ? Number(product.get('priceTarget')) : null,
+        };
+      } catch {
+        display = { title: `商品 #${productId}` };
+      }
       return {
         status: JOB_STATUS.RESOLVED,
-        result: { productId, ruleId, processingJobId: r.jobId, jobNo: r.jobNo },
+        result: { productId, ruleId, processingJobId: r.jobId, jobNo: r.jobNo, ...display },
       };
     } catch (e) {
       if (e instanceof ProcessingServiceError) return nodeError(e.code, e.message, { retryable: e.retryable });

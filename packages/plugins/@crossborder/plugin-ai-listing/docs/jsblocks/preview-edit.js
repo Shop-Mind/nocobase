@@ -307,6 +307,14 @@ const thumb = (u, size) => {
 
 const listEnv = await callApi('aiListingReview:list', { page: 1, pageSize: 20 });
 
+// 深链初选(QT3):?productId= 指定则直达该商品(快速搬运待办「去改图」入口);无参数/无效时保持原行为(列表第一个)。
+// SES 沙箱无 URLSearchParams,手写取参(与创意工坊页同款)。
+function getDeepLinkProductId() {
+  const m = (window.location.search || '').match(/[?&]productId=([^&]*)/);
+  const v = m ? Number(decodeURIComponent(m[1])) : NaN;
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
 function ReviewApp() {
   const [products, setProducts] = useState(listEnv && listEnv.ok ? listEnv.data.products : []);
   const [listError] = useState(listEnv && listEnv.ok ? null : listEnv);
@@ -314,7 +322,7 @@ function ReviewApp() {
   const [statusFilter, setStatusFilter] = useState('');
   const [platformFilter, setPlatformFilter] = useState('');
   const [selectedId, setSelectedId] = useState(
-    listEnv && listEnv.ok && listEnv.data.products[0] ? listEnv.data.products[0].id : null,
+    getDeepLinkProductId() || (listEnv && listEnv.ok && listEnv.data.products[0] ? listEnv.data.products[0].id : null),
   );
   // 左侧列表服务端分页：只取当前页数据，商品量大也不卡。
   const [listPage, setListPage] = useState(1);
